@@ -12,9 +12,15 @@ export interface RegistryEntry {
   hash: Hash;
 }
 
+/**
+ * Le registre est la source de vérité (OSP v0.2, §6.1). Les écritures d'une commande forment
+ * une transaction : elles ne sont écrites sur disque et diffusées qu'au commit, et disparaissent
+ * si la commande échoue.
+ */
 export class Registry {
   readonly entries: RegistryEntry[] = [];
   private readonly listeners = new Set<(entry: RegistryEntry) => void>();
+  private pending: RegistryEntry[] | null = null;
 
   constructor(
     private readonly file?: string,
@@ -31,12 +37,30 @@ export class Registry {
 
   append(nature: string, donnees: unknown): RegistryEntry {
     const last = this.entries[this.entries.length - 1];
-    const base = { seq: this.entries.length, prev: last ? last.hash : null, date: new Date(this.now()).toISOString(), nature, donnees };
+    // Copie profonde : une entrée inscrite ne doit plus jamais bouger, même si l'objet source change.
+    const base = { seq: this.entries.length, prev: last ? last.hash : null, date: new Date(this.now()).toISOString(), nature, donnees: structuredClone(donnees) };
     const entry: RegistryEntry = { ...base, hash: hashOf(base) };
     this.entries.push(entry);
-    if (this.file) appendFileSync(this.file, JSON.stringify(entry) + '\n', 'utf8');
-    for (const fn of this.listeners) fn(entry);
+    if (this.pending) this.pending.push(entry);
+    else this.publish([entry]);
     return entry;
+  }
+
+  begin(): void {
+    if (this.pending) throw new Error('Transaction du registre déjà ouverte');
+    this.pending = [];
+  }
+
+  commit(): void {
+    const done = this.pending ?? [];
+    this.pending = null;
+    this.publish(done);
+  }
+
+  rollback(): void {
+    const n = this.pending?.length ?? 0;
+    this.pending = null;
+    this.entries.splice(this.entries.length - n, n);
   }
 
   /** S'abonne aux nouvelles entrées (flux temps réel). Renvoie la fonction de désabonnement. */
@@ -47,6 +71,12 @@ export class Registry {
 
   since(seq: number): RegistryEntry[] {
     return this.entries.slice(Math.max(0, seq));
+  }
+
+  private publish(entries: RegistryEntry[]): void {
+    if (!entries.length) return;
+    if (this.file) appendFileSync(this.file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+    for (const e of entries) for (const fn of this.listeners) fn(e);
   }
 }
 

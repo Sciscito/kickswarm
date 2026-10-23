@@ -102,6 +102,8 @@ export function createCoordinatorServer(coord: Coordinator): Server {
           return send(res, 200, coord.liveView(parts[2]!));
         case route.startsWith('GET /v0/board/') && parts.length === 3:
           return send(res, 200, coord.board(parts[2]!));
+        case route === 'GET /v0/state-hash':
+          return send(res, 200, { seq: coord.registry.entries.length - 1, etat: coord.stateHash() });
         case route === 'GET /v0/registry': {
           const since = Number(url.searchParams.get('since') ?? 0);
           return send(res, 200, coord.registry.since(Number.isFinite(since) ? since : 0));

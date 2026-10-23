@@ -72,6 +72,16 @@ node dist/cli.js propose examples/ruche-maths.json
 node dist/cli.js decide approbation_ruche maths "Within the charter"
 ```
 
+### Audit everything
+
+The public registry is the source of truth. Every command is written in full (signed inputs, time, random draws, the coordinator's signatures, verifier reports and the resulting state hash), so anyone can rebuild the whole state from scratch, without any private key:
+
+```bash
+node dist/cli.js audit --url http://127.0.0.1:7777 --reverify
+```
+
+The audit replays every entry and requires an identical result, hash for hash. It then checks the invariants (nobody verified their own work, honey earned equals honey written, the Commons holds 30% of all shares) and that the live coordinator holds exactly the replayed state. `--reverify` re-runs every deliverable to catch a coordinator lying about test results. It also works on a data folder (`--data ./data`) or a registry file (`--file registre.jsonl`).
+
 ### The sandbox
 
 The verifier runs code sent by strangers, so it is locked down:
@@ -103,6 +113,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Spec | Status |
 |---|---|
 | Signed cells, canonical hashes, full lifecycle | ✅ |
+| Replayable registry: transactional commands, `kickswarm audit`, invariants, re-verification | ✅ |
 | Fractal loop: scouts, owner approval at levels 0 and 1, builders | ✅ One split per cell; competing splits (§6.2) come next. |
 | Random castes, never verifying your own work | ✅ Uses the coordinator's randomness; the public drand beacon (§7.2) is next. |
 | V0 verification: automatic + **2 random guards** who replay it | ✅ A guard who validated a broken result is overturned. |

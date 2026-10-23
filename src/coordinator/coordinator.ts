@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { hashOf, sha256 } from '../protocol/canonical.js';
+import { canonicalize, hashOf, sha256 } from '../protocol/canonical.js';
 import { generateIdentity, isContributorId, signObject, verifyObject, type Identity } from '../protocol/identity.js';
 import type {
   Assignment,
@@ -129,6 +129,36 @@ interface State {
   contributeurs: string[];
 }
 
+/** Les commandes qui modifient l'état. Chacune est inscrite en entier au registre (OSP v0.2, §6.1). */
+export type CommandeType = 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'submitVerdict';
+
+/**
+ * Le contenu d'une entrée `commande` : les objets signés reçus, plus tout ce qui n'est pas
+ * déterministe (l'heure, les tirages, les signatures du coordinateur, les rapports du vérificateur)
+ * et le hash de l'état obtenu. C'est assez pour rejouer toute l'histoire à l'identique.
+ */
+export interface CommandeDonnees {
+  type: CommandeType;
+  entree: Record<string, unknown>;
+  at: number;
+  alea: number[];
+  signatures: string[];
+  verifs: VerifReport[];
+  etat: Hash;
+}
+
+interface ReplayStep {
+  at: number;
+  alea: number[];
+  signatures: string[];
+  verifs: VerifReport[];
+}
+
+/** Le rejeu ne reproduit pas l'histoire inscrite au registre. */
+export class ReplayDivergence extends Error {}
+
+export type Verifier = (critere: Cell['critere_fini'], livrable: Livrable) => Promise<VerifReport>;
+
 export interface CoordinatorOptions {
   fondateur: ContributorId;
   /** Dossier de persistance (état + registre). Sans dossier, tout reste en mémoire. */
@@ -136,6 +166,10 @@ export interface CoordinatorOptions {
   params?: Partial<Params>;
   rng?: Rng;
   now?: () => number;
+  /** Vérificateur automatique, remplaçable pour les tests. */
+  verifier?: Verifier;
+  /** Mode audit : on rejoue un registre existant, avec les identités publiques qu'il annonce. */
+  replay?: { coordinateur: ContributorId; pieges: ContributorId };
 }
 
 export interface HiveView {
@@ -200,23 +234,47 @@ export class Coordinator {
   readonly identite: Identity;
   private readonly identitePieges: Identity;
   private readonly ledger: Ledger;
-  private readonly state: State;
-  private readonly rng: Rng;
-  private readonly now: () => number;
+  private state: State;
+  private readonly baseRng: Rng;
+  private readonly baseNow: () => number;
+  private readonly verifier: Verifier;
   private readonly occupees = new Set<Hash>();
+  /** Pendant une commande : l'heure figée, et ce qu'il faut inscrire pour pouvoir la rejouer. */
+  private clock: number | null = null;
+  private recording: { alea: number[]; signatures: string[] } | null = null;
+  private replayCtx: { alea: number[]; signatures: string[] } | null = null;
+  private replayNext: ReplayStep | null = null;
+
+  private readonly now = (): number => this.clock ?? this.baseNow();
+
+  private readonly rng: Rng = () => {
+    if (this.replayCtx) {
+      const v = this.replayCtx.alea.shift();
+      if (v === undefined) throw new ReplayDivergence('Tirage aléatoire absent du registre');
+      return v;
+    }
+    const v = this.baseRng();
+    this.recording?.alea.push(v);
+    return v;
+  };
 
   constructor(private readonly options: CoordinatorOptions) {
     if (!isContributorId(options.fondateur)) throw new Error('Identifiant du fondateur invalide');
     this.params = { ...DEFAULT_PARAMS, ...options.params };
-    this.rng = options.rng ?? Math.random;
-    this.now = options.now ?? Date.now;
+    this.baseRng = options.rng ?? Math.random;
+    this.baseNow = options.now ?? Date.now;
+    this.verifier = options.verifier ?? verifierV0;
+    if (options.replay && options.dataDir) throw new Error('Le mode audit travaille en mémoire, sans dossier de données');
 
     const dir = options.dataDir;
     if (dir) mkdirSync(dir, { recursive: true });
-    this.registry = new Registry(dir ? join(dir, 'registre.jsonl') : undefined, this.now);
+    this.registry = new Registry(dir ? join(dir, 'registre.jsonl') : undefined, () => this.now());
 
     const keysFile = dir ? join(dir, 'cles.json') : undefined;
-    if (keysFile && existsSync(keysFile)) {
+    if (options.replay) {
+      this.identite = { id: options.replay.coordinateur, privateKeyPem: '' };
+      this.identitePieges = { id: options.replay.pieges, privateKeyPem: '' };
+    } else if (keysFile && existsSync(keysFile)) {
       const keys = JSON.parse(readFileSync(keysFile, 'utf8')) as { coordinateur: Identity; pieges: Identity };
       this.identite = keys.coordinateur;
       this.identitePieges = keys.pieges;
@@ -233,9 +291,11 @@ export class Coordinator {
         throw new Error('Ce dossier de données appartient à un autre fondateur');
       }
     } else {
+      // Une seule lecture de l'horloge pour le lancement : l'état et l'entrée du registre doivent concorder.
+      this.clock = this.baseNow();
       this.state = {
         fondateur: options.fondateur,
-        lancement: this.now(),
+        lancement: this.clock,
         hives: {},
         cells: {},
         results: {},
@@ -248,12 +308,113 @@ export class Coordinator {
         compteurs: {},
         contributeurs: [],
       };
-      this.registry.append('lancement', { fondateur: options.fondateur, coordinateur: this.identite.id, params: this.params });
+      this.registry.append('lancement', { fondateur: options.fondateur, coordinateur: this.identite.id, pieges: this.identitePieges.id, params: this.params });
+      this.clock = null;
     }
     this.normalizeState();
-    this.ledger = new Ledger(this.params, options.fondateur, this.state.lancement, this.registry, this.now);
+    this.ledger = new Ledger(this.params, options.fondateur, this.state.lancement, this.registry, () => this.now());
     this.ledger.accounts = this.state.accounts;
+    // L'état sur disque doit être exactement celui qu'annonce la dernière commande du registre.
+    const derniere = [...this.registry.entries].reverse().find((e) => e.nature === 'commande');
+    if (derniere && (derniere.donnees as CommandeDonnees).etat !== this.stateHash()) {
+      throw new Error('État local incohérent avec le registre : lance « kickswarm audit » pour reconstruire et comprendre');
+    }
     this.save();
+  }
+
+  /** Empreinte de l'état complet : ce que les auditeurs comparent. */
+  stateHash(): Hash {
+    return sha256(canonicalize(this.state));
+  }
+
+  /** Pour la revérification d'un audit : le critère de fin d'une alvéole. */
+  critereOf(cellId: Hash): Cell['critere_fini'] | undefined {
+    return this.state.cells[cellId]?.cell.critere_fini;
+  }
+
+  /** Pour la revérification d'un audit : le livrable d'un résultat et le critère qu'il doit passer. */
+  resultForReverify(resultId: Hash): { critere: Cell['critere_fini']; livrable: Livrable } | undefined {
+    const rr = this.state.results[resultId];
+    const rec = rr ? this.state.cells[rr.resultat.alveole] : undefined;
+    return rr && rec ? { critere: rec.cell.critere_fini, livrable: rr.livrable } : undefined;
+  }
+
+  /**
+   * Rejoue une commande inscrite au registre (mode audit). Le coordinateur reproduit alors
+   * exactement les mêmes entrées : toute différence est une divergence.
+   */
+  async replayCommande(c: CommandeDonnees): Promise<void> {
+    if (!this.options.replay) throw new Error('Rejeu réservé à un coordinateur créé en mode audit');
+    this.replayNext = { at: c.at, alea: [...(c.alea ?? [])], signatures: [...(c.signatures ?? [])], verifs: c.verifs ?? [] };
+    const e = c.entree as {
+      ruche: Hive; racine: CellSpec; decision: Decision; requete: Requete; resultat: Result; livrable: Livrable; decomposition: Decomposition; verdict: Verdict;
+    };
+    try {
+      switch (c.type) {
+        case 'proposeHive': this.proposeHive(e.ruche, e.racine); break;
+        case 'decide': this.decide(e.decision); break;
+        case 'claim': this.claim(e.requete); break;
+        case 'start': this.start(e.requete); break;
+        case 'release': this.release(e.requete); break;
+        case 'submitResult': await this.submitResult(e.resultat, e.livrable); break;
+        case 'submitDecomposition': this.submitDecomposition(e.decomposition); break;
+        case 'submitVerdict': await this.submitVerdict(e.verdict); break;
+        default: throw new ReplayDivergence(`Commande inconnue : ${String(c.type)}`);
+      }
+    } finally {
+      this.replayNext = null;
+    }
+  }
+
+  /**
+   * Exécute une commande comme une transaction : l'état et le registre reviennent en arrière si
+   * elle échoue ; si elle réussit, elle est inscrite au registre avec tout ce qu'il faut pour la rejouer.
+   */
+  private run<T>(type: CommandeType, entree: Record<string, unknown>, verifs: VerifReport[], fn: () => T): T {
+    const replay = this.replayNext;
+    this.replayNext = null;
+    if (this.options.replay && !replay) throw new Error('Coordinateur en mode audit : il ne fait que rejouer le registre');
+    const at = replay ? replay.at : this.baseNow();
+    this.clock = at;
+    this.replayCtx = replay ? { alea: [...replay.alea], signatures: [...replay.signatures] } : null;
+    this.recording = replay ? null : { alea: [], signatures: [] };
+    const snapshot = structuredClone(this.state);
+    this.registry.begin();
+    try {
+      const out = fn();
+      if (this.replayCtx && (this.replayCtx.alea.length || this.replayCtx.signatures.length)) {
+        throw new ReplayDivergence('Le rejeu a consommé moins de tirages ou de signatures que l’original');
+      }
+      const alea = replay ? replay.alea : this.recording!.alea;
+      const signatures = replay ? replay.signatures : this.recording!.signatures;
+      this.registry.append('commande', { type, entree, at, alea, signatures, verifs, etat: this.stateHash() } satisfies CommandeDonnees);
+      this.registry.commit();
+      this.save();
+      return out;
+    } catch (e) {
+      this.state = snapshot;
+      this.ledger.accounts = this.state.accounts;
+      this.registry.rollback();
+      throw e;
+    } finally {
+      this.clock = null;
+      this.replayCtx = null;
+      this.recording = null;
+    }
+  }
+
+  /** Signe au nom du coordinateur ; au rejeu, reprend la signature inscrite et la vérifie. */
+  private sign<T extends object>(obj: T, who: Identity): T & { sig: string } {
+    if (this.replayCtx) {
+      const sig = this.replayCtx.signatures.shift();
+      if (sig === undefined) throw new ReplayDivergence('Signature attendue absente du registre');
+      const signed = { ...obj, sig } as T & { sig: string };
+      if (!verifyObject(signed, who.id)) throw new ReplayDivergence('Signature du coordinateur invalide au rejeu');
+      return signed;
+    }
+    const signed = signObject(obj, who);
+    this.recording?.signatures.push(signed.sig);
+    return signed;
   }
 
   get fondateur(): ContributorId {
@@ -263,6 +424,10 @@ export class Coordinator {
   // ---------------------------------------------------------------- ruches
 
   proposeHive(ruche: Hive, racine: CellSpec): HiveView {
+    return this.run('proposeHive', { ruche, racine }, [], () => this.doProposeHive(ruche, racine));
+  }
+
+  private doProposeHive(ruche: Hive, racine: CellSpec): HiveView {
     if (ruche?.type !== 'osp.hive/0.1') throw new OspError('Objet ruche attendu (osp.hive/0.1)');
     if (!isContributorId(ruche.porteur)) throw new OspError('Porteur invalide');
     if (!verifyObject(ruche, ruche.porteur)) throw new OspError('Signature de la ruche invalide', 401);
@@ -284,7 +449,6 @@ export class Coordinator {
     this.state.hives[ruche.slug] = hive;
     this.registry.append('ruche_proposee', { slug: ruche.slug, id: hive.id, porteur: ruche.porteur, nom: ruche.nom });
     hive.racine = this.emitCell(ruche.slug, racine, null, '0', 0).id;
-    this.save();
     return this.hiveView(ruche.slug);
   }
 
@@ -336,7 +500,7 @@ export class Coordinator {
         id,
         grammes: Math.round(g * 1000) / 1000,
         trophees: [...new Set(this.trophiesOf(id).map((t) => t.id))],
-        ...this.ledger.get(id as ContributorId),
+        ...this.ledger.peek(id as ContributorId),
       }))
       .sort((a, b) => b.grammes - a.grammes)
       .slice(0, 20);
@@ -353,7 +517,7 @@ export class Coordinator {
       fondateur: this.state.fondateur,
       progression: this.progression(slug),
       miel_total: Math.round(Object.values(hive.contributions).reduce((s, x) => s + x, 0) * 1000) / 1000,
-      commun: this.ledger.get(COMMUN).parts,
+      commun: this.ledger.peek(COMMUN).parts,
       orientations: hive.orientations.filter((o) => o.expire > now).map((o) => ({ branche: o.branche, multiplicateur: o.multiplicateur })),
       alveoles: cells.map((c) => ({
         id: c.id,
@@ -380,7 +544,7 @@ export class Coordinator {
   }
 
   account(id: ContributorId | typeof COMMUN): Account & { id: string; trophees: Trophee[] } {
-    return { id, ...this.ledger.get(id), trophees: this.trophiesOf(id) };
+    return { id, ...this.ledger.peek(id), trophees: this.trophiesOf(id) };
   }
 
   trophiesOf(id: string): Trophee[] {
@@ -395,6 +559,10 @@ export class Coordinator {
   // ---------------------------------------------------------------- gouvernance
 
   decide(d: Decision): { decision: Hash } {
+    return this.run('decide', { decision: d }, [], () => this.doDecide(d));
+  }
+
+  private doDecide(d: Decision): { decision: Hash } {
     if (d?.type !== 'osp.decision/0.1') throw new OspError('Objet décision attendu (osp.decision/0.1)');
     if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Signature de la décision invalide', 401);
     if (!d.motif?.trim()) throw new OspError('Toute décision doit être motivée (principe 5)');
@@ -457,13 +625,16 @@ export class Coordinator {
         throw new OspError(`Nature de décision inconnue : ${String((d as Decision).nature)}`);
     }
     this.registry.append('decision', { id, ...d });
-    this.save();
     return { decision: id };
   }
 
   // ---------------------------------------------------------------- travail
 
   claim(r: Requete): Assignment | null {
+    return this.run('claim', { requete: r }, [], () => this.doClaim(r));
+  }
+
+  private doClaim(r: Requete): Assignment | null {
     this.checkRequete(r, 'claim');
     this.expire();
     const who = r.contributeur;
@@ -478,10 +649,7 @@ export class Coordinator {
     // Verrou 4 (§9.4) : une part des tâches de vérification sont des pièges.
     if (cells.length && this.rng() < this.params.taux_pieges) {
       const piege = this.makeTrap(who, cells);
-      if (piege) {
-        this.save();
-        return piege;
-      }
+      if (piege) return piege;
     }
 
     // Verrous 1 et 2 (§9.2) : k gardiennes distinctes, tirées au sort, jamais l'auteur.
@@ -500,7 +668,6 @@ export class Coordinator {
       const bail: Bail = { par: who, caste: 'gardienne', expire: this.leaseEnd(rec) };
       rec.gardiennes.push(bail);
       const rr = this.state.results[rec.en_attente!]!;
-      this.save();
       return { ...this.assignment(rec, 'gardienne', bail.expire), a_verifier: { id: rec.en_attente!, resultat: rr.resultat, livrable: rr.livrable } };
     }
     if (!libres.length) return null;
@@ -523,22 +690,26 @@ export class Coordinator {
     const caste = this.casteFor(rec);
     transition(rec, 'reservee');
     rec.bail = { par: who, caste, expire: this.leaseEnd(rec) };
-    this.save();
     return this.assignment(rec, caste, rec.bail.expire);
   }
 
   start(r: Requete): { etat: CellState } {
+    return this.run('start', { requete: r }, [], () => this.doStart(r));
+  }
+
+  private doStart(r: Requete): { etat: CellState } {
     this.checkRequete(r, 'start');
     const rec = this.cellOrThrow(r.alveole);
     if (rec.bail?.par !== r.contributeur) throw new OspError('Tu ne détiens pas le bail de cette alvéole', 403);
-    if (rec.state === 'reservee') {
-      transition(rec, 'en_cours');
-      this.save();
-    }
+    if (rec.state === 'reservee') transition(rec, 'en_cours');
     return { etat: rec.state };
   }
 
   release(r: Requete): { rappelee: boolean } {
+    return this.run('release', { requete: r }, [], () => this.doRelease(r));
+  }
+
+  private doRelease(r: Requete): { rappelee: boolean } {
     this.checkRequete(r, 'release');
     const id = r.alveole;
     const rec = id ? this.state.cells[id] : undefined;
@@ -558,37 +729,50 @@ export class Coordinator {
         rappelee = true;
       }
     }
-    this.save();
     return { rappelee };
   }
 
   async submitResult(res: Result, livrable: Livrable): Promise<{ statut: 'rejete' | 'en_verification' | 'miel'; resultat: Hash; rapport: VerifReport }> {
+    const replay = this.replayNext;
+    const rapport = replay ? replay.verifs[0] : await this.verifyResult(res, livrable);
+    if (!rapport) throw new ReplayDivergence('Rapport de vérification absent du registre');
+    return this.run('submitResult', { resultat: res, livrable }, [rapport], () => this.doSubmitResult(res, livrable, rapport));
+  }
+
+  /** Contrôles sans effet, puis vérification automatique, hors de la transaction. */
+  private async verifyResult(res: Result, livrable: Livrable): Promise<VerifReport> {
+    const rec = this.checkResult(res, livrable);
+    if (this.occupees.has(rec.id)) throw new OspError('Une vérification est déjà en cours pour cette alvéole', 409);
+    this.occupees.add(rec.id);
+    try {
+      return await this.verifier(rec.cell.critere_fini, livrable);
+    } finally {
+      this.occupees.delete(rec.id);
+    }
+  }
+
+  private checkResult(res: Result, livrable: Livrable): CellRecord {
     if (res?.type !== 'osp.result/0.1') throw new OspError('Objet résultat attendu (osp.result/0.1)');
     if (!isContributorId(res.auteur) || !verifyObject(res, res.auteur)) throw new OspError('Signature du résultat invalide', 401);
-    const id = hashOf(res);
-    if (this.state.results[id]) throw new OspError('Résultat déjà soumis', 409);
+    if (this.state.results[hashOf(res)]) throw new OspError('Résultat déjà soumis', 409);
     const rec = this.cellOrThrow(res.alveole);
     if (rec.bail?.par !== res.auteur) throw new OspError('Tu ne détiens pas le bail de cette alvéole', 403);
     if (rec.bail.caste !== res.caste) throw new OspError(`Ta caste pour cette alvéole est « ${rec.bail.caste} »`, 409);
-    if (rec.state === 'reservee') transition(rec, 'en_cours');
-    if (rec.state !== 'en_cours') throw new OspError(`L'alvéole est ${rec.state}`, 409);
-    if (this.occupees.has(rec.id)) throw new OspError('Une vérification est déjà en cours pour cette alvéole', 409);
+    if (rec.state !== 'reservee' && rec.state !== 'en_cours') throw new OspError(`L'alvéole est ${rec.state}`, 409);
     try {
       validateLivrable(livrable);
     } catch (e) {
       throw new OspError((e as Error).message);
     }
     if (hashOf(livrable) !== res.livrable) throw new OspError('Le hash du livrable ne correspond pas au résultat signé');
+    return rec;
+  }
 
-    this.occupees.add(rec.id);
-    let rapport: VerifReport;
-    try {
-      rapport = await verifierV0(rec.cell.critere_fini, livrable);
-    } finally {
-      this.occupees.delete(rec.id);
-    }
-    if (rec.bail?.par !== res.auteur || rec.state !== 'en_cours') throw new OspError('Le bail a expiré pendant la vérification', 409);
-
+  private doSubmitResult(res: Result, livrable: Livrable, rapport: VerifReport): { statut: 'rejete' | 'en_verification' | 'miel'; resultat: Hash; rapport: VerifReport } {
+    // L'état a pu changer pendant la vérification : on recontrôle, dans la transaction.
+    const rec = this.checkResult(res, livrable);
+    if (rec.state === 'reservee') transition(rec, 'en_cours');
+    const id = hashOf(res);
     this.state.results[id] = { resultat: res, livrable, rapport, statut: 'en_verification' };
     delete rec.bail;
     this.registry.append('resultat_soumis', {
@@ -605,21 +789,22 @@ export class Coordinator {
 
     if (!rapport.ok) {
       this.rejectResult(rec, id, `Vérificateur automatique : ${rapport.motif}`);
-      this.save();
       return { statut: 'rejete', resultat: id, rapport };
     }
     transition(rec, 'en_verification');
     rec.en_attente = id;
     if (this.params.gardiennes_v0 <= 0) {
       this.validate(rec, id);
-      this.save();
       return { statut: 'miel', resultat: id, rapport };
     }
-    this.save();
     return { statut: 'en_verification', resultat: id, rapport };
   }
 
   submitDecomposition(d: Decomposition): { statut: 'en_attente_porteur' | 'adopte'; decoupage: Hash; enfants: Hash[] } {
+    return this.run('submitDecomposition', { decomposition: d }, [], () => this.doSubmitDecomposition(d));
+  }
+
+  private doSubmitDecomposition(d: Decomposition): { statut: 'en_attente_porteur' | 'adopte'; decoupage: Hash; enfants: Hash[] } {
     if (d?.type !== 'osp.decomposition/0.1') throw new OspError('Objet découpage attendu (osp.decomposition/0.1)');
     if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Signature du découpage invalide', 401);
     const id = hashOf(d);
@@ -642,15 +827,28 @@ export class Coordinator {
     if (rec.profondeur <= this.params.niveau_approbation_porteur) {
       transition(rec, 'en_verification');
       rec.en_attente = id;
-      this.save();
       return { statut: 'en_attente_porteur', decoupage: id, enfants: [] };
     }
     this.applyDecomposition(rec, id);
-    this.save();
     return { statut: 'adopte', decoupage: id, enfants: rec.enfants };
   }
 
   async submitVerdict(v: Verdict): Promise<{ statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number }> {
+    const replay = this.replayNext;
+    const rejeu = replay ? (replay.verifs[0] ?? null) : await this.rejeuFor(v);
+    return this.run('submitVerdict', { verdict: v }, rejeu ? [rejeu] : [], () => this.doSubmitVerdict(v, rejeu));
+  }
+
+  /** Le rejet d'un résultat accepté par le vérificateur automatique déclenche un rejeu (§9.5, version MVP). */
+  private async rejeuFor(v: Verdict): Promise<VerifReport | null> {
+    if (v?.type !== 'osp.verdict/0.1' || v.decision !== 'rejete' || this.state.pieges[v.resultat]) return null;
+    const rr = this.state.results[v.resultat];
+    const rec = rr ? this.state.cells[rr.resultat.alveole] : undefined;
+    if (!rr || !rec) return null;
+    return this.verifier(rec.cell.critere_fini, rr.livrable);
+  }
+
+  private doSubmitVerdict(v: Verdict, rejeu: VerifReport | null): { statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number } {
     if (v?.type !== 'osp.verdict/0.1') throw new OspError('Objet verdict attendu (osp.verdict/0.1)');
     if (!isContributorId(v.gardienne) || !verifyObject(v, v.gardienne)) throw new OspError('Signature du verdict invalide', 401);
     if (!['valide', 'rejete', 'abstention'].includes(v.decision)) throw new OspError('Décision invalide');
@@ -672,7 +870,6 @@ export class Coordinator {
         this.ledger.reputation(v.gardienne, 'piege_valide');
         this.registry.append('piege_valide', { gardienne: v.gardienne, alveole: piege.alveole });
       }
-      this.save();
       return { statut: 'piege', piege: true, correct };
     }
 
@@ -689,39 +886,31 @@ export class Coordinator {
       rec.verdicts.push(v.gardienne);
       if (rec.verdicts.length >= Math.max(1, this.params.gardiennes_v0)) {
         this.validate(rec, v.resultat, rec.verdicts.slice());
-        this.save();
         return { statut: 'miel', confirmations: rec.validee_par?.length };
       }
-      this.save();
       return { statut: 'en_verification', confirmations: rec.verdicts.length };
     }
-    if (v.decision === 'abstention') {
-      this.save();
-      return { statut: 'en_verification' };
-    }
+    if (v.decision === 'abstention') return { statut: 'en_verification' };
 
     // Rejet d'un résultat que le vérificateur automatique avait accepté : on rejoue (§9.5, version MVP).
-    const rejeu = await verifierV0(rec.cell.critere_fini, rr.livrable);
-    if (rec.state !== 'en_verification' || rec.en_attente !== v.resultat) throw new OspError('Ce résultat n’attend plus de vérification', 409);
+    if (!rejeu) throw new OspError('Rejeu manquant pour ce rejet', 500);
     if (!rejeu.ok) {
       this.ledger.award(v.gardienne, this.params.bonus_faux_reel, 'faux résultat démasqué', rec.cell.ruche);
       this.ledger.reputation(v.gardienne, 'confirme');
       // Celles qui avaient validé un résultat faux sont renversées.
       for (const g of rec.verdicts) this.ledger.reputation(g, 'renverse');
       this.rejectResult(rec, v.resultat, `Rejeté par une gardienne : ${v.motif}`);
-      this.save();
       return { statut: 'rejete' };
     }
     this.ledger.reputation(v.gardienne, 'renverse');
     this.registry.append('verdict_renverse', { resultat: v.resultat, gardienne: v.gardienne, rejeu: rejeu.motif });
-    this.save();
     return { statut: 'en_verification', renverse: true };
   }
 
   // ---------------------------------------------------------------- interne
 
   private emitCell(ruche: string, spec: CellSpec, parent: CellRecord | null, chemin: string, profondeur: number): CellRecord {
-    const cell = signObject<Cell>(
+    const cell = this.sign<Cell>(
       {
         type: 'osp.cell/0.1',
         ruche,
@@ -864,7 +1053,7 @@ export class Coordinator {
     const livrable: Livrable = {
       fichiers: { [critere.module ?? 'solution.mjs']: fns.map((f) => `export function ${f}() { return '__piege__'; }`).join('\n') + '\n' },
     };
-    const resultat = signObject<Result>(
+    const resultat = this.sign<Result>(
       {
         type: 'osp.result/0.1',
         alveole: rec.id,
@@ -920,7 +1109,7 @@ export class Coordinator {
   private expire(): void {
     const now = this.now();
     for (const rec of Object.values(this.state.cells)) {
-      if (rec.bail && rec.bail.expire <= now && !this.occupees.has(rec.id)) {
+      if (rec.bail && rec.bail.expire <= now) {
         const par = rec.bail.par;
         delete rec.bail;
         if (rec.state === 'reservee' || rec.state === 'en_cours') rec.state = 'libre';

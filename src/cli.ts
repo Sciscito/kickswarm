@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { auditRegistry } from './coordinator/audit.js';
 import { Coordinator } from './coordinator/coordinator.js';
+import type { RegistryEntry } from './coordinator/registry.js';
 import { createCoordinatorServer } from './coordinator/http.js';
 import { demo } from './demo.js';
 import { joinHive } from './install.js';
@@ -25,6 +27,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm hives [--url ...]                           List hives
   kickswarm propose <hive.json> [--url ...]             Propose a hive (slug, nom, objectif, racine)
   kickswarm decide <nature> <target> <reason> [--multiplier n] [--url ...]
+  kickswarm audit [--data ./data | --file registre.jsonl | --url ...] [--reverify]   Replay the public registry and check everything
 
 Default coordinator: $KICKSWARM_URL or http://127.0.0.1:7777
 Identity: $KICKSWARM_HOME/identite.json (default ~/.kickswarm)`;
@@ -105,6 +108,29 @@ async function main(): Promise<void> {
       const m = opts.multiplier ?? opts.multiplicateur;
       const r = await c.decide(makeDecision(c.identite, nature as DecisionNature, cible, motif.join(' '), m ? { multiplicateur: Number(m) } : undefined));
       console.log(`Decision written to the public registry: ${r.decision}`);
+      return;
+    }
+    case 'audit': {
+      let entries: RegistryEntry[];
+      let announced: string | undefined;
+      let source: string;
+      const file = opts.file ?? (opts.url === undefined ? join(resolve(opts.data ?? 'data'), 'registre.jsonl') : undefined);
+      if (file && existsSync(file)) {
+        source = file;
+        entries = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l) as RegistryEntry);
+      } else {
+        // State hash first, then the registry cut at the same entry: the live hive keeps moving.
+        const head = (await (await fetch(new URL('/v0/state-hash', url))).json()) as { seq: number; etat: string };
+        const all = (await (await fetch(new URL('/v0/registry', url))).json()) as RegistryEntry[];
+        entries = all.slice(0, head.seq + 1);
+        announced = head.etat;
+        source = url;
+      }
+      console.log(`\nAuditing ${entries.length} registry entries from ${source}${opts.reverify !== undefined ? ', re-running every verification' : ''}…\n`);
+      const report = await auditRegistry(entries, { reverifier: opts.reverify !== undefined, etatAnnonce: announced as `sha256:${string}` | undefined });
+      for (const c of report.controles) console.log(`  ${c.ok ? '✓' : '✗'} ${c.nom}${c.detail ? `\n      ${c.detail}` : ''}`);
+      console.log(`\n${report.ok ? 'AUDIT PASSED' : 'AUDIT FAILED'}: ${report.commandes} commands replayed${report.etat ? `, state ${report.etat}` : ''}\n`);
+      process.exitCode = report.ok ? 0 : 1;
       return;
     }
     case 'demo': {

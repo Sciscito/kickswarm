@@ -29,13 +29,23 @@ export class Ledger {
     private readonly now: () => number,
   ) {}
 
+  /** Compte à modifier : il est créé s'il n'existe pas. À n'appeler que dans une commande. */
   get(id: AccountId): Account {
     let a = this.accounts[id];
     if (!a) {
-      a = { miel: 0, parts: 0, reputation: id === COMMUN ? 1 : this.params.reputation_initiale, miel_gagne: 0 };
+      a = this.fresh(id);
       this.accounts[id] = a;
     }
     return a;
+  }
+
+  /** Lecture pure : ne crée rien. Une simple consultation ne doit jamais modifier l'état. */
+  peek(id: AccountId): Account {
+    return { ...(this.accounts[id] ?? this.fresh(id)) };
+  }
+
+  private fresh(id: AccountId): Account {
+    return { miel: 0, parts: 0, reputation: id === COMMUN ? 1 : this.params.reputation_initiale, miel_gagne: 0 };
   }
 
   /**
