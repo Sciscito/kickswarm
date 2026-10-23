@@ -1,0 +1,21 @@
+{
+  "slug": "maths",
+  "nom": "Mini-bibliothèque mathématique",
+  "objectif": "Livrer une mini-bibliothèque mathématique : pgcd, estPremier, fibonacci",
+  "racine": {
+    "objectif": "Livrer une mini-bibliothèque mathématique : pgcd, estPremier, fibonacci",
+    "capsule": "Bibliothèque ES module. Toutes les fonctions sont exportées depuis solution.mjs.",
+    "atomique": false,
+    "critere_fini": {
+      "classe": "V0",
+      "verificateur": "tests-js@1",
+      "module": "solution.mjs",
+      "tests": [
+        { "fn": "pgcd", "args": [12, 18], "attendu": 6 },
+        { "fn": "estPremier", "args": [97], "attendu": true },
+        { "fn": "estPremier", "args": [91], "attendu": false },
+        { "fn": "fibonacci", "args": [10], "attendu": 55 }
+      ]
+    }
+  }
+}

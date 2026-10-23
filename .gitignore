@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+*.log
+*.tmp
+.env
+.env.*
+.kickswarm/
+identite.json
