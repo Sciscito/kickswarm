@@ -17,7 +17,41 @@ function capsule(a: Assignment): string {
 }
 
 function tests(a: Assignment): string {
-  return a.alveole.critere_fini.tests.map((t) => `- \`${t.fn}(${JSON.stringify(t.args).slice(1, -1)})\` must return \`${JSON.stringify(t.attendu)}\``).join('\n');
+  const c = a.alveole.critere_fini;
+  if (c.verificateur !== 'tests-js@1') return '';
+  const lines = c.tests.map((t) => `- \`${t.fn}(${JSON.stringify(t.args).slice(1, -1)})\` must return \`${JSON.stringify(t.attendu)}\``);
+  for (const p of c.proprietes ?? []) lines.push(`- property “${p.nom}”: for ${p.cas ?? 200} random inputs, \`${p.fn}\` must satisfy \`${p.verifie}\``);
+  if (c.tests_caches_hash) lines.push('- plus hidden tests you will never see: solve the general problem, not just these examples');
+  return lines.join('\n');
+}
+
+function testsDeTests(a: Assignment): string {
+  const c = a.alveole.critere_fini;
+  if (c.verificateur !== 'tests-de-tests@1') return '';
+  const target = Object.entries(c.cible.fichiers).map(([name, code]) => `File \`${name}\`:\n\`\`\`js\n${code}\n\`\`\``).join('\n\n');
+  return [
+    `# Worker bee · cell ${a.alveole.chemin} · write tests`,
+    LOCKED,
+    '',
+    '## Goal',
+    a.alveole.objectif,
+    '',
+    capsule(a),
+    '',
+    '## The code to test',
+    target,
+    '',
+    '## Expected deliverable',
+    `A file \`tests.json\` = { "tests": [{ "fn", "args", "attendu" }], "proprietes": [{ "nom", "fn", "args": [generators], "verifie" }] } for module \`${c.module}\`, covering: ${c.fonctions.map((f) => `\`${f}\``).join(', ')}.`,
+    '',
+    '## Definition of done (checked automatically)',
+    `- every test must pass on the real code above;`,
+    `- the tests must catch at least ${Math.round((c.score_min ?? 0.8) * 100)}% of mutants: copies of the code with one small bug injected. Test edge cases and boundaries.`,
+    '',
+    '## Hand in your work',
+    'Call `swarm_submit` with `fichiers` = { "tests.json": "<your JSON>" }.',
+    lease(a),
+  ].join('\n');
 }
 
 function lease(a: Assignment): string {
@@ -26,8 +60,11 @@ function lease(a: Assignment): string {
 
 export function consignes(a: Assignment): string {
   const c = a.alveole.critere_fini;
+  if (c.verificateur === 'tests-de-tests@1') {
+    if (a.caste !== 'eclaireuse' && a.caste !== 'batisseuse') return testsDeTests(a);
+  }
   const module = c.module ?? 'solution.mjs';
-  const fns = [...new Set(c.tests.map((t) => t.fn))].map((f) => `\`${f}\``).join(', ');
+  const fns = c.verificateur === 'tests-js@1' ? [...new Set([...c.tests.map((t) => t.fn), ...(c.proprietes ?? []).map((p) => p.fn)])].map((f) => `\`${f}\``).join(', ') : c.fonctions.join(', ');
 
   if (a.caste === 'eclaireuse') {
     return [
@@ -45,7 +82,10 @@ export function consignes(a: Assignment): string {
       '- `capsule`: all the context needed, and nothing more;',
       '- `atomique`: `true` if an agent can do it in one go, `false` if it will need splitting again;',
       '- `critere_fini.module`: a distinct module name per child (e.g. `gcd.mjs`);',
-      '- `critere_fini.tests`: cases `{ fn, args, attendu }` that prove it is done.',
+      '- `critere_fini.tests`: cases `{ fn, args, attendu }` that prove it is done;',
+      '- `critere_fini.proprietes` (strongly advised): rules checked on hundreds of random inputs, e.g. `{ "nom": "divides both", "fn": "gcd", "args": [{"type":"int","min":1,"max":1000},{"type":"int","min":1,"max":1000}], "verifie": "args[0] % out === 0 && args[1] % out === 0" }`;',
+      '- `tests_caches` (advised): extra tests the workers will never see, so nobody can tailor a solution to the examples;',
+      '- `reference` (advised): your own implementation, kept secret. The swarm injects bugs into it: your tests must catch at least 80% of them, or the split is refused as too weak.',
       '',
       `A builder will then assemble the children. The assembly must pass these tests (module \`${module}\`):`,
       tests(a),

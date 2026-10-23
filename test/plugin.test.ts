@@ -10,6 +10,7 @@ import { ENFANTS, RACINE, SOLUTIONS } from '../src/exemples/maths.js';
 import { makeDecision, makeHive, makeRequete } from '../src/protocol/builders.js';
 import { generateIdentity, signObject } from '../src/protocol/identity.js';
 import { CoordinatorClient } from '../src/plugin/client.js';
+import type { CritereV0 } from '../src/protocol/types.js';
 import { createPluginServer } from '../src/plugin/server.js';
 
 type Texte = { content: Array<{ type: string; text: string }>; isError?: boolean };
@@ -49,7 +50,7 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
     assert.match(eclaireuse, /Scout bee/);
     assert.match(eclaireuse, /<capsule>/);
 
-    const enfants = ENFANTS.map((e) => ({ objectif: e.objectif, capsule: e.capsule, atomique: e.atomique, critere_fini: { module: e.critere_fini.module!, tests: e.critere_fini.tests } }));
+    const enfants = ENFANTS.map((e) => ({ objectif: e.objectif, capsule: e.capsule, atomique: e.atomique, critere_fini: { module: (e.critere_fini as CritereV0).module!, tests: (e.critere_fini as CritereV0).tests } }));
     assert.match(texte(await mcp.callTool({ name: 'swarm_decompose', arguments: { enfants } })), /hive owner/);
     const enAttente = coord.hiveView('maths');
     assert.equal(enAttente.alveoles[0]!.etat, 'en_verification');

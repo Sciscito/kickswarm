@@ -1,7 +1,7 @@
 import type { Coordinator } from '../coordinator/coordinator.js';
 import { makeDecomposition, makeRequete, makeResult, makeVerdict } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
-import type { Assignment, Caste, CellSpec, Decomposition, Hash, Livrable, Result, Verdict } from '../protocol/types.js';
+import type { Assignment, Caste, CellSpec, Decomposition, Hash, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
 import type { CoordinatorClient } from '../plugin/client.js';
 import { verifierV0 } from '../verifier/v0.js';
 
@@ -15,6 +15,8 @@ export interface BeeScript {
   solutions: Record<string, string>;
   /** Wrong code, used when a bee is told to deliver a bug. */
   bugs?: Record<string, string>;
+  /** Hidden tests and references sent with each decomposition, keyed by the parent's objective. */
+  secrets?: Record<string, Array<Secrets | undefined>>;
 }
 
 /** Same work loop, whether the bee talks to an in-process coordinator or over HTTP. */
@@ -23,7 +25,7 @@ export interface HiveAccess {
   claim(): Promise<Assignment | null>;
   start(alveole: Hash): Promise<unknown>;
   submit(resultat: Result, livrable: Livrable): Promise<{ statut: string; rapport: { motif: string } }>;
-  decompose(d: Decomposition): Promise<{ statut: string; decoupage: Hash }>;
+  decompose(d: Decomposition, secrets?: Array<Secrets | undefined>): Promise<{ statut: string; decoupage: Hash }>;
   verdict(v: Verdict): Promise<{ statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean }>;
 }
 
@@ -33,7 +35,7 @@ export function directAccess(c: Coordinator, identite: Identity, ruche?: string)
     claim: async () => c.claim(makeRequete(identite, 'claim', ruche ? { ruche } : {})),
     start: async (alveole) => c.start(makeRequete(identite, 'start', { alveole })),
     submit: (r, l) => c.submitResult(r, l),
-    decompose: async (d) => c.submitDecomposition(d),
+    decompose: (d, secrets) => c.submitDecomposition(d, secrets),
     verdict: (v) => c.submitVerdict(v),
   };
 }
@@ -44,7 +46,7 @@ export function httpAccess(client: CoordinatorClient, ruche?: string): HiveAcces
     claim: () => client.claim(ruche),
     start: (alveole) => client.start(alveole),
     submit: (r, l) => client.submit(r, l),
-    decompose: (d) => client.decompose(d),
+    decompose: (d, secrets) => client.decompose(d, secrets),
     verdict: (v) => client.verdict(v),
   };
 }
@@ -95,12 +97,13 @@ export async function scriptedBee(
     case 'eclaireuse': {
       const enfants = script.decompositions[a.alveole.objectif];
       if (!enfants) throw new Error(`No scripted decomposition for “${a.alveole.objectif}”`);
-      const r = await h.decompose(makeDecomposition(h.identite, a.alveole_id, enfants));
+      const r = await h.decompose(makeDecomposition(h.identite, a.alveole_id, enfants), script.secrets?.[a.alveole.objectif]);
       return { ...base, outcome: r.statut === 'adopte' ? 'decomposition_adopted' : 'decomposition_proposed', decoupage: r.decoupage };
     }
     case 'ouvriere': {
-      const mod = a.alveole.critere_fini.module ?? 'solution.mjs';
-      const fns = [...new Set(a.alveole.critere_fini.tests.map((t) => t.fn))];
+      const crit = a.alveole.critere_fini;
+      const mod = crit.verificateur === 'tests-js@1' ? (crit.module ?? 'solution.mjs') : 'tests.json';
+      const fns = crit.verificateur === 'tests-js@1' ? [...new Set([...crit.tests.map((t) => t.fn), ...(crit.proprietes ?? []).map((p) => p.fn)])] : crit.fonctions;
       const wrong = fns.map((f) => `export function ${f}() { return -1; }`).join('\n');
       const code = opts.bug ? (script.bugs?.[mod] ?? wrong) : (script.solutions[mod] ?? wrong);
       const livrable: Livrable = { fichiers: { [mod]: code } };
@@ -108,13 +111,14 @@ export async function scriptedBee(
       return { ...base, outcome: r.statut === 'rejete' ? 'rejected' : 'delivered', motif: r.rapport.motif };
     }
     case 'batisseuse': {
-      const livrable = assemble(a.enfants_valides ?? [], a.alveole.critere_fini.module ?? 'solution.mjs');
+      const crit = a.alveole.critere_fini;
+      const livrable = assemble(a.enfants_valides ?? [], crit.verificateur === 'tests-js@1' ? (crit.module ?? 'solution.mjs') : crit.module);
       const r = await h.submit(makeResult(h.identite, a.alveole_id, 'batisseuse', livrable, { agent: { famille: 'script' } }), livrable);
       return { ...base, outcome: r.statut === 'rejete' ? 'assembly_rejected' : 'assembled', motif: r.rapport.motif };
     }
     case 'gardienne': {
       const cible = a.a_verifier!;
-      const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable);
+      const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
       const r = await h.verdict(makeVerdict(h.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif));
       if (r.piege) return { ...base, outcome: r.correct ? 'trap_caught' : 'trap_missed' };
       const outcome: Outcome = r.statut === 'miel' ? 'verified' : r.statut === 'rejete' ? 'fake_caught' : r.renverse ? 'overturned' : 'confirmed';

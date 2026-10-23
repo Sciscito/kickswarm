@@ -26,6 +26,11 @@ export function sha256(text: string): Hash {
   return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`;
 }
 
+/** Engagement sur une valeur secrète (tests cachés, référence) : on publie le hash, on révèle plus tard. */
+export function commitment(value: unknown): Hash {
+  return sha256(canonicalize(value));
+}
+
 /** Identifiant d'un objet OSP : hash de sa forme canonique, champ `sig` exclu (§4.1). */
 export function hashOf(obj: object): Hash {
   const { sig: _sig, ...rest } = obj as Record<string, unknown>;

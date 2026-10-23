@@ -1,4 +1,5 @@
-import type { ContributorId, Hash, Livrable, Result, Verdict } from '../protocol/types.js';
+import { commitment } from '../protocol/canonical.js';
+import type { ContributorId, Hash, Livrable, Result, TestCase, Verdict } from '../protocol/types.js';
 import { verifierV0 } from '../verifier/v0.js';
 import { Coordinator, type CommandeDonnees } from './coordinator.js';
 import { COMMUN } from './ledger.js';
@@ -77,12 +78,19 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   });
   let divergence = coord.registry.entries[0]?.hash === first.hash ? undefined : 'the launch entry differs';
   const reverif: string[] = [];
+  // Tests cachés révélés à la validation : seuls ceux-là permettent de revérifier une alvéole qui en avait.
+  const reveles = new Map<string, TestCase[]>();
+  for (const e of entries) {
+    const d = e.donnees as { tests_caches?: TestCase[] };
+    if (e.nature === 'secrets_reveles' && d.tests_caches) reveles.set(commitment(d.tests_caches), d.tests_caches);
+  }
+  const nonReveles = { n: 0 };
   for (const e of entries) {
     if (divergence) break;
     if (e.nature !== 'commande') continue;
     commandes++;
     const c = e.donnees as CommandeDonnees;
-    if (opts.reverifier) await reverify(coord, c, e.seq, reverif);
+    if (opts.reverifier) await reverify(coord, c, e.seq, reverif, reveles, nonReveles);
     try {
       await coord.replayCommande(c);
     } catch (err) {
@@ -140,7 +148,10 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     communOk ? `Commons ${(share * 100).toFixed(2)}% of ${totalParts.toFixed(3)} shares` : `bad split at ${communIssues.slice(0, 5).join(', ') || 'global share'}; share ${(share * 100).toFixed(2)}%`,
   );
 
-  if (opts.reverifier) add('Verifier reports reproduced by re-running every deliverable', reverif.length === 0, reverif.slice(0, 3).join('; ') || undefined);
+  if (opts.reverifier) {
+    const note = nonReveles.n ? `${nonReveles.n} check(s) skipped: their hidden tests are not revealed yet` : undefined;
+    add('Verifier reports reproduced by re-running every deliverable', reverif.length === 0, reverif.slice(0, 3).join('; ') || note);
+  }
 
   const etat = coord.stateHash();
   if (opts.etatAnnonce) add('The live coordinator holds exactly the replayed state', opts.etatAnnonce === etat, opts.etatAnnonce === etat ? undefined : `announced ${opts.etatAnnonce.slice(0, 20)}…, replay ${etat.slice(0, 20)}…`);
@@ -148,7 +159,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
 }
 
 /** Relance le vérificateur V0 sur le livrable d'une commande, avant de la rejouer. */
-async function reverify(coord: Coordinator, c: CommandeDonnees, seq: number, issues: string[]): Promise<void> {
+async function reverify(coord: Coordinator, c: CommandeDonnees, seq: number, issues: string[], reveles: Map<string, TestCase[]>, nonReveles: { n: number }): Promise<void> {
   const recorded = c.verifs?.[0];
   if (!recorded) return;
   let cible: { critere: NonNullable<ReturnType<Coordinator['critereOf']>>; livrable: Livrable } | undefined;
@@ -160,6 +171,14 @@ async function reverify(coord: Coordinator, c: CommandeDonnees, seq: number, iss
     cible = coord.resultForReverify((c.entree as { verdict: Verdict }).verdict.resultat);
   }
   if (!cible) return;
-  const again = await verifierV0(cible.critere, cible.livrable);
+  let caches: TestCase[] | undefined;
+  if (cible.critere.verificateur === 'tests-js@1' && cible.critere.tests_caches_hash) {
+    caches = reveles.get(cible.critere.tests_caches_hash);
+    if (!caches) {
+      nonReveles.n++;
+      return;
+    }
+  }
+  const again = await verifierV0(cible.critere, cible.livrable, { caches });
   if (again.ok !== recorded.ok) issues.push(`#${seq}: the registry says ${recorded.ok ? 'passed' : 'failed'}, a fresh run says ${again.ok ? 'passed' : 'failed'} (${again.motif})`);
 }

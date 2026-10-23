@@ -37,6 +37,29 @@ export interface TestCase {
   attendu: unknown;
 }
 
+/** Générateur d'entrées aléatoires pour un test par propriété (OSP v0.2, §3.3). */
+export type Generateur =
+  | { type: 'int'; min: number; max: number }
+  | { type: 'float'; min: number; max: number }
+  | { type: 'bool' }
+  | { type: 'string'; alphabet?: string; maxLen: number }
+  | { type: 'array'; of: Generateur; maxLen: number }
+  | { type: 'oneOf'; values: unknown[] };
+
+/**
+ * Test par propriété : `fn` est appelée sur des entrées tirées par `args`, et l'expression
+ * JavaScript `verifie` doit être vraie. Elle voit `args`, `out` (le résultat) et `eq` (égalité profonde).
+ * Exemple : pgcd → verifie = "args[0] % out === 0 && args[1] % out === 0".
+ */
+export interface Propriete {
+  nom: string;
+  fn: string;
+  args: Generateur[];
+  verifie: string;
+  /** Nombre de cas tirés, 200 par défaut. */
+  cas?: number;
+}
+
 /** Critère de fin V0 : un module ES dont les exports doivent passer les tests. */
 export interface CritereV0 {
   classe: 'V0';
@@ -44,11 +67,36 @@ export interface CritereV0 {
   /** Fichier à importer, `solution.mjs` par défaut. */
   module?: string;
   tests: TestCase[];
+  proprietes?: Propriete[];
+  /**
+   * Engagement sur des tests cachés (§3.1) : sha256 de leur forme canonique. Les tests eux-mêmes
+   * restent dans le coffre du coordinateur et ne sont révélés au registre qu'à la validation.
+   */
+  tests_caches_hash?: Hash;
+  /** Engagement sur une implémentation de référence, qui sert à mesurer la force des tests (§3.2). */
+  reference_hash?: Hash;
+  timeout_ms?: number;
+}
+
+/**
+ * Critère V0 pour une tâche qui consiste à écrire des tests : le livrable `tests.json` contient des
+ * tests et des propriétés pour le module `cible`. Ils doivent tous passer sur la vraie cible, et
+ * détecter au moins `score_min` des mutants de la cible (score de mutation, §3.2).
+ */
+export interface CritereTestsDeTests {
+  classe: 'V0';
+  verificateur: 'tests-de-tests@1';
+  /** Module de la cible à tester. */
+  module: string;
+  cible: Livrable;
+  /** Fonctions de la cible que les tests doivent couvrir. */
+  fonctions: string[];
+  score_min?: number;
   timeout_ms?: number;
 }
 
 /** Le MVP ne connaît que V0 ; V1 et V2 arrivent ensuite (§9.1). */
-export type CritereFini = CritereV0;
+export type CritereFini = CritereV0 | CritereTestsDeTests;
 
 /** Ce qu'un porteur ou une éclaireuse décrit avant que le coordinateur n'émette l'alvéole. */
 export interface CellSpec {
@@ -58,6 +106,12 @@ export interface CellSpec {
   critere_fini: CritereFini;
   atomique: boolean;
   budget?: Budget;
+}
+
+/** La partie secrète d'une alvéole, envoyée à côté de l'objet signé, jamais dedans. */
+export interface Secrets {
+  tests_caches?: TestCase[];
+  reference?: Livrable;
 }
 
 /** §4.2. Le statut vit dans l'état du coordinateur : un objet signé est immuable. */

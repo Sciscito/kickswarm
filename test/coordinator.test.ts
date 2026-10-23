@@ -23,11 +23,11 @@ function nouvelleRuche(opts: ConstructorParameters<typeof Coordinator>[0]['param
   return c;
 }
 
-function decouper(c: Coordinator): void {
+async function decouper(c: Coordinator): Promise<void> {
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'Conforme à la charte'));
   const a = c.claim(makeRequete(lea, 'claim'))!;
   assert.equal(a.caste, 'eclaireuse');
-  const d = c.submitDecomposition(makeDecomposition(lea, a.alveole_id, ENFANTS));
+  const d = await c.submitDecomposition(makeDecomposition(lea, a.alveole_id, ENFANTS));
   assert.equal(d.statut, 'en_attente_porteur', 'le niveau 0 attend le porteur (§6.3)');
   c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'Découpage clair'));
 }
@@ -40,7 +40,7 @@ test('de l’idée au miel : une ruche complète, de bout en bout', async () => 
 
   const a = c.claim(makeRequete(lea, 'claim'))!;
   assert.equal(a.caste, 'eclaireuse', 'le cœur non atomique appelle une éclaireuse');
-  const d = c.submitDecomposition(makeDecomposition(lea, a.alveole_id, ENFANTS));
+  const d = await c.submitDecomposition(makeDecomposition(lea, a.alveole_id, ENFANTS));
   assert.throws(() => c.decide(makeDecision(kenji, 'approbation_decoupage', d.decoupage, 'ok')), /porteur/);
   c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'Découpage clair'));
   assert.deepEqual(c.hiveView('maths').progression, { miel: 0, total: 4 });
@@ -80,7 +80,7 @@ test('de l’idée au miel : une ruche complète, de bout en bout', async () => 
 
 test('on ne vérifie jamais son propre travail', async () => {
   const c = nouvelleRuche();
-  decouper(c);
+  await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
   assert.equal(a.caste, 'ouvriere');
   const mod = a.alveole.critere_fini.module!;
@@ -100,7 +100,7 @@ test('on ne vérifie jamais son propre travail', async () => {
 
 test('une gardienne qui rejette à tort un résultat juste perd de la réputation', async () => {
   const c = nouvelleRuche();
-  decouper(c);
+  await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
   const mod = a.alveole.critere_fini.module!;
   const { SOLUTIONS } = await import('../src/exemples/maths.js');
@@ -121,7 +121,7 @@ test('une gardienne qui rejette à tort un résultat juste perd de la réputatio
 
 test('alvéoles-pièges : la gardienne attentive gagne, la complaisante perd la moitié', async () => {
   const c = nouvelleRuche({ taux_pieges: 1 });
-  decouper(c);
+  await decouper(c);
   const p1 = c.claim(makeRequete(amara, 'claim'))!;
   assert.equal(p1.caste, 'gardienne');
   const r1 = await c.submitVerdict(makeVerdict(amara, p1.a_verifier!.id, 'rejete', 'les tests échouent'));
@@ -135,10 +135,10 @@ test('alvéoles-pièges : la gardienne attentive gagne, la complaisante perd la 
   assert.equal(c.account(kenji.id).reputation, Math.round(avant * 0.5 * 10_000) / 10_000);
 });
 
-test('bail expiré : l’alvéole revient dans l’essaim', () => {
+test('bail expiré : l’alvéole revient dans l’essaim', async () => {
   let maintenant = Date.now();
   const c = nouvelleRuche({}, { now: () => maintenant });
-  decouper(c);
+  await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
   const avant = c.account(kenji.id).reputation;
   maintenant += 1800 * 1.5 * 1000 + 1;
@@ -148,9 +148,9 @@ test('bail expiré : l’alvéole revient dans l’essaim', () => {
   assert.notEqual(c.hiveView('maths').alveoles.find((x) => x.id === a.alveole_id)!.etat, 'reservee');
 });
 
-test('anti-rejeu, pause et orientation', () => {
+test('anti-rejeu, pause et orientation', async () => {
   const c = nouvelleRuche();
-  decouper(c);
+  await decouper(c);
   const req = makeRequete(kenji, 'claim');
   c.claim(req);
   assert.throws(() => c.claim(req), /rejouée/);
@@ -186,7 +186,7 @@ test('persistance : le coordinateur reprend son état et son registre', async ()
 
 test('double vérification : deux gardiennes distinctes, puis les trophées tombent', async () => {
   const c = nouvelleRuche();
-  decouper(c);
+  await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
   const mod = a.alveole.critere_fini.module!;
   const { SOLUTIONS } = await import('../src/exemples/maths.js');

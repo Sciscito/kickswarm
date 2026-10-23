@@ -74,6 +74,36 @@ Pour du code, la vraie défense n'est pas de multiplier les relectures. Elle est
   - l'auteur et les gardiennes qui avaient validé perdent de la réputation.
 - **C'est le moteur d'auto-renforcement.** Chaque faille trouvée rend l'essaim plus dur à tromper, pour toujours.
 
+### 3.6 Ce qui est implémenté (P0-2)
+
+- **Tests cachés.**
+  - Le critère publie seulement un **engagement**, `tests_caches_hash` : le sha256 de la forme canonique des tests.
+  - Les tests eux-mêmes voyagent **à côté** de l'objet signé, jamais dedans. Le coordinateur les garde dans un **coffre privé**, hors de l'état et du registre.
+  - Le vérificateur les exécute. Leurs échecs ne sont **jamais détaillés** : ni arguments, ni valeur attendue, ni valeur obtenue.
+  - Ils sont **révélés au registre à la validation** (`secrets_reveles`). L'auditeur s'en sert alors pour revérifier.
+  - Ouvrières et gardiennes ne les voient jamais.
+- **Tests par propriétés.**
+  - Générateurs : entiers, flottants, booléens, chaînes, tableaux, choix parmi des valeurs.
+  - Une expression doit être vraie sur des centaines d'entrées tirées au hasard.
+  - **La graine est dérivée du hash du livrable**, à la manière de Fiat-Shamir : modifier le code change les entrées tirées, donc impossible de viser des cas à l'avance. Pourtant, chacun peut reproduire exactement les mêmes tirages.
+  - En cas d'échec, on donne un contre-exemple concret.
+- **Moteur de mutation.**
+  - Il inverse les opérateurs, décale les comparaisons, échange `&&` et `||`, change les booléens et les constantes.
+  - Il ne touche jamais aux chaînes, aux gabarits, aux commentaires ni aux expressions régulières.
+- **Force des tests à l'entrée.** Quand une éclaireuse fournit une référence secrète (`reference_hash`), le découpage n'est accepté que si la référence passe ses propres tests et que ces tests détectent au moins **80 %** de ses mutants. Le score est inscrit au registre, puis porté par chaque alvéole (`force_tests`). Le paramètre `reference_obligatoire` permet de l'exiger partout.
+- **Le vérificateur `tests-de-tests@1`.** Pour les tâches qui consistent à *écrire des tests* (la ruche « Bouclier open source »), le livrable est une suite de tests. Elle doit passer sur la vraie cible et tuer au moins 80 % de ses mutants. C'est un critère objectif et vérifiable par n'importe qui.
+- **Une faille corrigée au passage.** Dans le MVP, le code testé pouvait imprimer une fausse ligne « tous les tests passent ». Désormais :
+  - les tests arrivent par l'entrée standard, consommée avant le chargement du module ;
+  - le résultat porte un **jeton secret** propre à chaque exécution ;
+  - le lanceur capture ses primitives (`JSON`, `Object.keys`, la sortie) avant tout chargement ;
+  - la comparaison est faite par une égalité profonde maison, que le module testé ne peut pas remplacer.
+
+**Limites assumées :**
+
+- **Les mutants équivalents** (une mutation qui ne change rien au comportement) abaissent un peu le score : le seuil de 80 % en tient compte.
+- **Une propriété ne vaut que par son expression.** Les tests montrent qu'un code qui renvoie toujours 1 passe « divise les deux », mais pas « est le plus grand ».
+- **Avant la révélation, le coordinateur a les tests cachés en main.** L'engagement garantit qu'il ne peut pas les changer après coup, mais pas qu'il ne les divulgue pas à un complice. Les parades viennent en P3 : chiffrement à seuil entre plusieurs coordinateurs.
+
 ---
 
 ## 4. Couche 2 : une vérification adaptative avec garantie (réponse à F2)
@@ -287,9 +317,10 @@ Chaque erreur détectée laisse l'essaim plus fort qu'avant. C'est le sens exact
 | Priorité | Chantier | Failles corrigées | Taille |
 |---|---|---|---|
 | **P0-1** ✅ | **Registre intégral et `kickswarm audit`** : objets signés complets, état rejoué, invariants vérifiés. *Fait : voir §6.4.* | F4, et la base de tout le reste | Moyenne |
-| **P0-2** | **Tests cachés + score de mutation + tests par propriétés** dans le vérificateur V0 | F1 | Moyenne |
+| **P0-2** ✅ | **Tests cachés + score de mutation + tests par propriétés** dans le vérificateur V0. *Fait : voir §3.6.* | F1 | Moyenne |
 | **P0-3** | **Pièges par mutation** et taux de pièges individuel | F3 | Petite |
 | **P0-4** | **Réputation Beta et test de Wald** à la place de k = 2 (avec un plancher à 2) | F2, F6 | Moyenne |
+| **P0-5** | **Signatures post-quantiques** : identités hybrides Ed25519 + ML-DSA-65 (FIPS 204), coordinateur et registre signés en SLH-DSA (FIPS 205, sécurité fondée sur les seules fonctions de hachage). Node 24 les fournit nativement. | Menace quantique sur Ed25519 | Moyenne |
 | **P1-1** | **Caste des chasseuses** et primes au contre-exemple | F1, auto-renforcement | Moyenne |
 | **P1-2** | **Contrat d'abord** pour les découpages, et découpages en concurrence | F7 | Grande |
 | **P1-3** | **drand et engagement-révélation** pour les verdicts | F5 | Petite |

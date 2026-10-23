@@ -23,7 +23,7 @@ test('V0 : une solution correcte passe tous les tests', async () => {
 test('V0 : une valeur fausse est rejetée avec le détail', async () => {
   const r = await verifierV0(critere, { fichiers: { 'pgcd.mjs': 'export const pgcd = (a, b) => a * b;' } });
   assert.equal(r.ok, false);
-  assert.match(r.motif, /2\/2 tests failed/);
+  assert.match(r.motif, /2\/2 checks failed/);
 });
 
 test('V0 : une exception ou un export manquant est rejeté', async () => {

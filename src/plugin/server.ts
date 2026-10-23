@@ -2,7 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { makeDecomposition, makeResult, makeVerdict } from '../protocol/builders.js';
-import type { Assignment, CellSpec, Livrable } from '../protocol/types.js';
+import { commitment } from '../protocol/canonical.js';
+import type { Assignment, CellSpec, Livrable, Propriete, Secrets, TestCase } from '../protocol/types.js';
 import { validateCritere, verifierV0 } from '../verifier/v0.js';
 import { CoordinatorClient } from './client.js';
 import { consignes } from './consignes.js';
@@ -32,15 +33,37 @@ const testSchema = z.object({
   attendu: z.unknown().describe('Expected value (deep-compared, as JSON)'),
 });
 
+const generateurSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([
+    z.object({ type: z.literal('int'), min: z.number(), max: z.number() }),
+    z.object({ type: z.literal('float'), min: z.number(), max: z.number() }),
+    z.object({ type: z.literal('bool') }),
+    z.object({ type: z.literal('string'), alphabet: z.string().optional(), maxLen: z.number() }),
+    z.object({ type: z.literal('array'), of: generateurSchema, maxLen: z.number() }),
+    z.object({ type: z.literal('oneOf'), values: z.array(z.unknown()) }),
+  ]),
+);
+
+const proprieteSchema = z.object({
+  nom: z.string(),
+  fn: z.string(),
+  args: z.array(generateurSchema).describe('One generator per argument'),
+  verifie: z.string().describe('JavaScript expression over args, out and eq that must be true'),
+  cas: z.number().optional(),
+});
+
 const enfantSchema = z.object({
   objectif: z.string(),
   capsule: z.string().describe('The context needed, and nothing more'),
   atomique: z.boolean(),
   critere_fini: z.object({
     module: z.string().describe('Name of the delivered module, e.g. gcd.mjs'),
-    tests: z.array(testSchema).min(1),
+    tests: z.array(testSchema),
+    proprietes: z.array(proprieteSchema).optional().describe('Property tests on random inputs'),
     timeout_ms: z.number().optional(),
   }),
+  tests_caches: z.array(testSchema).optional().describe('Hidden tests: the workers never see them'),
+  reference: z.record(z.string(), z.string()).optional().describe('Your own implementation (file name → code), kept secret, used to measure how strong the tests are'),
 });
 
 export function createPluginServer(client: CoordinatorClient): McpServer {
@@ -80,7 +103,7 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
 
       if (a.caste === 'gardienne') {
         const cible = a.a_verifier!;
-        const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable);
+        const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
         const verdict = makeVerdict(client.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
         const r = await client.verdict(verdict);
         const issue = r.piege
@@ -115,7 +138,7 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
       const a = enCours;
       if (!a || (a.caste !== 'ouvriere' && a.caste !== 'batisseuse')) return erreur('No worker or builder cell in progress. Call swarm_next.');
       const livrable: Livrable = { fichiers };
-      const local = await verifierV0(a.alveole.critere_fini, livrable);
+      const local = await verifierV0(a.alveole.critere_fini, livrable, { sansCaches: true });
       if (!local.ok) return erreur(`Not yet: ${local.motif}\nFix it and call swarm_submit again. Nothing was sent.`);
       const resultat = makeResult(client.identite, a.alveole_id, a.caste, livrable, {
         impasses,
@@ -141,14 +164,28 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
     outil(async ({ enfants }: { enfants: z.infer<typeof enfantSchema>[] }) => {
       const a = enCours;
       if (!a || a.caste !== 'eclaireuse') return erreur('No scout cell in progress. Call swarm_next.');
-      const specs: CellSpec[] = enfants.map((e) => ({
+      // Secrets (hidden tests, reference) never enter the signed object: only their commitments do.
+      const secrets: Secrets[] = enfants.map((e) => ({
+        ...(e.tests_caches?.length ? { tests_caches: e.tests_caches as TestCase[] } : {}),
+        ...(e.reference ? { reference: { fichiers: e.reference } } : {}),
+      }));
+      const specs: CellSpec[] = enfants.map((e, i) => ({
         objectif: e.objectif,
         capsule: e.capsule,
         atomique: e.atomique,
-        critere_fini: { classe: 'V0', verificateur: 'tests-js@1', module: e.critere_fini.module, tests: e.critere_fini.tests, ...(e.critere_fini.timeout_ms ? { timeout_ms: e.critere_fini.timeout_ms } : {}) },
+        critere_fini: {
+          classe: 'V0',
+          verificateur: 'tests-js@1',
+          module: e.critere_fini.module,
+          tests: e.critere_fini.tests as TestCase[],
+          ...(e.critere_fini.proprietes?.length ? { proprietes: e.critere_fini.proprietes as Propriete[] } : {}),
+          ...(secrets[i]!.tests_caches ? { tests_caches_hash: commitment(secrets[i]!.tests_caches) } : {}),
+          ...(secrets[i]!.reference ? { reference_hash: commitment(secrets[i]!.reference) } : {}),
+          ...(e.critere_fini.timeout_ms ? { timeout_ms: e.critere_fini.timeout_ms } : {}),
+        },
       }));
       for (const s of specs) validateCritere(s.critere_fini);
-      const r = await client.decompose(makeDecomposition(client.identite, a.alveole_id, specs));
+      const r = await client.decompose(makeDecomposition(client.identite, a.alveole_id, specs), secrets);
       enCours = undefined;
       return texte(
         r.statut === 'adopte'

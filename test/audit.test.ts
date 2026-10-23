@@ -135,7 +135,7 @@ test('audit : un vérificateur menteur passe le rejeu, mais pas la revérificati
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const a = c.claim(makeRequete(bees[0]!, 'claim'))!;
-  const d = c.submitDecomposition(makeDecomposition(bees[0]!, a.alveole_id, ENFANTS));
+  const d = await c.submitDecomposition(makeDecomposition(bees[0]!, a.alveole_id, ENFANTS));
   c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'ok'));
   await abeilleScriptee(c, bees[1]!, { bug: true });
   assert.ok(c.hiveView('maths').alveoles.some((x) => x.etat === 'miel'), 'le menteur a fait passer du code faux');

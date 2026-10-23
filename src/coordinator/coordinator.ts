@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { canonicalize, hashOf, sha256 } from '../protocol/canonical.js';
+import { canonicalize, commitment, hashOf, sha256 } from '../protocol/canonical.js';
 import { generateIdentity, isContributorId, signObject, verifyObject, type Identity } from '../protocol/identity.js';
 import type {
   Assignment,
@@ -17,9 +17,11 @@ import type {
   Livrable,
   Requete,
   Result,
+  Secrets,
+  TestCase,
   Verdict,
 } from '../protocol/types.js';
-import { validateCritere, validateLivrable, verifierV0, type VerifReport } from '../verifier/v0.js';
+import { adequation, validateCritere, validateLivrable, validateTests, verifierV0, type VerifOptions, type VerifReport } from '../verifier/v0.js';
 import { COMMUN, Ledger, type Account } from './ledger.js';
 import { transition } from './lifecycle.js';
 import { DEFAULT_PARAMS, type Params } from './params.js';
@@ -62,6 +64,8 @@ export interface CellRecord {
   en_attente?: Hash;
   resultat_valide?: Hash;
   validee_par?: ContributorId[];
+  /** Score de mutation de ses tests contre une référence (OSP v0.2, §3.2), s'il a été mesuré. */
+  force_tests?: number;
 }
 
 interface Orientation {
@@ -93,6 +97,8 @@ interface ResultRecord {
 interface DecompRecord {
   decomposition: Decomposition;
   statut: 'en_attente' | 'adoptee' | 'refusee';
+  /** Score de mutation mesuré pour chaque enfant (null : pas de référence fournie). */
+  force_tests: Array<number | null>;
 }
 
 interface Piege {
@@ -144,6 +150,8 @@ export interface CommandeDonnees {
   alea: number[];
   signatures: string[];
   verifs: VerifReport[];
+  /** Secrets révélés pendant la commande (tests cachés, références), par engagement. */
+  secrets?: Record<string, unknown>;
   etat: Hash;
 }
 
@@ -152,12 +160,13 @@ interface ReplayStep {
   alea: number[];
   signatures: string[];
   verifs: VerifReport[];
+  secrets: Record<string, unknown>;
 }
 
 /** Le rejeu ne reproduit pas l'histoire inscrite au registre. */
 export class ReplayDivergence extends Error {}
 
-export type Verifier = (critere: Cell['critere_fini'], livrable: Livrable) => Promise<VerifReport>;
+export type Verifier = (critere: Cell['critere_fini'], livrable: Livrable, opts?: VerifOptions) => Promise<VerifReport>;
 
 export interface CoordinatorOptions {
   fondateur: ContributorId;
@@ -241,8 +250,10 @@ export class Coordinator {
   private readonly occupees = new Set<Hash>();
   /** Pendant une commande : l'heure figée, et ce qu'il faut inscrire pour pouvoir la rejouer. */
   private clock: number | null = null;
-  private recording: { alea: number[]; signatures: string[] } | null = null;
-  private replayCtx: { alea: number[]; signatures: string[] } | null = null;
+  private recording: { alea: number[]; signatures: string[]; secrets: Record<string, unknown> } | null = null;
+  private replayCtx: { alea: number[]; signatures: string[]; secrets: Record<string, unknown> } | null = null;
+  /** Le coffre : tests cachés et références, par engagement. Privé, hors de l'état et du registre. */
+  private coffre: Record<string, unknown> = {};
   private replayNext: ReplayStep | null = null;
 
   private readonly now = (): number => this.clock ?? this.baseNow();
@@ -275,6 +286,8 @@ export class Coordinator {
       this.identite = { id: options.replay.coordinateur, privateKeyPem: '' };
       this.identitePieges = { id: options.replay.pieges, privateKeyPem: '' };
     } else if (keysFile && existsSync(keysFile)) {
+      const coffreFile = join(dir!, 'coffre.json');
+      if (existsSync(coffreFile)) this.coffre = JSON.parse(readFileSync(coffreFile, 'utf8')) as Record<string, unknown>;
       const keys = JSON.parse(readFileSync(keysFile, 'utf8')) as { coordinateur: Identity; pieges: Identity };
       this.identite = keys.coordinateur;
       this.identitePieges = keys.pieges;
@@ -345,7 +358,7 @@ export class Coordinator {
    */
   async replayCommande(c: CommandeDonnees): Promise<void> {
     if (!this.options.replay) throw new Error('Rejeu réservé à un coordinateur créé en mode audit');
-    this.replayNext = { at: c.at, alea: [...(c.alea ?? [])], signatures: [...(c.signatures ?? [])], verifs: c.verifs ?? [] };
+    this.replayNext = { at: c.at, alea: [...(c.alea ?? [])], signatures: [...(c.signatures ?? [])], verifs: c.verifs ?? [], secrets: c.secrets ?? {} };
     const e = c.entree as {
       ruche: Hive; racine: CellSpec; decision: Decision; requete: Requete; resultat: Result; livrable: Livrable; decomposition: Decomposition; verdict: Verdict;
     };
@@ -357,7 +370,7 @@ export class Coordinator {
         case 'start': this.start(e.requete); break;
         case 'release': this.release(e.requete); break;
         case 'submitResult': await this.submitResult(e.resultat, e.livrable); break;
-        case 'submitDecomposition': this.submitDecomposition(e.decomposition); break;
+        case 'submitDecomposition': await this.submitDecomposition(e.decomposition); break;
         case 'submitVerdict': await this.submitVerdict(e.verdict); break;
         default: throw new ReplayDivergence(`Commande inconnue : ${String(c.type)}`);
       }
@@ -376,8 +389,8 @@ export class Coordinator {
     if (this.options.replay && !replay) throw new Error('Coordinateur en mode audit : il ne fait que rejouer le registre');
     const at = replay ? replay.at : this.baseNow();
     this.clock = at;
-    this.replayCtx = replay ? { alea: [...replay.alea], signatures: [...replay.signatures] } : null;
-    this.recording = replay ? null : { alea: [], signatures: [] };
+    this.replayCtx = replay ? { alea: [...replay.alea], signatures: [...replay.signatures], secrets: replay.secrets } : null;
+    this.recording = replay ? null : { alea: [], signatures: [], secrets: {} };
     const snapshot = structuredClone(this.state);
     this.registry.begin();
     try {
@@ -387,7 +400,10 @@ export class Coordinator {
       }
       const alea = replay ? replay.alea : this.recording!.alea;
       const signatures = replay ? replay.signatures : this.recording!.signatures;
-      this.registry.append('commande', { type, entree, at, alea, signatures, verifs, etat: this.stateHash() } satisfies CommandeDonnees);
+      const secrets = replay ? replay.secrets : this.recording!.secrets;
+      this.registry.append('commande', {
+        type, entree, at, alea, signatures, verifs, ...(Object.keys(secrets).length ? { secrets } : {}), etat: this.stateHash(),
+      } satisfies CommandeDonnees);
       this.registry.commit();
       this.save();
       return out;
@@ -400,6 +416,60 @@ export class Coordinator {
       this.clock = null;
       this.replayCtx = null;
       this.recording = null;
+    }
+  }
+
+  /** Révèle un secret du coffre et l'inscrit dans la commande ; au rejeu, le reprend et vérifie l'engagement. */
+  private reveal(hash: Hash): unknown {
+    if (this.replayCtx) {
+      const v = this.replayCtx.secrets[hash];
+      if (v === undefined || commitment(v) !== hash) throw new ReplayDivergence('Secret révélé absent ou contraire à son engagement');
+      return v;
+    }
+    const v = this.coffre[hash];
+    if (v === undefined) throw new OspError('Secret absent du coffre de ce coordinateur', 500);
+    this.recording!.secrets[hash] = v;
+    return v;
+  }
+
+  /** Les tests cachés d'une alvéole, sortis du coffre, pour le vérificateur. */
+  private cachesFor(rec: CellRecord): TestCase[] | undefined {
+    const c = rec.cell.critere_fini;
+    if (c.verificateur !== 'tests-js@1' || !c.tests_caches_hash) return undefined;
+    const v = this.coffre[c.tests_caches_hash] as TestCase[] | undefined;
+    if (!v) throw new OspError('Les tests cachés de cette alvéole ne sont pas dans le coffre de ce coordinateur', 503);
+    return v;
+  }
+
+  /** Vérifie que chaque secret correspond à l'engagement publié dans le critère. */
+  private checkSecrets(spec: CellSpec, secret: Secrets | undefined, label: string): void {
+    const c = spec.critere_fini;
+    if (c.verificateur !== 'tests-js@1') {
+      if (secret?.tests_caches || secret?.reference) throw new OspError(`${label} : ce type de critère n'a pas de secrets`);
+      return;
+    }
+    if (c.tests_caches_hash) {
+      if (!secret?.tests_caches) throw new OspError(`${label} : les tests cachés annoncés n'ont pas été envoyés`);
+      try { validateTests(secret.tests_caches, 'hidden tests'); } catch (e) { throw new OspError(`${label} : ${(e as Error).message}`); }
+      if (commitment(secret.tests_caches) !== c.tests_caches_hash) throw new OspError(`${label} : les tests cachés ne correspondent pas à leur engagement`);
+    } else if (secret?.tests_caches) throw new OspError(`${label} : envoie l'engagement tests_caches_hash avec les tests cachés`);
+    if (c.reference_hash) {
+      if (!secret?.reference) throw new OspError(`${label} : la référence annoncée n'a pas été envoyée`);
+      try { validateLivrable(secret.reference); } catch (e) { throw new OspError(`${label} : référence invalide : ${(e as Error).message}`); }
+      if (commitment(secret.reference) !== c.reference_hash) throw new OspError(`${label} : la référence ne correspond pas à son engagement`);
+    } else if (secret?.reference) throw new OspError(`${label} : envoie l'engagement reference_hash avec la référence`);
+  }
+
+  private storeSecrets(secrets: Array<Secrets | undefined>): void {
+    let changed = false;
+    for (const sec of secrets) {
+      if (sec?.tests_caches) { this.coffre[commitment(sec.tests_caches)] = sec.tests_caches; changed = true; }
+      if (sec?.reference) { this.coffre[commitment(sec.reference)] = sec.reference; changed = true; }
+    }
+    if (changed && this.options.dataDir) {
+      const file = join(this.options.dataDir, 'coffre.json');
+      writeFileSync(file + '.tmp', JSON.stringify(this.coffre), { encoding: 'utf8', mode: 0o600 });
+      renameSync(file + '.tmp', file);
     }
   }
 
@@ -423,8 +493,11 @@ export class Coordinator {
 
   // ---------------------------------------------------------------- ruches
 
-  proposeHive(ruche: Hive, racine: CellSpec): HiveView {
-    return this.run('proposeHive', { ruche, racine }, [], () => this.doProposeHive(ruche, racine));
+  proposeHive(ruche: Hive, racine: CellSpec, secrets?: Secrets): HiveView {
+    if (!this.replayNext) this.checkSecrets(racine, secrets, 'Cœur de la ruche');
+    const out = this.run('proposeHive', { ruche, racine }, [], () => this.doProposeHive(ruche, racine));
+    if (!this.options.replay) this.storeSecrets([secrets]);
+    return out;
   }
 
   private doProposeHive(ruche: Hive, racine: CellSpec): HiveView {
@@ -745,7 +818,7 @@ export class Coordinator {
     if (this.occupees.has(rec.id)) throw new OspError('Une vérification est déjà en cours pour cette alvéole', 409);
     this.occupees.add(rec.id);
     try {
-      return await this.verifier(rec.cell.critere_fini, livrable);
+      return await this.verifier(rec.cell.critere_fini, livrable, { caches: this.cachesFor(rec) });
     } finally {
       this.occupees.delete(rec.id);
     }
@@ -800,27 +873,67 @@ export class Coordinator {
     return { statut: 'en_verification', resultat: id, rapport };
   }
 
-  submitDecomposition(d: Decomposition): { statut: 'en_attente_porteur' | 'adopte'; decoupage: Hash; enfants: Hash[] } {
-    return this.run('submitDecomposition', { decomposition: d }, [], () => this.doSubmitDecomposition(d));
+  async submitDecomposition(d: Decomposition, secrets: Array<Secrets | undefined> = []): Promise<{ statut: 'en_attente_porteur' | 'adopte'; decoupage: Hash; enfants: Hash[] }> {
+    const replay = this.replayNext;
+    const verifs = replay ? replay.verifs : await this.checkDecomposition(d, secrets);
+    const out = this.run('submitDecomposition', { decomposition: d }, verifs, () => this.doSubmitDecomposition(d, verifs));
+    if (!this.options.replay) this.storeSecrets(secrets);
+    return out;
   }
 
-  private doSubmitDecomposition(d: Decomposition): { statut: 'en_attente_porteur' | 'adopte'; decoupage: Hash; enfants: Hash[] } {
+  /**
+   * Hors de la transaction : les secrets correspondent-ils à leurs engagements, et les tests de chaque
+   * enfant qui fournit une référence sont-ils assez forts (score de mutation, OSP v0.2 §3.2) ?
+   */
+  private async checkDecomposition(d: Decomposition, secrets: Array<Secrets | undefined>): Promise<VerifReport[]> {
+    this.decompositionBasics(d);
+    const reports: VerifReport[] = [];
+    for (const [i, child] of d.enfants.entries()) {
+      const label = `Enfant ${i + 1} (« ${child.objectif.slice(0, 50)} »)`;
+      this.checkSecrets(child, secrets[i], label);
+      const c = child.critere_fini;
+      if (c.verificateur !== 'tests-js@1') continue;
+      if (!c.reference_hash) {
+        if (this.params.reference_obligatoire) throw new OspError(`${label} : une implémentation de référence est exigée pour mesurer la force des tests`);
+        continue;
+      }
+      const r = await adequation(c, secrets[i]?.tests_caches ?? [], secrets[i]!.reference!, { scoreMin: this.params.score_mutation_min });
+      if (!r.ok) throw new OspError(`${label} : ${r.motif}`);
+      reports.push(r);
+    }
+    return reports;
+  }
+
+  /** Les contrôles du découpage qui ne demandent aucun calcul lourd. */
+  private decompositionBasics(d: Decomposition): CellRecord {
     if (d?.type !== 'osp.decomposition/0.1') throw new OspError('Objet découpage attendu (osp.decomposition/0.1)');
     if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Signature du découpage invalide', 401);
-    const id = hashOf(d);
-    if (this.state.decompositions[id]) throw new OspError('Découpage déjà soumis', 409);
+    if (this.state.decompositions[hashOf(d)]) throw new OspError('Découpage déjà soumis', 409);
     const rec = this.cellOrThrow(d.alveole);
     if (rec.bail?.par !== d.auteur || rec.bail.caste !== 'eclaireuse') throw new OspError('Tu n’es pas l’éclaireuse de cette alvéole', 403);
-    if (rec.state === 'reservee') transition(rec, 'en_cours');
-    if (rec.state !== 'en_cours') throw new OspError(`L'alvéole est ${rec.state}`, 409);
+    if (rec.state !== 'reservee' && rec.state !== 'en_cours') throw new OspError(`L'alvéole est ${rec.state}`, 409);
     const n = Array.isArray(d.enfants) ? d.enfants.length : 0;
     if (n < this.params.enfants_min || n > this.params.enfants_max) {
       throw new OspError(`Un découpage compte entre ${this.params.enfants_min} et ${this.params.enfants_max} enfants`);
     }
     if (rec.profondeur + 1 > this.params.profondeur_max) throw new OspError('Profondeur maximale atteinte (§6.4)');
     d.enfants.forEach((e) => this.validateSpec(e));
+    return rec;
+  }
 
-    this.state.decompositions[id] = { decomposition: d, statut: 'en_attente' };
+  private doSubmitDecomposition(d: Decomposition, verifs: VerifReport[]): { statut: 'en_attente_porteur' | 'adopte'; decoupage: Hash; enfants: Hash[] } {
+    // L'état a pu changer pendant la mesure des tests : on recontrôle, dans la transaction.
+    const rec = this.decompositionBasics(d);
+    const id = hashOf(d);
+    const n = d.enfants.length;
+    // Un score de mutation par enfant qui annonce une référence, dans l'ordre.
+    const avecRef = d.enfants.filter((e) => e.critere_fini.verificateur === 'tests-js@1' && e.critere_fini.reference_hash).length;
+    if (verifs.length !== avecRef || verifs.some((r) => !r.ok || !r.mutation)) throw new OspError('Mesure de la force des tests manquante ou insuffisante');
+    let k = 0;
+    const force_tests = d.enfants.map((e) => (e.critere_fini.verificateur === 'tests-js@1' && e.critere_fini.reference_hash ? verifs[k++]!.mutation!.score : null));
+    if (rec.state === 'reservee') transition(rec, 'en_cours');
+
+    this.state.decompositions[id] = { decomposition: d, statut: 'en_attente', force_tests };
     delete rec.bail;
     this.registry.append('decoupage_propose', { id, alveole: rec.id, chemin: rec.cell.chemin, auteur: d.auteur, enfants: n });
 
@@ -845,7 +958,7 @@ export class Coordinator {
     const rr = this.state.results[v.resultat];
     const rec = rr ? this.state.cells[rr.resultat.alveole] : undefined;
     if (!rr || !rec) return null;
-    return this.verifier(rec.cell.critere_fini, rr.livrable);
+    return this.verifier(rec.cell.critere_fini, rr.livrable, { caches: this.cachesFor(rec) });
   }
 
   private doSubmitVerdict(v: Verdict, rejeu: VerifReport | null): { statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number } {
@@ -949,9 +1062,12 @@ export class Coordinator {
     delete rec.en_attente;
     rec.redecouper = false;
     rec.rejets = 0;
-    rec.enfants = dr.decomposition.enfants.map(
-      (spec, i) => this.emitCell(rec.cell.ruche, spec, rec, rec.cell.chemin === '0' ? `${i + 1}` : `${rec.cell.chemin}.${i + 1}`, rec.profondeur + 1).id,
-    );
+    rec.enfants = dr.decomposition.enfants.map((spec, i) => {
+      const child = this.emitCell(rec.cell.ruche, spec, rec, rec.cell.chemin === '0' ? `${i + 1}` : `${rec.cell.chemin}.${i + 1}`, rec.profondeur + 1);
+      const f = dr.force_tests?.[i];
+      if (typeof f === 'number') child.force_tests = f;
+      return child.id;
+    });
     const hive = this.state.hives[rec.cell.ruche]!;
     const auteur = dr.decomposition.auteur;
     this.ledger.award(auteur, this.params.miel_eclaireuse, `découpage ${rec.cell.chemin}`, hive.ruche.slug);
@@ -1017,6 +1133,16 @@ export class Coordinator {
     }
     this.addBoard(slug, { nature: 'decouverte', chemin: rec.cell.chemin, texte: `Validée : ${rec.cell.objectif}`, auteur, source: resultId });
     this.registry.append('alveole_miel', { alveole: rec.id, chemin: rec.cell.chemin, resultat: resultId, auteur, gardiennes, grammes: g });
+    // Les secrets de l'alvéole deviennent publics : chacun peut désormais revérifier sa validation.
+    const crit = rec.cell.critere_fini;
+    if (crit.verificateur === 'tests-js@1' && (crit.tests_caches_hash || crit.reference_hash)) {
+      this.registry.append('secrets_reveles', {
+        alveole: rec.id,
+        chemin: rec.cell.chemin,
+        ...(crit.tests_caches_hash ? { tests_caches: this.reveal(crit.tests_caches_hash) } : {}),
+        ...(crit.reference_hash ? { reference: this.reveal(crit.reference_hash) } : {}),
+      });
+    }
 
     if (rec.cell.parent) {
       const parent = this.state.cells[rec.cell.parent];
@@ -1045,11 +1171,12 @@ export class Coordinator {
   }
 
   private makeTrap(who: ContributorId, cells: CellRecord[]): Assignment | null {
-    const bases = cells.filter((c) => c.cell.atomique && c.enfants.length === 0 && c.state !== 'bloquee');
+    const bases = cells.filter((c) => c.cell.atomique && c.enfants.length === 0 && c.state !== 'bloquee' && c.cell.critere_fini.verificateur === 'tests-js@1');
     if (!bases.length) return null;
     const rec = bases[Math.floor(this.rng() * bases.length)]!;
     const critere = rec.cell.critere_fini;
-    const fns = [...new Set(critere.tests.map((t) => t.fn))];
+    if (critere.verificateur !== 'tests-js@1') return null;
+    const fns = [...new Set([...critere.tests.map((t) => t.fn), ...(critere.proprietes ?? []).map((p) => p.fn)])];
     const livrable: Livrable = {
       fichiers: { [critere.module ?? 'solution.mjs']: fns.map((f) => `export function ${f}() { return '__piege__'; }`).join('\n') + '\n' },
     };

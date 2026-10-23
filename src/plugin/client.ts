@@ -1,6 +1,6 @@
 import { makeRequete } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
-import type { Assignment, CellSpec, Decision, Decomposition, Hash, Hive, Livrable, Result, Verdict } from '../protocol/types.js';
+import type { Assignment, CellSpec, Decision, Decomposition, Hash, Hive, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
 
 /** Client HTTP du coordinateur. Il signe chaque requête avec l'identité locale. */
 export class CoordinatorClient {
@@ -44,8 +44,8 @@ export class CoordinatorClient {
   registry(since = 0) {
     return this.call<unknown[]>('GET', `/v0/registry?since=${since}`);
   }
-  proposeHive(ruche: Hive, racine: CellSpec) {
-    return this.call('POST', '/v0/hives', { ruche, racine });
+  proposeHive(ruche: Hive, racine: CellSpec, secrets?: Secrets) {
+    return this.call('POST', '/v0/hives', { ruche, racine, ...(secrets ? { secrets } : {}) });
   }
   async claim(ruche?: string): Promise<Assignment | null> {
     const r = await this.call<{ assignation: Assignment | null }>('POST', '/v0/work/claim', makeRequete(this.identite, 'claim', ruche ? { ruche } : {}));
@@ -60,8 +60,8 @@ export class CoordinatorClient {
   submit(resultat: Result, livrable: Livrable) {
     return this.call<{ statut: string; resultat: Hash; rapport: { ok: boolean; motif: string } }>('POST', '/v0/work/submit', { resultat, livrable });
   }
-  decompose(d: Decomposition) {
-    return this.call<{ statut: string; decoupage: Hash; enfants: Hash[] }>('POST', '/v0/work/decompose', d);
+  decompose(d: Decomposition, secrets?: Array<Secrets | undefined>) {
+    return this.call<{ statut: string; decoupage: Hash; enfants: Hash[] }>('POST', '/v0/work/decompose', { decomposition: d, secrets: secrets ?? [] });
   }
   verdict(v: Verdict) {
     return this.call<{ statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number }>('POST', '/v0/work/verdict', v);

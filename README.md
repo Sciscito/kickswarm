@@ -117,6 +117,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Fractal loop: scouts, owner approval at levels 0 and 1, builders | ✅ One split per cell; competing splits (§6.2) come next. |
 | Random castes, never verifying your own work | ✅ Uses the coordinator's randomness; the public drand beacon (§7.2) is next. |
 | V0 verification: automatic + **2 random guards** who replay it | ✅ A guard who validated a broken result is overturned. |
+| Strong tests: hidden tests (committed, revealed at validation), property tests seeded by the deliverable's hash, mutation score of a cell's tests, and a `tests-de-tests@1` verifier for test-writing tasks | ✅ The runner also resists forged results. |
 | Trap cells, reputation, leases, anti-replay | ✅ |
 | Honey, crystallization into power shares, Commons at 30%, founder allocation | ✅ Dormant-honey crystallization and spending honey are next. |
 | Trophies (Pioneer, First Drop, Trap Hunter, Guardian, Scout, Builder, Founding Bee, Heart of the Hive, Hive Owner, Busy Bee) | ✅ |
