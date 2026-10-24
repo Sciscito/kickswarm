@@ -52,6 +52,10 @@ export interface Params {
   pionniers: number;
   /** Baux simultanés autorisés par contributeur (une abeille = un bail). */
   abeilles_max: number;
+  /** OSP v0.2 P0-5 : le registre est scellé au plus tard après ce délai… */
+  sceau_intervalle_ms: number;
+  /** … ou après ce nombre de commandes. */
+  sceau_max_commandes: number;
   /** Fenêtre d'acceptation des requêtes signées (anti-rejeu). */
   fenetre_requete_ms: number;
 }
@@ -93,5 +97,7 @@ export const DEFAULT_PARAMS: Params = {
   allocation_fondateur_duree_ms: 4 * 365 * 24 * HEURE,
   pionniers: 1000,
   abeilles_max: 3,
+  sceau_intervalle_ms: 2000,
+  sceau_max_commandes: 50,
   fenetre_requete_ms: 5 * 60_000,
 };

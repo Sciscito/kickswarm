@@ -13,7 +13,9 @@ export function loadOrCreateIdentity(dir = kickswarmHome()): { identite: Identit
   const fichier = join(dir, 'identite.json');
   if (existsSync(fichier)) {
     const identite = JSON.parse(readFileSync(fichier, 'utf8')) as Identity;
-    if (!isContributorId(identite.id) || !identite.privateKeyPem) throw new Error(`Identité illisible : ${fichier}`);
+    if (!isContributorId(identite.id) || !identite.privateKeyPem || (identite.id.startsWith('pq1:') && !identite.pqPrivateKeyPem)) {
+      throw new Error(`Identité illisible : ${fichier}`);
+    }
     return { identite, fichier, creee: false };
   }
   mkdirSync(dir, { recursive: true });

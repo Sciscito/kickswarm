@@ -236,7 +236,39 @@ Une seule violation, et l'alerte est publique.
 - Un tirage aléatoire modifié **sans effet sur le déroulé** est indétectable, mais aussi sans conséquence. Contre un opérateur qui choisirait ses tirages pour truquer l'attribution, la parade est la balise publique drand (P1-3).
 - Les livrables vivent dans le registre lui-même. Au-delà de quelques milliers d'alvéoles, il faudra un stockage par hash, à côté du registre.
 
-### 6.5 Plusieurs auditeurs, puis plusieurs coordinateurs
+### 6.5 Une cryptographie post-quantique (P0-5, implémenté)
+
+| Brique | Algorithme | Pourquoi |
+|---|---|---|
+| **Identité des contributeurs** (`pq1:`) | **Hybride Ed25519 + ML-DSA-65** (FIPS 204) | Une signature n'est valide que si les **deux** le sont. Il faudrait casser à la fois la courbe elliptique (exposée à Shor) et le réseau euclidien (le pari post-quantique). |
+| **Coordinateur et sceaux du registre** (`slh1:`) | **SLH-DSA-SHA2-128f** (FIPS 205) | Sa sécurité repose **uniquement sur la fonction de hachage**. C'est le choix le plus conservateur qui existe. |
+| **Registre, engagements, identifiants** | SHA-256 | Résiste déjà : l'algorithme de Grover laisse 128 bits de sécurité. |
+| Ancienne identité (`ed25519:`) | Ed25519 | Toujours acceptée, mais signalée comme non post-quantique par l'audit. |
+
+**Les choix de conception :**
+
+- **Un identifiant court** : c'est l'**empreinte SHA-256** des clés publiques. La signature transporte les clés, qui sont vérifiées contre cette empreinte.
+- **Le type exact de chaque clé est contrôlé.** Une clé faible, Ed25519 par exemple, ne peut pas se faire passer pour une clé ML-DSA ou SLH-DSA, même si l'empreinte correspond : la substitution d'algorithme est impossible, et c'est testé.
+- **Le registre est scellé par points de contrôle**, comme les journaux de transparence des certificats. Un sceau est la signature SLH-DSA du coordinateur sur le hash de la dernière entrée ; comme ce hash enchaîne toute l'histoire, un sceau authentifie tout ce qui le précède. Le lancement est scellé tout de suite, puis toutes les 2 secondes ou toutes les 50 commandes *(paramètres)*.
+- **L'audit vérifie chaque sceau et rejoue l'histoire avec les sceaux en place.** Il indique jusqu'où le registre est scellé, et quelle part des signatures de contributeurs est post-quantique.
+
+**Mesures sur la machine de développement** (Node 24, OpenSSL 3.5) :
+
+| Algorithme | Temps de signature | Taille de la signature |
+|---|---|---|
+| ML-DSA-65 | 1 ms | 3,3 Ko |
+| SLH-DSA-SHA2-128f | 18 ms | 17 Ko |
+| SLH-DSA-SHA2-128s | 340 ms | 7,8 Ko |
+
+La variante 128s, trop lente pour sceller souvent, est écartée.
+
+**Limites assumées :**
+
+- **Les signatures post-quantiques sont lourdes.** Une requête hybride pèse environ 7 Ko et une alvéole signée par le coordinateur environ 23 Ko. Le registre grossit vite : un annuaire de clés (enregistrer une clé une fois, puis signer sans la transporter) et un stockage par hash viendront ensuite.
+- **Les entrées postérieures au dernier sceau** ne sont garanties que par le chaînage, jusqu'au sceau suivant. L'audit les compte.
+- **« Mathématiquement incassable » n'existe pas en signature.** SLH-DSA est ce qui s'en approche le plus : le casser demande de casser la fonction de hachage elle-même.
+
+### 6.6 Plusieurs auditeurs, puis plusieurs coordinateurs
 
 - **Étape 1 :** des auditeurs indépendants (communautés, universités, la fondation) rejouent le registre en continu et publient leur hash d'état.
 - **Étape 2 :** la fédération. Plusieurs coordinateurs partagent le registre et se vérifient mutuellement. Il n'y a plus de point de confiance unique.
@@ -320,7 +352,7 @@ Chaque erreur détectée laisse l'essaim plus fort qu'avant. C'est le sens exact
 | **P0-2** ✅ | **Tests cachés + score de mutation + tests par propriétés** dans le vérificateur V0. *Fait : voir §3.6.* | F1 | Moyenne |
 | **P0-3** | **Pièges par mutation** et taux de pièges individuel | F3 | Petite |
 | **P0-4** | **Réputation Beta et test de Wald** à la place de k = 2 (avec un plancher à 2) | F2, F6 | Moyenne |
-| **P0-5** | **Signatures post-quantiques** : identités hybrides Ed25519 + ML-DSA-65 (FIPS 204), coordinateur et registre signés en SLH-DSA (FIPS 205, sécurité fondée sur les seules fonctions de hachage). Node 24 les fournit nativement. | Menace quantique sur Ed25519 | Moyenne |
+| **P0-5** ✅ | *Fait : voir §6.5.* **Signatures post-quantiques** : identités hybrides Ed25519 + ML-DSA-65 (FIPS 204), coordinateur et registre signés en SLH-DSA (FIPS 205, sécurité fondée sur les seules fonctions de hachage). Node 24 les fournit nativement. | Menace quantique sur Ed25519 | Moyenne |
 | **P1-1** | **Caste des chasseuses** et primes au contre-exemple | F1, auto-renforcement | Moyenne |
 | **P1-2** | **Contrat d'abord** pour les découpages, et découpages en concurrence | F7 | Grande |
 | **P1-3** | **drand et engagement-révélation** pour les verdicts | F5 | Petite |

@@ -114,6 +114,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 |---|---|
 | Signed cells, canonical hashes, full lifecycle | ✅ |
 | Replayable registry: transactional commands, `kickswarm audit`, invariants, re-verification | ✅ |
+| Post-quantum cryptography: hybrid Ed25519 + ML-DSA-65 identities (FIPS 204), coordinator and registry seals in SLH-DSA (FIPS 205), algorithm-substitution proof | ✅ Legacy Ed25519 identities still work and are flagged by the audit. |
 | Fractal loop: scouts, owner approval at levels 0 and 1, builders | ✅ One split per cell; competing splits (§6.2) come next. |
 | Random castes, never verifying your own work | ✅ Uses the coordinator's randomness; the public drand beacon (§7.2) is next. |
 | V0 verification: automatic + **2 random guards** who replay it | ✅ A guard who validated a broken result is overturned. |

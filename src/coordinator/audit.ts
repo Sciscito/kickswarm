@@ -1,4 +1,5 @@
 import { commitment } from '../protocol/canonical.js';
+import { algoOf, isPostQuantum, verifyObject } from '../protocol/identity.js';
 import type { ContributorId, Hash, Livrable, Result, TestCase, Verdict } from '../protocol/types.js';
 import { verifierV0 } from '../verifier/v0.js';
 import { Coordinator, type CommandeDonnees } from './coordinator.js';
@@ -85,8 +86,31 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     if (e.nature === 'secrets_reveles' && d.tests_caches) reveles.set(commitment(d.tests_caches), d.tests_caches);
   }
   const nonReveles = { n: 0 };
+  const sceaux = { n: 0, invalides: [] as string[], dernier: -1 };
   for (const e of entries) {
     if (divergence) break;
+    if (e.nature === 'sceau') {
+      // Le sceau : la signature post-quantique du coordinateur sur la tête du registre.
+      const sc = e.donnees as { type: string; coordinateur: string; seq: number; tete: string };
+      const prev = entries[e.seq - 1];
+      const valide = sc.type === 'osp.sceau/0.1' && sc.coordinateur === L.coordinateur && prev !== undefined && sc.seq === prev.seq && sc.tete === prev.hash && verifyObject(sc, L.coordinateur);
+      if (!valide) {
+        sceaux.invalides.push(`#${e.seq}`);
+        divergence = `seal #${e.seq} is invalid`;
+        break;
+      }
+      sceaux.n++;
+      sceaux.dernier = sc.seq;
+      try {
+        coord.importSceau(e.date, sc);
+      } catch (err) {
+        divergence = `seal #${e.seq} could not be replayed: ${(err as Error).message}`;
+        break;
+      }
+      const mine = coord.registry.entries;
+      if (mine.length !== e.seq + 1 || mine[e.seq]!.hash !== e.hash) divergence = firstDifference(mine, entries, e.seq);
+      continue;
+    }
     if (e.nature !== 'commande') continue;
     commandes++;
     const c = e.donnees as CommandeDonnees;
@@ -104,7 +128,42 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     divergence = `${entries.length - coord.registry.entries.length} trailing entries are not produced by any command`;
   }
   add('Deterministic replay: every entry follows from the signed inputs', !divergence, divergence);
-  if (divergence) return report();
+  if (divergence) {
+    if (sceaux.invalides.length) add('Registry sealed by the coordinator', false, `invalid seal at ${sceaux.invalides.join(', ')}`);
+    return report();
+  }
+
+  // 3 bis. Les sceaux : qui garantit le registre, avec quelle cryptographie, et jusqu'où.
+  const contenu = entries.filter((e) => e.nature !== 'sceau');
+  const derniereEntree = contenu.length ? contenu[contenu.length - 1]!.seq : -1;
+  const nonScelles = sceaux.dernier < 0 ? contenu.length : contenu.filter((e) => e.seq > sceaux.dernier).length;
+  const algo = algoOf(L.coordinateur);
+  add(
+    'Registry sealed by the coordinator with a post-quantum signature',
+    sceaux.n > 0 && isPostQuantum(L.coordinateur),
+    sceaux.n === 0
+      ? 'no seal found'
+      : `${sceaux.n} seal(s) by ${algo === 'slh1' ? 'SLH-DSA-SHA2-128f (FIPS 205)' : algo}; the last one covers entry #${sceaux.dernier}${nonScelles ? `, ${nonScelles} newer entr${nonScelles > 1 ? 'ies' : 'y'} not sealed yet (up to #${derniereEntree})` : ''}`,
+  );
+
+  // Part des signatures de contributeurs qui résistent à un ordinateur quantique.
+  const signataires: string[] = [];
+  for (const e of entries) {
+    if (e.nature !== 'commande') continue;
+    const en = (e.donnees as CommandeDonnees).entree as Record<string, Record<string, unknown> | undefined>;
+    for (const [obj, champ] of [['requete', 'contributeur'], ['ruche', 'porteur'], ['decision', 'auteur'], ['resultat', 'auteur'], ['decomposition', 'auteur'], ['verdict', 'gardienne']] as const) {
+      const v = en[obj]?.[champ];
+      if (typeof v === 'string') signataires.push(v);
+    }
+  }
+  const pq = signataires.filter(isPostQuantum).length;
+  add(
+    'Contributor signatures',
+    true,
+    signataires.length
+      ? `${pq}/${signataires.length} (${Math.round((pq / signataires.length) * 100)}%) are post-quantum hybrid (Ed25519 + ML-DSA-65)${pq < signataires.length ? '; the rest use Ed25519 only' : ''}`
+      : 'no contributor signature yet',
+  );
 
   // 4. Les invariants, sur l'histoire désormais prouvée.
   const auteurs = new Map<string, string>();

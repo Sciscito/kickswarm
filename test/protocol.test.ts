@@ -17,10 +17,10 @@ test('hash : identique quel que soit l’ordre des clés, et sans la signature',
   assert.match(hashOf({ a: 1 }), /^sha256:[0-9a-f]{64}$/);
 });
 
-test('signatures Ed25519 : valide, altérée, mauvais signataire', () => {
+test('signatures : identité hybride post-quantique par défaut ; valide, altérée, mauvais signataire', () => {
   const alice = generateIdentity();
   const bob = generateIdentity();
-  assert.match(alice.id, /^ed25519:[A-Za-z0-9_-]{43}$/);
+  assert.match(alice.id, /^pq1:[A-Za-z0-9_-]{43}$/);
   const signed = signObject({ type: 'test', valeur: 42 }, alice);
   assert.equal(verifyObject(signed, alice.id), true);
   assert.equal(verifyObject({ ...signed, valeur: 43 }, alice.id), false);

@@ -255,6 +255,8 @@ export class Coordinator {
   /** Le coffre : tests cachés et références, par engagement. Privé, hors de l'état et du registre. */
   private coffre: Record<string, unknown> = {};
   private replayNext: ReplayStep | null = null;
+  private dernierSceau = 0;
+  private commandesSansSceau = 0;
 
   private readonly now = (): number => this.clock ?? this.baseNow();
 
@@ -292,8 +294,9 @@ export class Coordinator {
       this.identite = keys.coordinateur;
       this.identitePieges = keys.pieges;
     } else {
-      this.identite = generateIdentity();
-      this.identitePieges = generateIdentity();
+      // Le coordinateur signe en SLH-DSA : une sécurité qui ne repose que sur la fonction de hachage.
+      this.identite = generateIdentity('slh1');
+      this.identitePieges = generateIdentity('slh1');
       if (keysFile) writeFileSync(keysFile, JSON.stringify({ coordinateur: this.identite, pieges: this.identitePieges }, null, 2), 'utf8');
     }
 
@@ -323,6 +326,7 @@ export class Coordinator {
       };
       this.registry.append('lancement', { fondateur: options.fondateur, coordinateur: this.identite.id, pieges: this.identitePieges.id, params: this.params });
       this.clock = null;
+      if (!options.replay) this.sceller();
     }
     this.normalizeState();
     this.ledger = new Ledger(this.params, options.fondateur, this.state.lancement, this.registry, () => this.now());
@@ -333,6 +337,51 @@ export class Coordinator {
       throw new Error('État local incohérent avec le registre : lance « kickswarm audit » pour reconstruire et comprendre');
     }
     this.save();
+  }
+
+  /**
+   * Scelle le registre (OSP v0.2, P0-5) : le coordinateur signe en SLH-DSA le hash de la dernière entrée.
+   * Comme ce hash enchaîne toute l'histoire, un seul sceau authentifie tout ce qui le précède.
+   */
+  sceller(): void {
+    if (this.options.replay) throw new Error('Un coordinateur en mode audit ne scelle pas : il importe les sceaux');
+    const tete = this.registry.entries[this.registry.entries.length - 1];
+    if (!tete || tete.nature === 'sceau') return;
+    const sceau = signObject({ type: 'osp.sceau/0.1' as const, coordinateur: this.identite.id, seq: tete.seq, tete: tete.hash }, this.identite);
+    this.registry.append('sceau', sceau);
+    this.dernierSceau = this.baseNow();
+    this.commandesSansSceau = 0;
+  }
+
+  private peutEtreSceller(): void {
+    this.commandesSansSceau++;
+    const du = this.commandesSansSceau >= this.params.sceau_max_commandes || this.baseNow() - this.dernierSceau >= this.params.sceau_intervalle_ms;
+    if (du) this.sceller();
+  }
+
+  /** Mode audit : reprend un sceau du registre original, après en avoir vérifié la signature. */
+  importSceau(date: string, sceau: { type: string; coordinateur: string; seq: number; tete: string; sig?: string }): void {
+    if (!this.options.replay) throw new Error('Import de sceau réservé au mode audit');
+    const tete = this.registry.entries[this.registry.entries.length - 1];
+    if (sceau.type !== 'osp.sceau/0.1' || sceau.coordinateur !== this.identite.id || !tete || sceau.seq !== tete.seq || sceau.tete !== tete.hash) {
+      throw new ReplayDivergence(`Sceau incohérent avec le registre à l'entrée #${tete?.seq}`);
+    }
+    if (!verifyObject(sceau, this.identite.id)) throw new ReplayDivergence('Signature du sceau invalide');
+    this.clock = Date.parse(date);
+    try {
+      this.registry.append('sceau', sceau);
+    } finally {
+      this.clock = null;
+    }
+  }
+
+  /** Le dernier sceau du registre, s'il y en a un. */
+  dernierSceauInscrit(): { seq: number; sceau: unknown } | undefined {
+    for (let i = this.registry.entries.length - 1; i >= 0; i--) {
+      const e = this.registry.entries[i]!;
+      if (e.nature === 'sceau') return { seq: e.seq, sceau: e.donnees };
+    }
+    return undefined;
   }
 
   /** Empreinte de l'état complet : ce que les auditeurs comparent. */
@@ -406,6 +455,7 @@ export class Coordinator {
       } satisfies CommandeDonnees);
       this.registry.commit();
       this.save();
+      if (!replay) this.peutEtreSceller();
       return out;
     } catch (e) {
       this.state = snapshot;

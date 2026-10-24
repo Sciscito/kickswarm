@@ -2,7 +2,7 @@
 // Les noms de champs suivent la spec, en français.
 
 export type Hash = `sha256:${string}`;
-export type ContributorId = `ed25519:${string}`;
+export type ContributorId = `ed25519:${string}` | `pq1:${string}` | `slh1:${string}`;
 
 export type VerifClass = 'V0' | 'V1' | 'V2';
 export type Caste = 'eclaireuse' | 'ouvriere' | 'gardienne' | 'batisseuse';
