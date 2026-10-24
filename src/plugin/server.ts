@@ -79,8 +79,10 @@ function issueVerdict(r: Revelation): string {
 export function createPluginServer(
   client: CoordinatorClient,
   journal?: JournalLocal,
-  options: { scelles?: Scelles; intervalleRevelationMs?: number } = {},
+  options: { scelles?: Scelles; intervalleRevelationMs?: number; attenteMs?: number } = {},
 ): McpServer {
+  // Quand rien n'est disponible, swarm_next patiente jusqu'à ce délai avant de répondre.
+  const attente = options.attenteMs ?? 30_000;
   const server = new McpServer({ name: 'kickswarm', version: '0.1.0' });
   let ruche: string | undefined;
   let enCours: Assignment | undefined;
@@ -156,8 +158,28 @@ export function createPluginServer(
       const avant = await reveler();
       const prefixe = avant.length ? `${lignes(avant)}\n` : '';
       if (enCours) return texte(`${prefixe}You already have a cell in progress.\n\n${consignes(enCours)}`);
-      const a = await client.claim(ruche);
-      if (!a) return texte(`${prefixe}Nothing left to do in this hive right now. Try again a bit later.`);
+      let a = await client.claim(ruche);
+      // Rien à prendre, mais la ruche vit : les gardiennes vérifient. On patiente un peu plutôt que de
+      // renvoyer l'agent tout de suite (il ne sait pas attendre seul).
+      let terminee = false;
+      const fin = Date.now() + attente;
+      while (!a && Date.now() < fin) {
+        if (ruche && (await client.hive(ruche)).statut === 'terminee') {
+          terminee = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, Math.min(2000, attente)));
+        await reveler();
+        a = await client.claim(ruche);
+      }
+      if (!a) {
+        if (terminee) return texte(`${prefixe}The hive is complete: every cell is honey. Nothing left to do. Call swarm_journal to see what you did.`);
+        return texte(
+          attente > 0
+            ? `${prefixe}Nothing to do right now: cells are being verified by guards. Call swarm_next again.`
+            : `${prefixe}Nothing left to do in this hive right now. Try again a bit later.`,
+        );
+      }
 
       if (a.caste === 'gardienne') {
         const cible = a.a_verifier!;

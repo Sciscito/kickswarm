@@ -31,6 +31,7 @@ export interface HiveAccess {
   identite: Identity;
   claim(): Promise<Assignment | null>;
   start(alveole: Hash): Promise<unknown>;
+  release(alveole: Hash): Promise<unknown>;
   submit(resultat: Result, livrable: Livrable): Promise<{ statut: string; rapport: { motif: string } }>;
   decompose(d: Decomposition, secrets?: Array<Secrets | undefined>): Promise<{ statut: string; decoupage: Hash }>;
   commit(e: EngagementVerdict): Promise<{ revelation: boolean }>;
@@ -51,6 +52,7 @@ export function directAccess(c: Coordinator, identite: Identity, ruche?: string)
     identite,
     claim: () => c.reclamer(makeRequete(identite, 'claim', ruche ? { ruche } : {})),
     start: async (alveole) => c.start(makeRequete(identite, 'start', { alveole })),
+    release: async (alveole) => c.release(makeRequete(identite, 'release', { alveole })),
     submit: (r, l) => c.submitResult(r, l),
     decompose: (d, secrets) => c.submitDecomposition(d, secrets),
     commit: async (e) => c.engagerVerdict(e),
@@ -64,6 +66,7 @@ export function httpAccess(client: CoordinatorClient, ruche?: string): HiveAcces
     identite: client.identite,
     claim: () => client.claim(ruche),
     start: (alveole) => client.start(alveole),
+    release: (alveole) => client.release(alveole),
     submit: (r, l) => client.submit(r, l),
     decompose: (d, secrets) => client.decompose(d, secrets),
     commit: (e) => client.engager(e),
@@ -166,16 +169,37 @@ export async function scriptedBee(
       const r = await h.submit(makeResult(h.identite, a.alveole_id, 'batisseuse', livrable, { agent: { famille: 'script' } }), livrable);
       return { ...base, outcome: r.statut === 'rejete' ? 'assembly_rejected' : 'assembled', motif: r.rapport.motif };
     }
-    case 'gardienne': {
-      const cible = a.a_verifier!;
-      const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
-      // Commit first, reveal once every guard of this result has committed (OSP v0.2 P1-3).
-      const verdict = makeVerdict(h.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
-      const s: SealedVerdict = { verdict, base, motif: rejeu.motif };
-      const c = await h.commit(makeEngagement(h.identite, verdict));
-      if (c.revelation) return reveal(h, s);
-      h.sealed.push(s);
-      return { ...base, outcome: 'sealed', motif: rejeu.motif };
-    }
+    case 'gardienne':
+      return guard(h, a);
   }
+}
+
+/** A guard replays the checks in its own sandbox, commits to its verdict, and reveals it when the reveal opens. */
+async function guard(h: HiveAccess, a: Assignment): Promise<BeeAction> {
+  const base = { caste: a.caste, chemin: a.alveole.chemin, objectif: a.alveole.objectif };
+  const cible = a.a_verifier!;
+  const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
+  // Commit first, reveal once every guard of this result has committed (OSP v0.2 P1-3).
+  const verdict = makeVerdict(h.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
+  const s: SealedVerdict = { verdict, base, motif: rejeu.motif };
+  const c = await h.commit(makeEngagement(h.identite, verdict));
+  if (c.revelation) return reveal(h, s);
+  h.sealed.push(s);
+  return { ...base, outcome: 'sealed', motif: rejeu.motif };
+}
+
+/**
+ * A helper guard, for a trial with a single real agent (which cannot verify its own work): it only
+ * verifies. Any other task it is handed goes straight back to the swarm, with no penalty.
+ */
+export async function helperGuard(h: HiveAccess): Promise<BeeAction | null> {
+  const revealed = await revealPending(h);
+  if (revealed) return revealed;
+  const a = await h.claim();
+  if (!a) return null;
+  if (a.caste !== 'gardienne') {
+    await h.release(a.alveole_id);
+    return null;
+  }
+  return guard(h, a);
 }

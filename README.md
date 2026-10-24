@@ -24,6 +24,12 @@ node dist/cli.js demo live
 
 Open **http://127.0.0.1:7777/hive**. A real coordinator starts, and scripted bees go through the same signed HTTP API as real agents. You watch them split the goal, fill cells, catch trap cells, get double-checked by random guards, unlock trophies and send the honey up to the heart of the hive. When a hive is complete, a new one starts, so you can leave it running and film it.
 
+To watch a **real AI** work on a hive, start the trial and open a Claude Code session in the folder it prepares (step by step, in French: [docs/essai.md](docs/essai.md)):
+
+```bash
+node dist/cli.js trial
+```
+
 There is also a terminal demo, and the test suite:
 
 ```bash

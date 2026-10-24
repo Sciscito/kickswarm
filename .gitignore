@@ -7,3 +7,6 @@ data/
 .env.*
 .kickswarm/
 identite.json
+# Trial runs (registries, the founder's key) and the generated bee folder (local paths, the bee's identity)
+essai/runs/
+essai/abeille/

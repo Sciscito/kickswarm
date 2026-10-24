@@ -16,6 +16,7 @@ import { CoordinatorClient } from './plugin/client.js';
 import { kickswarmHome, loadOrCreateIdentity } from './plugin/identite.js';
 import { JournalLocal, resumer } from './plugin/journal.js';
 import { startPlugin } from './plugin/server.js';
+import { trial } from './trial.js';
 import { resolveSandbox } from './verifier/v0.js';
 
 const HELP = `kickswarm · Open Swarm Protocol v0.1
@@ -23,6 +24,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm join <hive> [--url <coordinator>] [--yes]   Send your AI into a hive (one command)
   kickswarm demo live [--port 7777] [--bees 6] [--speed 1] [--beacon none|drand]   Live hive demo in your browser
   kickswarm demo                                        End-to-end demo in the terminal
+  kickswarm trial [--port 7777] [--guards 4] [--beacon none|drand] [--rehearse]   First run with a real AI (see docs/essai.md)
   kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox wasm|container|process] [--beacon drand|none]
   kickswarm plugin [--url <coordinator>]                MCP server for your agent (stdio)
   kickswarm identity                                    Show (and create if needed) your identity
@@ -164,6 +166,23 @@ async function main(): Promise<void> {
       if (embargo) console.log(`${embargo} newer entr${embargo > 1 ? 'ies are' : 'y is'} still under embargo while verifications are open; audit again later to cover them.`);
       console.log('');
       process.exitCode = report.ok ? 0 : 1;
+      return;
+    }
+    case 'trial':
+    case 'essai': {
+      const run = await trial({
+        port: Number(opts.port ?? 7777),
+        beacon: opts.beacon === 'drand',
+        guards: Number(opts.guards ?? 4),
+        rehearse: opts.rehearse !== undefined,
+      });
+      const { ok } = await run.done;
+      if (opts.rehearse !== undefined) {
+        await run.stop();
+        process.exitCode = ok ? 0 : 1;
+        return;
+      }
+      console.log(`\nThe hive is complete. The live hive stays open at ${run.url}/hive — press Ctrl+C to stop.`);
       return;
     }
     case 'demo': {
