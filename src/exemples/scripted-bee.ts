@@ -2,8 +2,9 @@ import type { Coordinator } from '../coordinator/coordinator.js';
 import { makeDecomposition, makeEngagement, makeRequete, makeResult, makeVerdict } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
 import type { Assignment, Caste, CellSpec, Decomposition, EngagementVerdict, Hash, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
+import { posix } from 'node:path';
 import type { CoordinatorClient } from '../plugin/client.js';
-import { verifierV0 } from '../verifier/v0.js';
+import { estCritereTests, verifierV0 } from '../verifier/v0.js';
 
 // Scripted bees: they claim work and do it like an agent would, but from a known script
 // (decompositions and solutions). Used by the demos and the tests. Real contributors use the MCP plugin.
@@ -125,11 +126,17 @@ export interface BeeAction {
   decoupage?: Hash;
 }
 
-/** The builder merges the children's files and re-exports each child's module from `module`. */
+/** The builder merges the children's files and re-exports each child's module from `module` (in JavaScript or in Luau). */
 export function assemble(enfants: Array<{ module: string; livrable: Livrable }>, module: string): Livrable {
   const fichiers: Record<string, string> = {};
   for (const e of enfants) Object.assign(fichiers, e.livrable.fichiers);
-  fichiers[module] = enfants.map((e) => `export * from './${e.module}';`).join('\n') + '\n';
+  if (/\.(luau|lua)$/.test(module)) {
+    const rel = (m: string) => {
+      const r = posix.relative(posix.dirname(module), m).replace(/\.(luau|lua)$/, '');
+      return r.startsWith('.') ? r : `./${r}`;
+    };
+    fichiers[module] = ['local M = {}', ...enfants.map((e) => `for k, v in require("${rel(e.module)}") do M[k] = v end`), 'return M', ''].join('\n');
+  } else fichiers[module] = enfants.map((e) => `export * from './${e.module}';`).join('\n') + '\n';
   return { fichiers };
 }
 
@@ -155,9 +162,11 @@ export async function scriptedBee(
     }
     case 'ouvriere': {
       const crit = a.alveole.critere_fini;
-      const mod = crit.verificateur === 'tests-js@1' ? (crit.module ?? 'solution.mjs') : 'tests.json';
-      const fns = crit.verificateur === 'tests-js@1' ? [...new Set([...crit.tests.map((t) => t.fn), ...(crit.proprietes ?? []).map((p) => p.fn)])] : crit.fonctions;
-      const wrong = fns.map((f) => `export function ${f}() { return -1; }`).join('\n');
+      const mod = estCritereTests(crit) ? (crit.module ?? 'solution.mjs') : 'tests.json';
+      const fns = estCritereTests(crit) ? [...new Set([...crit.tests.map((t) => t.fn), ...(crit.proprietes ?? []).map((p) => p.fn)])] : crit.fonctions;
+      const wrong = crit.verificateur === 'tests-luau@1'
+        ? `return { ${fns.map((f) => `${f} = function() return -1 end`).join(', ')} }\n`
+        : fns.map((f) => `export function ${f}() { return -1; }`).join('\n');
       const code = opts.bug ? (script.bugs?.[mod] ?? wrong) : (script.solutions[mod] ?? wrong);
       const livrable: Livrable = { fichiers: { [mod]: code } };
       const r = await h.submit(makeResult(h.identite, a.alveole_id, 'ouvriere', livrable, { agent: { famille: 'script' } }), livrable);
@@ -165,7 +174,7 @@ export async function scriptedBee(
     }
     case 'batisseuse': {
       const crit = a.alveole.critere_fini;
-      const livrable = assemble(a.enfants_valides ?? [], crit.verificateur === 'tests-js@1' ? (crit.module ?? 'solution.mjs') : crit.module);
+      const livrable = assemble(a.enfants_valides ?? [], estCritereTests(crit) ? (crit.module ?? 'solution.mjs') : crit.module);
       const r = await h.submit(makeResult(h.identite, a.alveole_id, 'batisseuse', livrable, { agent: { famille: 'script' } }), livrable);
       return { ...base, outcome: r.statut === 'rejete' ? 'assembly_rejected' : 'assembled', motif: r.rapport.motif };
     }

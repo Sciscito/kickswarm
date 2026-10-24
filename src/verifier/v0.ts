@@ -6,8 +6,9 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { commitment, hashOf, sha256 } from '../protocol/canonical.js';
-import type { CritereFini, CritereTestsDeTests, CritereV0, Generateur, Livrable, Propriete, TestCase } from '../protocol/types.js';
+import type { CritereFini, CritereTests, CritereTestsDeTests, Generateur, Livrable, Propriete, TestCase } from '../protocol/types.js';
 import { LOCKDOWN } from './lockdown.js';
+import { LUAU_LABEL, preparerLuau, runLuau } from './luau.js';
 import { mutants } from './mutation.js';
 
 // V0 verifiers (spec §9.1, OSP v0.2 §3):
@@ -15,7 +16,9 @@ import { mutants } from './mutation.js';
 //    visible tests, hidden tests (never shown to the worker, never detailed in reports) and
 //    property tests (hundreds of random inputs, seeded by the deliverable's own hash);
 //  - `tests-de-tests@1`: the deliverable is a test suite; it must pass on the real target and
-//    kill enough mutants of it (mutation score).
+//    kill enough mutants of it (mutation score);
+//  - `tests-luau@1` (OSP v0.3 §3.6): the same tests for a pure Luau module, run in the Luau virtual
+//    machine compiled to WebAssembly (luau.ts), with the `luau-checks@1` gate before them.
 // The same mutation engine measures how strong a cell's tests are against a reference (adequacy).
 //
 // Sandboxes (§8):
@@ -79,6 +82,14 @@ const FILE_RE = new RegExp(`^${DOSSIERS}[A-Za-z0-9-][A-Za-z0-9_.-]{0,63}\\.(mjs|
 const MODULE_RE = new RegExp(`^${DOSSIERS}[A-Za-z0-9-][A-Za-z0-9_.-]{0,63}\\.(mjs|js)$`);
 /** A file a deliverable deletes: any name, same path rules. */
 const CHEMIN_RE = new RegExp(`^${DOSSIERS}${SEGMENT}$`);
+/** The module a Luau suite requires. */
+const LUAU_MODULE_RE = new RegExp(`^${DOSSIERS}[A-Za-z0-9-][A-Za-z0-9_.-]{0,63}\\.(luau|lua)$`);
+const PORTES = new Set(['luau-checks@1']);
+
+/** Criteria checked by tests (visible, hidden, properties), whatever the language. */
+export function estCritereTests(c: CritereFini): c is CritereTests {
+  return c.verificateur === 'tests-js@1' || c.verificateur === 'tests-luau@1';
+}
 const MAX_SUPPRIMES = 64;
 const FN_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const HASH_RE = /^sha256:[0-9a-f]{64}$/;
@@ -267,8 +278,11 @@ export function validateCritere(critere: CritereFini): void {
     if (critere.score_min !== undefined && !(critere.score_min > 0 && critere.score_min <= 1)) throw new Error('score_min must be in (0, 1]');
     return;
   }
-  if (critere.verificateur !== 'tests-js@1') throw new Error(`Unknown verifier: ${String((critere as { verificateur?: unknown }).verificateur)}`);
-  if (critere.module !== undefined && !MODULE_RE.test(critere.module)) throw new Error(`Invalid module name: ${critere.module}`);
+  if (critere.verificateur === 'tests-luau@1') {
+    if (typeof critere.module !== 'string' || !LUAU_MODULE_RE.test(critere.module)) throw new Error('A Luau criterion names the module to test, e.g. src/shared/Shop.luau');
+    if (critere.portes !== undefined && (!Array.isArray(critere.portes) || !critere.portes.every((p) => PORTES.has(p)))) throw new Error('Unknown gate: the gates are luau-checks@1');
+  } else if (critere.verificateur !== 'tests-js@1') throw new Error(`Unknown verifier: ${String((critere as { verificateur?: unknown }).verificateur)}`);
+  else if (critere.module !== undefined && !MODULE_RE.test(critere.module)) throw new Error(`Invalid module name: ${critere.module}`);
   validateTests(critere.tests);
   validateProprietes(critere.proprietes);
   if (!critere.tests.length && !critere.proprietes?.length) throw new Error('A V0 criterion needs at least one test or one property');
@@ -459,6 +473,8 @@ interface Suite {
   caches: TestCase[];
   proprietes: Propriete[];
   timeout: number;
+  /** OSP v0.3 §3.6: a Luau suite, and the files its luau-checks@1 gate checks (none: no gate). */
+  luau?: { portes: string[] };
 }
 
 /** Seed of a property: derived from the deliverable's hash, so impossible to target in advance. */
@@ -470,6 +486,7 @@ async function runSuite(suite: Suite, livrable: Livrable, opts: VerifOptions): P
   const started = Date.now();
   const fail = (motif: string, tests: TestReport[] = [], sandbox = 'none'): VerifReport => ({ ok: false, motif, tests, duree_ms: Date.now() - started, sandbox });
   if (!(suite.module in livrable.fichiers)) return fail(`The deliverable does not contain the expected module “${suite.module}”`);
+  if (suite.luau) return runSuiteLuau(suite, suite.luau.portes, livrable, started);
   let mode: SandboxMode;
   try {
     mode = resolveSandbox(opts.sandbox);
@@ -495,7 +512,52 @@ async function runSuite(suite: Suite, livrable: Livrable, opts: VerifOptions): P
   }
   const parsed = JSON.parse(line.slice(marker.length)) as { chargement?: string; tests?: TestReport[] };
   if (parsed.chargement) return fail(`Module could not be loaded: ${parsed.chargement}`, [], out.label);
-  const tests = parsed.tests ?? [];
+  return bilan(suite, parsed.tests ?? [], out.label, started);
+}
+
+/** `tests-luau@1`: the gate first, if any, then the tests, in the Luau sandbox. */
+async function runSuiteLuau(suite: Suite, portes: string[], livrable: Livrable, started: number): Promise<VerifReport> {
+  const fail = (motif: string): VerifReport => ({ ok: false, motif, tests: [], duree_ms: Date.now() - started, sandbox: LUAU_LABEL });
+  const lh = hashOf(livrable);
+  const proprietes = suite.proprietes.map((p) => ({ ...p, cas: p.cas ?? DEFAULT_CASES, seed: seedFor(lh, p.nom) }));
+  const out = await runLuau({
+    fichiers: livrable.fichiers,
+    spec: preparerLuau(suite.module, suite.tests, suite.caches, proprietes),
+    timeoutMs: suite.timeout,
+    graine: seedFor(lh, 'math.random'),
+    portes,
+  });
+  if (out.timedOut) return fail(`Time limit exceeded (${suite.timeout} ms)`);
+  if (out.portes) return fail(`luau-checks@1: ${out.portes.length} problem${out.portes.length > 1 ? 's' : ''} (strict types and lint). First: ${out.portes[0]}`);
+  if (out.erreur) return fail(`The module crashed before the tests finished: ${out.erreur}`);
+  if (out.chargement) return fail(`Module could not be loaded: ${out.chargement}`);
+  const nv = suite.tests.length;
+  const nc = suite.caches.length;
+  const lire = (s?: string): unknown => {
+    if (s === undefined) return undefined;
+    try {
+      return JSON.parse(s) as unknown;
+    } catch {
+      return s;
+    }
+  };
+  const tests: TestReport[] = (out.resultats ?? []).map((x, i) => {
+    if (i < nv) {
+      const t = suite.tests[i]!;
+      const nom = t.nom || `${t.fn}(${JSON.stringify(t.args).slice(1, -1)})`;
+      return x.erreur !== undefined ? { nom, ok: false, attendu: t.attendu, erreur: x.erreur } : { nom, ok: x.ok, attendu: t.attendu, obtenu: lire(x.obtenu) };
+    }
+    if (i < nv + nc) return { nom: `hidden test #${i - nv + 1}`, ok: x.ok, cache: true };
+    const nom = `property “${suite.proprietes[i - nv - nc]?.nom ?? '?'}”`;
+    return x.ok ? { nom, ok: true, propriete: true, cas: x.cas } : { nom, ok: false, propriete: true, erreur: x.erreur };
+  });
+  return bilan(suite, tests, LUAU_LABEL, started);
+}
+
+/** The report of a suite, the same for every language. */
+function bilan(suite: Suite, tests: TestReport[], label: string, started: number): VerifReport {
+  const fail = (motif: string, t: TestReport[] = [], sandbox = 'none'): VerifReport => ({ ok: false, motif, tests: t, duree_ms: Date.now() - started, sandbox });
+  const out = { label };
   const expected = suite.tests.length + suite.caches.length + suite.proprietes.length;
   if (tests.length !== expected) return fail('The runner returned an incomplete report', tests, out.label);
   const failed = tests.filter((t) => !t.ok);
@@ -530,14 +592,20 @@ async function execute(livrable: Livrable, input: string, timeoutMs: number, mod
   }
 }
 
-function suiteOf(critere: CritereV0, caches: TestCase[], timeout?: number): Suite {
+function suiteOf(critere: CritereTests, caches: TestCase[], timeout?: number, portes: string[] = []): Suite {
   return {
     module: critere.module ?? 'solution.mjs',
     tests: critere.tests,
     caches,
     proprietes: critere.proprietes ?? [],
     timeout: timeout ?? critere.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+    ...(critere.verificateur === 'tests-luau@1' ? { luau: { portes } } : {}),
   };
+}
+
+/** OSP v0.3 §3.2: the repository files a repo deliverable reads are present when its tests run, unchanged. */
+function aLancer(livrable: Livrable): Livrable {
+  return livrable.contexte ? { fichiers: { ...livrable.contexte, ...livrable.fichiers } } : livrable;
 }
 
 async function pool<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): Promise<R[]> {
@@ -558,8 +626,9 @@ async function pool<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): P
 async function mutationScore(suite: Suite, implementation: Livrable, fichiers: string[] | undefined, opts: VerifOptions, version?: number): Promise<MutationReport> {
   const ms = mutants(implementation, { max: MAX_MUTANTS, fichiers, version });
   if (!ms.length) return { tues: 0, total: 0, score: 1 };
-  const short = { ...suite, timeout: Math.min(suite.timeout, MUTANT_TIMEOUT_MS) };
-  const results = await pool(ms, POOL, (m) => runSuite(short, m.livrable, opts));
+  // The gate is not part of the measure: a mutant only counts as caught when a test catches it.
+  const short: Suite = { ...suite, timeout: Math.min(suite.timeout, MUTANT_TIMEOUT_MS), ...(suite.luau ? { luau: { portes: [] } } : {}) };
+  const results = await pool(ms, POOL, (m) => runSuite(short, aLancer(m.livrable), opts));
   const survivors = ms.filter((_, i) => results[i]!.ok);
   const tues = ms.length - survivors.length;
   const s = survivors[0];
@@ -573,7 +642,7 @@ async function mutationScore(suite: Suite, implementation: Livrable, fichiers: s
 
 // ---------------------------------------------------------------- public API
 
-function checkCaches(critere: CritereV0, caches: TestCase[] | undefined): string | null {
+function checkCaches(critere: CritereTests, caches: TestCase[] | undefined): string | null {
   if (!critere.tests_caches_hash) return caches?.length ? 'Hidden tests were given for a cell that has none' : null;
   if (!caches) return 'The hidden tests of this cell are not available on this coordinator';
   try {
@@ -596,9 +665,9 @@ export async function verifierV0(critere: CritereFini, livrable: Livrable, opts:
   if (critere.verificateur === 'tests-de-tests@1') return verifierTestsDeTests(critere, livrable, opts);
   const bad = opts.sansCaches ? null : checkCaches(critere, opts.caches);
   if (bad) return fail(bad);
-  // OSP v0.3 §3.2: the repository files a repo deliverable reads are present when its tests run, unchanged.
-  const lance: Livrable = livrable.contexte ? { fichiers: { ...livrable.contexte, ...livrable.fichiers } } : livrable;
-  return runSuite(suiteOf(critere, opts.sansCaches ? [] : (opts.caches ?? [])), lance, opts);
+  // luau-checks@1 checks the deliverable's own Luau files, not the repository files it only reads.
+  const portes = critere.verificateur === 'tests-luau@1' && critere.portes?.includes('luau-checks@1') ? Object.keys(livrable.fichiers).filter((f) => /\.(luau|lua)$/.test(f)) : [];
+  return runSuite(suiteOf(critere, opts.sansCaches ? [] : (opts.caches ?? []), undefined, portes), aLancer(livrable), opts);
 }
 
 /**
@@ -610,7 +679,7 @@ export async function verifierV0(critere: CritereFini, livrable: Livrable, opts:
  * the measurement is required (`exigerMesure`, when references are mandatory).
  */
 export async function adequation(
-  critere: CritereV0,
+  critere: CritereTests,
   caches: TestCase[],
   reference: Livrable,
   opts: VerifOptions & { scoreMin?: number; moteurMutation?: number; exigerMesure?: boolean } = {},

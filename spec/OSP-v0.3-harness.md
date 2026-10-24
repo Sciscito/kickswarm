@@ -403,7 +403,7 @@ Protocol identifiers stay French until the v0.3 rename (§11): `repo` is `depot`
   - A child stays on its parent's repository, inside its parent's write scope.
 - **Write scopes.** `ecriture` lists files, or folders ending in `/`. When it hands out work, the coordinator never opens a cell whose scope overlaps a cell of the same repository that is reserved, in progress or being verified. The check is deterministic, so the replay and the audit enforce it too.
 - **Repo deliverables.**
-  - File names are now repository paths, with more text extensions (`.luau`, `.lua`, `.ts`, `.md`, `.json`, …). The module under test is still JavaScript until P0-3.
+  - File names are now repository paths, with more text extensions (`.luau`, `.lua`, `.ts`, `.md`, `.json`, …). Luau modules are tested since P0-3 (§3.9).
   - `supprimes` lists the files the deliverable deletes.
   - Every path written or deleted must be inside the cell's scope: the plugin checks before sending, and the coordinator refuses the rest (403).
   - **`contexte`, a necessary addition.** The coordinator runs the tests but has no copy of the repository. So a repo deliverable carries the files of `lecture` it needs, exactly as pinned: the coordinator checks each one against its hash. They are present when the tests run and never written to the repository. The plugin attaches them on its own.
@@ -431,7 +431,28 @@ Protocol identifiers stay French until the v0.3 rename (§11): `repo` is `depot`
   - the optional GitHub App.
 
 
-### 3.9 Summary
+### 3.9 What is implemented (P0-3)
+
+- **The engine.** `@luau-rs/luau` 0.739.0, pinned exactly: the Luau compiler, virtual machine and analyzer of Luau release 739, compiled to WebAssembly. One build for the coordinator, the guards and the auditors, so the same verdict on every machine.
+- **`tests-luau@1`** (`src/verifier/luau.ts`, `luau-worker.ts`, `luau-runner.ts`).
+  - The criterion: `{ "verificateur": "tests-luau@1", "module": "src/shared/Shop.luau", "tests", "proprietes", "tests_caches_hash", "reference_hash", "portes" }`. The tests have the same form as `tests-js@1`: `fn` names a function of the table the module returns.
+  - A function's first return value is compared with `attendu`, by content. Property cases are drawn by the host from the deliverable's hash, as for JavaScript. `verifie` is a Luau expression over `args`, `out` and `eq`.
+  - The sandbox runs in a throwaway thread: Luau's sandbox mode with read-only libraries. It loads only `base`, `coroutine`, `table`, `string`, `math`, `utf8`, `bit32` and `buffer`, so there is no `os`, no `debug`, no `loadstring` and no host function. Memory is capped at 128 MB, and time by an interrupt and by the thread's own limit. `math.random` is seeded from the deliverable's hash.
+  - `require` takes relative string paths only (`./Coins`, `../shared/Types`, with `.luau`, `.lua` and `init.luau` resolved as Luau does). It never leaves the deliverable.
+  - Modules see neither `getfenv`, `setfenv` nor the real `_G`. The runner captures everything it needs before any delivered code runs, compares with raw operations only, compiles each property expression as a chunk of its own, and returns its report as its return value. The tests cover escape attempts, an endless loop, a memory bomb and a forged result.
+- **`luau-checks@1`**, a gate in the criterion (`"portes": ["luau-checks@1"]`). Luau's own analyzer runs in strict mode with its linter, on the deliverable's own Luau files: the files it only reads (`contexte`) are not judged. One diagnostic fails the deliverable. `--!nocheck`, `--!nonstrict` and a bare `--!nolint` are refused. The gate does not count in test strength: a mutant only counts as caught when a test catches it.
+- **The Luau mutation engine** (`src/verifier/mutation-luau.ts`), engine version 3. It flips `==`/`~=`, `<`/`<=`, `>`/`>=`, `and`/`or`, `+`/`-`, `*`/`/` and `+=`/`-=`. It removes `not`, changes integer constants and booleans, and swaps `math.min`/`math.max`, `math.floor`/`math.ceil` and `upper`/`lower`. It never touches strings, comments, type annotations, type declarations or generic parameters, so a mutant still loads. Test strength, trap cells and the audit use it like the JavaScript engine. A registry that announced version 2 replays without Luau mutants.
+- **Playbooks** (`src/playbooks/`). A hive MAY name one (`"playbook": "roblox-pure-logic-first"`). The coordinator refuses unknown names and passes the name with each task. The plugin ships the text and adds the part for the bee's role: scout, worker or builder. A hive therefore cannot slip instructions into a playbook.
+- **The Roblox playbook, "pure logic first"** (`src/playbooks/roblox.ts`, `docs/playbooks/roblox.md`). Pure modules are cells checked by `tests-luau@1` and `luau-checks@1`. Shared types come first, the engine is passed in rather than reached for, write scopes stay small, and each child has a reference. Glue scripts are left to humans until V1 and V2 exist.
+- **The demo hive** (`src/exemples/roblox.ts`, `examples/ruche-roblox.json`): a game's economy, with coins and a shop as pure modules, hidden tests and references. In the tests, scripted bees complete it, a guard catches a mutated Luau trap, and the audit re-runs every verification.
+
+**Different from §3.6, for now:**
+
+- **No Selene, no StyLua.** Neither has a maintained WebAssembly build that could be pinned for every machine (StyLua's was last published in 2021). Luau's own linter replaces Selene for now. Formatting is left to the repository's CI, which runs on every pull request the bridge opens.
+- **The Roblox engine is not emulated.** A pure module that touches `game` fails to load, which is the point: `roblox-place@1` stays a later step (P2-3).
+- **A function's extra return values are ignored**, and an empty table equals both `[]` and `{}`: Luau has only tables.
+
+### 3.10 Summary
 
 **Reused.** Cells, splitting, contract first (v0.2 §7.1), playbooks, the board's `question` type, the WebAssembly sandbox model, the mutation engine design, trap cells, sealed verdicts, owner approvals and arbitration, `hive.html`.
 
@@ -820,7 +841,7 @@ Each step says what can be **shown** when it is done. **The first milestone is t
 |---|---|---|
 | **P0-1** ✅ | *Done: see §2.9.* **Private hives**: `visibility`, invitations and codes, memberships, roles, one `Coordinator` instance per private hive, private routes, read tickets, per-hive parameters, local honey, public anchors | On two machines, the cousin joins with a code; a third identity gets "403"; both run `kickswarm audit` on the private registry and see every ✓; the public registry shows only an anchor. |
 | **P0-2** ✅ | *Done: see §3.8.* **Repo capsules, write scopes and the bridge** | A cell's honey becomes a pull request on the real repository, with the right co-author; the audit checks that the commit holds exactly the validated deliverable. Two cells on the same file are never open at the same time. |
-| **P0-3** | **`tests-luau@1` and `luau-checks@1`**, the Luau mutation engine, the "pure logic first" Roblox playbook | A Luau module of the game (coins, shop) is validated by tests and hidden tests; a guard catches a mutated trap; the same verdict on both machines. |
+| **P0-3** ✅ | *Done: see §3.9.* **`tests-luau@1` and `luau-checks@1`**, the Luau mutation engine, the "pure logic first" Roblox playbook | A Luau module of the game (coins, shop) is validated by tests and hidden tests; a guard catches a mutated trap; the same verdict on both machines. |
 | **P0-4** | **Questions with choices**: `osp.question`, `osp.answer`, `attente_decision`, routing to the owner and the branch owner, defaults and deadlines; answered from the terminal or the dashboard | A bee asks "R15 or R6?"; only its cell waits while the cousin's bee keeps working on another branch; the answer is signed, and the branch resumes. |
 | **P0-5** | **The private dashboard**: "Needs you", lanes, milestones, waiting cells, what checked it, repository; `kickswarm open` | Both cousins watch the same page and see who does what, what waits for whom, and which pull requests are open. |
 | **P0-6** | **Contract first** for splits (moved up from v0.2 P1-2), and the §20 amendment for private hives | The game's split declares its Luau types first; UI and logic are built in parallel against them and assemble without conflicts. |

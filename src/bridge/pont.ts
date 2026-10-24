@@ -217,7 +217,9 @@ export function messageCommit(d: DetailCellule): string {
   const titre = premiere.length > 66 ? `${premiere.slice(0, 65)}…` : premiere;
   const crit = d.cell.critere_fini;
   const n = r.validee_par.length;
-  const verif = `${crit.verificateur} (V0 tests${crit.verificateur === 'tests-js@1' && crit.tests_caches_hash ? ' and hidden tests' : ''})${n ? `, then ${n} guard${n > 1 ? 's' : ''}` : ''}`;
+  const caches = (crit.verificateur === 'tests-js@1' || crit.verificateur === 'tests-luau@1') && crit.tests_caches_hash;
+  const portes = crit.verificateur === 'tests-luau@1' && crit.portes?.length ? `, ${crit.portes.join(', ')}` : '';
+  const verif = `${crit.verificateur} (V0 tests${caches ? ' and hidden tests' : ''}${portes})${n ? `, then ${n} guard${n > 1 ? 's' : ''}` : ''}`;
   const credits = [
     d.github ? `Co-authored-by: ${d.github} <${d.github}@users.noreply.github.com>` : undefined,
     `AI: ${r.agent.famille}${r.agent.modele ? ` (${r.agent.modele})` : ''}`,

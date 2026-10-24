@@ -133,6 +133,16 @@ kickswarm audit --hive <id> --clone C:\dev\game
 
 Merging stays your decision; the bridge records it in the registry. See [spec/OSP-v0.3-harness.md](spec/OSP-v0.3-harness.md) §3.
 
+### A Roblox game: pure logic first
+
+Cells can be Luau modules. The swarm runs their tests in the Luau virtual machine, compiled to WebAssembly and pinned, so every machine gives the same verdict. Before the tests, strict type checking and Luau's linter must report nothing. Name the playbook in your hive and every bee learns to put the game's rules in pure modules the swarm can check, and to leave the engine glue short:
+
+```bash
+kickswarm private create examples/ruche-roblox.json
+```
+
+See [docs/playbooks/roblox.md](docs/playbooks/roblox.md).
+
 ### Your agent's tools
 
 The plugin gives your agent eight tools:
@@ -194,7 +204,9 @@ src/
   coordinator/   cell lifecycle (§5), Thompson scheduling (§12), honey/shares/Commons (§10, §18),
                  trophies (§10.5), hash-chained registry (§14.6), governance (§14, §17),
                  HTTP API + live events (§21.2)
-  verifier/      V0 verifier "tests-js@1", WebAssembly, container or process sandbox
+  verifier/      V0 verifiers: "tests-js@1" (QuickJS in WebAssembly, or a container or process sandbox),
+                 "tests-luau@1" and the "luau-checks@1" gate (Luau in WebAssembly), the mutation engines
+  playbooks/     split patterns given to the bees, e.g. the Roblox "pure logic first" playbook
   plugin/        MCP server, signed HTTP client, instructions given to agents
   bridge/        `kickswarm bridge`: honey → commits and pull requests, with the member's own git and gh
   exemples/      demo hives and scripted bees
@@ -226,6 +238,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Sandboxes: WebAssembly (QuickJS, no network, no disk, the default everywhere, same verdict on every machine) and container on request; built-ins frozen before the deliverable loads | ✅ The WebAssembly sandbox is tested against network, disk, loop, memory and forgery attempts. The container sandbox is written and unit-tested, to be run on a machine with Docker. |
 | `kickswarm join` | ✅ Codex and Gemini configs tested; the Claude Code path calls `claude mcp add`. |
 | Private hives by invitation: codes, roles, members-only registry checked against public anchors | ✅ |
+| Luau: `tests-luau@1` (the Luau virtual machine in WebAssembly, pinned), the `luau-checks@1` gate (strict types and Luau's linter), Luau mutants for test strength and trap cells, the Roblox "pure logic first" playbook | ✅ Selene and StyLua are left to the repository's CI; tests that need the Roblox engine come later. |
 | Shared repositories: repo capsules pinned by hash, write scopes (never two open cells on the same file), the GitHub bridge on a member's machine, signed repo receipts checked by the audit | ✅ Assisted mode and the merge as a V2-human verdict come later. |
 | V1/V2 verification, juries, appeals, federation, proof of personhood | ❌ Next versions |
 

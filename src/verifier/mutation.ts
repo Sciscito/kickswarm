@@ -1,4 +1,5 @@
 import type { Livrable } from '../protocol/types.js';
+import { mutationSitesLuau } from './mutation-luau.js';
 
 // Mutation engine (OSP v0.2, §3.2): it injects one small bug at a time into JavaScript
 // (flipped operator, shifted comparison, changed boolean or constant) without ever touching
@@ -9,10 +10,11 @@ import type { Livrable } from '../protocol/types.js';
 // negated classes, \d \s \w, flags) and methods that have an opposite (toLowerCase ↔
 // toUpperCase, startsWith ↔ endsWith, some ↔ every, min ↔ max…). The first trial with a real
 // AI showed why: a reference written cleanly with regexes otherwise offered “nothing to mutate”.
+// Version 3 (OSP v0.3 §3.6): it also mutates Luau files (mutation-luau.ts).
 // The engine is part of the replay (traps depend on it): a registry announces its version.
 
 /** The engine version that new registries announce. */
-export const MOTEUR_MUTATION = 2;
+export const MOTEUR_MUTATION = 3;
 
 /** Methods that have an opposite, or nearly: calling one for the other is a plausible bug. */
 const METHODES: Record<string, string> = {
@@ -195,8 +197,10 @@ export function mutants(livrable: Livrable, opts: { max?: number; fichiers?: str
   const max = opts.max ?? 40;
   const all: Mutant[] = [];
   for (const [fichier, src] of Object.entries(livrable.fichiers)) {
-    if (!/\.(mjs|js)$/.test(fichier) || (opts.fichiers && !opts.fichiers.includes(fichier))) continue;
-    for (const s of mutationSites(src, opts.version)) {
+    if (opts.fichiers && !opts.fichiers.includes(fichier)) continue;
+    const luau = /\.(luau|lua)$/.test(fichier);
+    if (luau ? (opts.version ?? MOTEUR_MUTATION) < 3 : !/\.(mjs|js)$/.test(fichier)) continue;
+    for (const s of luau ? mutationSitesLuau(src) : mutationSites(src, opts.version)) {
       const ligne = src.slice(0, s.index).split('\n').length;
       const muted = src.slice(0, s.index) + s.apres + src.slice(s.index + s.avant.length);
       all.push({ fichier, ligne, avant: s.avant, apres: s.apres, livrable: { ...livrable, fichiers: { ...livrable.fichiers, [fichier]: muted } } });

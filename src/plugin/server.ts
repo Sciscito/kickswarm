@@ -63,7 +63,9 @@ const enfantSchema = z.object({
   capsule: z.string().describe('The context needed, and nothing more'),
   atomique: z.boolean(),
   critere_fini: z.object({
-    module: z.string().describe('Name of the delivered module, e.g. gcd.mjs'),
+    verificateur: z.enum(['tests-js@1', 'tests-luau@1']).optional().describe('tests-js@1 (JavaScript, the default) or tests-luau@1 (a Luau module)'),
+    portes: z.array(z.literal('luau-checks@1')).optional().describe('Luau only: ["luau-checks@1"], strict types and lint before the tests'),
+    module: z.string().describe('Name of the delivered module, e.g. gcd.mjs, or src/shared/Coins.luau for Luau'),
     tests: z.array(testSchema),
     proprietes: z.array(proprieteSchema).optional().describe('Property tests on random inputs'),
     timeout_ms: z.number().optional(),
@@ -370,7 +372,9 @@ export function createPluginServer(
         atomique: e.atomique,
         critere_fini: {
           classe: 'V0',
-          verificateur: 'tests-js@1',
+          ...(e.critere_fini.verificateur === 'tests-luau@1'
+            ? { verificateur: 'tests-luau@1' as const, ...(e.critere_fini.portes?.length ? { portes: e.critere_fini.portes } : {}) }
+            : { verificateur: 'tests-js@1' as const }),
           module: e.critere_fini.module,
           tests: e.critere_fini.tests as TestCase[],
           ...(e.critere_fini.proprietes?.length ? { proprietes: e.critere_fini.proprietes as Propriete[] } : {}),

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { idRuchePrivee, normaliserCode } from '../protocol/builders.js';
 import { canonicalize, commitment, hashOf, sha256 } from '../protocol/canonical.js';
 import { blobsDuLivrable, chevauchent, empreinteLecture, horsPortee, inclus, validateDepot } from '../protocol/depot.js';
+import { playbook, PLAYBOOKS } from '../playbooks/index.js';
 import { generateIdentity, isContributorId, signObject, verifyObject, type Identity } from '../protocol/identity.js';
 import type {
   FusionDepot,
@@ -32,7 +33,7 @@ import type {
   Verdict,
 } from '../protocol/types.js';
 import { mutants } from '../verifier/mutation.js';
-import { adequation, validateCritere, validateLivrable, validateTests, verifierV0, type VerifOptions, type VerifReport } from '../verifier/v0.js';
+import { adequation, estCritereTests, validateCritere, validateLivrable, validateTests, verifierV0, type VerifOptions, type VerifReport } from '../verifier/v0.js';
 import { COMMUN, Ledger, type Account } from './ledger.js';
 import { transition } from './lifecycle.js';
 import { DEFAULT_PARAMS, type Params } from './params.js';
@@ -703,7 +704,7 @@ export class Coordinator {
   /** A cell's hidden tests, taken out of the vault, for the verifier. */
   private cachesFor(rec: CellRecord): TestCase[] | undefined {
     const c = rec.cell.critere_fini;
-    if (c.verificateur !== 'tests-js@1' || !c.tests_caches_hash) return undefined;
+    if (!estCritereTests(c) || !c.tests_caches_hash) return undefined;
     const v = this.coffre[c.tests_caches_hash] as TestCase[] | undefined;
     if (!v) throw new OspError("This cell's hidden tests are not in this coordinator's vault", 503);
     return v;
@@ -712,7 +713,7 @@ export class Coordinator {
   /** Checks that each secret matches the commitment published in the criterion. */
   private checkSecrets(spec: CellSpec, secret: Secrets | undefined, label: string): void {
     const c = spec.critere_fini;
-    if (c.verificateur !== 'tests-js@1') {
+    if (!estCritereTests(c)) {
       if (secret?.tests_caches || secret?.reference) throw new OspError(`${label}: this type of criterion has no secrets`);
       return;
     }
@@ -776,6 +777,7 @@ export class Coordinator {
     if (this.state.hives[ruche.slug]) throw new OspError(`The hive "${ruche.slug}" already exists`, 409);
     if (!ruche.nom || !ruche.objectif) throw new OspError('A hive needs a name and a goal');
     if (ruche.classe_verif_defaut !== 'V0') throw new OspError('The MVP only supports verification class V0');
+    if (ruche.playbook !== undefined && !playbook(ruche.playbook)) throw new OspError(`Unknown playbook: ${String(ruche.playbook)} (known: ${Object.keys(PLAYBOOKS).join(', ')})`);
     // OSP v0.3 §2.7: a private hive is a coordinator instance of its own, hosting that one hive.
     if (this.params.prive) {
       if (ruche.visibilite !== 'privee') throw new OspError('This instance only hosts its private hive', 409);
@@ -1424,7 +1426,7 @@ export class Coordinator {
     try {
       const rapport = await this.verifier(rec.cell.critere_fini, livrable, { caches: this.cachesFor(rec) });
       const crit = rec.cell.critere_fini;
-      if (!rapport.ok || this.params.taux_pieges <= 0 || this.params.gardiennes_v0 <= 0 || crit.verificateur !== 'tests-js@1') return [rapport];
+      if (!rapport.ok || this.params.taux_pieges <= 0 || this.params.gardiennes_v0 <= 0 || !estCritereTests(crit)) return [rapport];
       const reports = [rapport];
       let tues = 0;
       for (const m of mutants(livrable, { max: this.params.pieges_essais, version: this.params.moteur_mutation })) {
@@ -1530,7 +1532,7 @@ export class Coordinator {
       const label = `Child ${i + 1} ("${child.objectif.slice(0, 50)}")`;
       this.checkSecrets(child, secrets[i], label);
       const c = child.critere_fini;
-      if (c.verificateur !== 'tests-js@1') continue;
+      if (!estCritereTests(c)) continue;
       if (!c.reference_hash) {
         if (this.params.reference_obligatoire) throw new OspError(`${label}: a reference implementation is required to measure the strength of the tests`);
         continue;
@@ -1579,12 +1581,12 @@ export class Coordinator {
     const id = hashOf(d);
     const n = d.enfants.length;
     // One mutation score per child that announces a reference, in order.
-    const avecRef = d.enfants.filter((e) => e.critere_fini.verificateur === 'tests-js@1' && e.critere_fini.reference_hash).length;
+    const avecRef = d.enfants.filter((e) => estCritereTests(e.critere_fini) && e.critere_fini.reference_hash).length;
     if (verifs.length !== avecRef || verifs.some((r) => !r.ok || !r.mutation)) throw new OspError('Test strength measurement missing or insufficient');
     let k = 0;
     // A reference with nothing to mutate has no measurement: like a child without a reference.
     const force_tests = d.enfants.map((e) => {
-      if (e.critere_fini.verificateur !== 'tests-js@1' || !e.critere_fini.reference_hash) return null;
+      if (!estCritereTests(e.critere_fini) || !e.critere_fini.reference_hash) return null;
       const m = verifs[k++]!.mutation!;
       return m.total > 0 ? m.score : null;
     });
@@ -1950,7 +1952,7 @@ export class Coordinator {
     });
     // The cell's secrets become public: anyone can now re-verify its validation.
     const crit = rec.cell.critere_fini;
-    if (crit.verificateur === 'tests-js@1' && (crit.tests_caches_hash || crit.reference_hash)) {
+    if (estCritereTests(crit) && (crit.tests_caches_hash || crit.reference_hash)) {
       this.registry.append('secrets_reveles', {
         alveole: rec.id,
         chemin: rec.cell.chemin,
@@ -2051,6 +2053,8 @@ export class Coordinator {
 
   private assignment(rec: CellRecord, caste: Caste, bail_expire: number): Assignment {
     const a: Assignment = { caste, alveole_id: rec.id, alveole: rec.cell, capsule: rec.capsule_texte, profondeur: rec.profondeur, bail_expire };
+    const pb = this.state.hives[rec.cell.ruche]?.ruche.playbook;
+    if (pb) a.playbook = pb;
     if (caste === 'batisseuse') {
       a.enfants_valides = rec.enfants.map((cid) => {
         const child = this.state.cells[cid]!;

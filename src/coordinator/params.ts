@@ -115,7 +115,7 @@ export const DEFAULT_PARAMS: Params = {
   taux_pieges: 0.1,
   taux_pieges_min: 0.01,
   pieges_essais: 8,
-  moteur_mutation: 2,
+  moteur_mutation: 3,
   prive: false,
   embargo_max_ms: 2 * HEURE,
   score_mutation_min: 0.8,

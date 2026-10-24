@@ -95,8 +95,30 @@ export interface CritereTestsDeTests {
   timeout_ms?: number;
 }
 
-/** The MVP only knows V0; V1 and V2 come later (§9.1). */
-export type CritereFini = CritereV0 | CritereTestsDeTests;
+/**
+ * OSP v0.3 §3.6: a pure Luau module, tested in the Luau virtual machine compiled to WebAssembly.
+ * The tests have the same form as `tests-js@1`: `fn` names a field of the table the module returns.
+ */
+export interface CritereLuau {
+  classe: 'V0';
+  verificateur: 'tests-luau@1';
+  /** The module the tests require, e.g. `src/shared/Shop.luau`. It returns a table of functions. */
+  module: string;
+  tests: TestCase[];
+  /** Here `verifie` is a Luau expression over `args`, `out` and `eq`. */
+  proprietes?: Propriete[];
+  tests_caches_hash?: Hash;
+  reference_hash?: Hash;
+  timeout_ms?: number;
+  /** Gates run before the tests: `luau-checks@1`, strict type checking and Luau's linter report nothing. */
+  portes?: Array<'luau-checks@1'>;
+}
+
+/** The criteria checked by tests (visible, hidden, properties), in JavaScript or in Luau. */
+export type CritereTests = CritereV0 | CritereLuau;
+
+/** V0 only for now; V1 and V2 come later (§9.1). */
+export type CritereFini = CritereV0 | CritereTestsDeTests | CritereLuau;
 
 /** What a hive owner or a scout describes before the coordinator issues the cell. */
 export interface CellSpec {
@@ -144,6 +166,8 @@ export interface Hive extends Signed {
   parametres?: { alpha_faux?: number; gardiennes_v0?: number };
   /** A private hive's random salt: its identifier, a hash, reveals nothing of its name. */
   sel?: string;
+  /** OSP v0.3 §3.6: the playbook its bees follow, e.g. `roblox-pure-logic-first`. */
+  playbook?: string;
 }
 
 /** Roles in a private hive (OSP v0.3 §2.3). */
@@ -351,4 +375,6 @@ export interface Assignment {
   a_verifier?: { id: Hash; livrable: Livrable };
   /** For a builder: the children's validated deliverables. */
   enfants_valides?: Array<{ chemin: string; objectif: string; module: string; livrable: Livrable }>;
+  /** OSP v0.3 §3.6: the hive's playbook. The plugin adds its guidance for the bee's role. */
+  playbook?: string;
 }

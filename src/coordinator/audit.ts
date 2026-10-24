@@ -3,7 +3,7 @@ import { canonicalize, commitment, hashOf } from '../protocol/canonical.js';
 import { blobsDuLivrable } from '../protocol/depot.js';
 import type { ContributorId, EngagementVerdict, FusionDepot, Hash, Livrable, RecuDepot, Result, TestCase, Verdict } from '../protocol/types.js';
 import { mutants } from '../verifier/mutation.js';
-import { verifierV0 } from '../verifier/v0.js';
+import { estCritereTests, verifierV0 } from '../verifier/v0.js';
 import { QUICKNET } from './balise.js';
 import { Coordinator, type BaliseAnnoncee, type CommandeDonnees } from './coordinator.js';
 import { COMMUN } from './ledger.js';
@@ -450,7 +450,7 @@ async function reverify(
   }
   if (!cible) return;
   let caches: TestCase[] | undefined;
-  if (cible.critere.verificateur === 'tests-js@1' && cible.critere.tests_caches_hash) {
+  if (estCritereTests(cible.critere) && cible.critere.tests_caches_hash) {
     caches = reveles.get(cible.critere.tests_caches_hash);
     if (!caches) {
       nonReveles.n++;

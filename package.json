@@ -19,6 +19,7 @@
     "plugin": "tsx src/cli.ts plugin"
   },
   "dependencies": {
+    "@luau-rs/luau": "0.739.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@noble/curves": "^2.4.0",
     "quickjs-emscripten": "0.31.0",
@@ -28,5 +29,10 @@
     "@types/node": "^22.20.5",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "@luau-rs/luau": {
+      "typescript": "$typescript"
+    }
   }
 }

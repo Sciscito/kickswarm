@@ -28,7 +28,7 @@ export function makeRequete(id: Identity, action: Requete['action'], extra: { ru
 
 export function makeHive(
   id: Identity,
-  h: { slug: string; nom: string; objectif: string; licence?: string; plafond_miel?: number; privee?: boolean; parametres?: Hive['parametres'] },
+  h: { slug: string; nom: string; objectif: string; licence?: string; plafond_miel?: number; privee?: boolean; parametres?: Hive['parametres']; playbook?: string },
 ): Hive {
   return signObject<Hive>(
     {
@@ -42,6 +42,7 @@ export function makeHive(
       budget: { plafond_miel: h.plafond_miel ?? 500_000 },
       // A private hive carries a random salt: its identifier (a hash) then reveals nothing of its name.
       ...(h.privee ? { visibilite: 'privee' as const, sel: randomBytes(16).toString('hex'), ...(h.parametres ? { parametres: h.parametres } : {}) } : {}),
+      ...(h.playbook ? { playbook: h.playbook } : {}),
     },
     id,
   );

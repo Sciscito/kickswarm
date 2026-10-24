@@ -1,0 +1,52 @@
+{
+  "slug": "our-obby",
+  "nom": "Our obstacle game",
+  "objectif": "A Roblox obstacle game with coins and a shop",
+  "playbook": "roblox-pure-logic-first",
+  "racine": {
+    "objectif": "The economy of the game: coins and the shop, as pure Luau modules",
+    "capsule": "src/shared/Economy.luau exposes the functions of Coins and Shop. Glue for humans: the shop UI and the purchase remote event call these functions.",
+    "atomique": false,
+    "critere_fini": {
+      "classe": "V0",
+      "verificateur": "tests-luau@1",
+      "module": "src/shared/Economy.luau",
+      "tests": [
+        {
+          "fn": "add",
+          "args": [
+            10,
+            5
+          ],
+          "attendu": 15
+        },
+        {
+          "fn": "canAfford",
+          "args": [
+            50,
+            50
+          ],
+          "attendu": true
+        },
+        {
+          "fn": "price",
+          "args": [
+            "sword",
+            2
+          ],
+          "attendu": 100
+        },
+        {
+          "fn": "total",
+          "args": [
+            {
+              "sword": 1,
+              "potion": 2
+            }
+          ],
+          "attendu": 60
+        }
+      ]
+    }
+  }
+}
