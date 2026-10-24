@@ -3,6 +3,7 @@ dist/
 data/
 *.log
 *.tmp
+kickswarm*.tgz
 .env
 .env.*
 .kickswarm/

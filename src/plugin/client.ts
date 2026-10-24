@@ -56,7 +56,7 @@ export class CoordinatorClient {
     return this.call<Array<{ slug: string; nom: string; statut: string; progression: { miel: number; total: number } }>>('GET', '/v0/hives');
   }
   hive(slug: string) {
-    return this.call<{ ruche: Hive; statut: string; progression: { miel: number; total: number }; alveoles: Array<{ chemin: string; objectif: string; etat: string }> }>(
+    return this.call<{ ruche: Hive; statut: string; progression: { miel: number; total: number }; alveoles: Array<{ id: string; chemin: string; objectif: string; etat: string; profondeur: number; enfants: number }> }>(
       'GET',
       `/v0/hives/${encodeURIComponent(slug)}`,
     );
@@ -70,8 +70,14 @@ export class CoordinatorClient {
       `/v0/contributors/${encodeURIComponent(id)}`,
     );
   }
-  registry(since = 0) {
-    return this.call<unknown[]>('GET', `/v0/registry?since=${since}`);
+  /** The registry from `since` on, page after page (the coordinator serves it in pages). */
+  async registry(since = 0): Promise<unknown[]> {
+    const out: unknown[] = [];
+    for (;;) {
+      const page = await this.call<unknown[]>('GET', `/v0/registry?since=${since + out.length}`);
+      if (!page.length) return out;
+      out.push(...page);
+    }
   }
   proposeHive(ruche: Hive, racine: CellSpec, secrets?: Secrets) {
     return this.call('POST', '/v0/hives', { ruche, racine, ...(secrets ? { secrets } : {}) });

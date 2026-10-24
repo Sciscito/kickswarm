@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { pontUneFois, suivrePont, type PontRapport } from './bridge/pont.js';
 import { AIDE_MOTEUR, commandeAbeille, commandeMoteur } from './moteur/cli.js';
@@ -9,6 +10,7 @@ import { auditRegistry } from './coordinator/audit.js';
 import { DrandHttp, QUICKNET, tourA, type SourceBalise } from './coordinator/balise.js';
 import { Coordinator } from './coordinator/coordinator.js';
 import type { RegistryEntry } from './coordinator/registry.js';
+import { Garde } from './coordinator/garde.js';
 import { createCoordinatorServer } from './coordinator/http.js';
 import { Hote } from './coordinator/hote.js';
 import { demo } from './demo.js';
@@ -33,6 +35,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm demo                                        End-to-end demo in the terminal
   kickswarm trial [--port 7777] [--guards 4] [--beacon none|drand] [--rehearse]   First run with a real AI (see docs/trial.md)
   kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox wasm|container|process] [--beacon drand|none]
+  kickswarm coordinator --public [--port 7777] [--data /srv/kickswarm] [--launch all|none|<project>,…]   Open to everyone, behind Caddy (see docs/deploy.md)
   kickswarm plugin [--url <coordinator>]                MCP server for your agent (stdio)
   kickswarm identity                                    Show (and create if needed) your identity
   kickswarm journal [--n 20] [--full] [--verify]        Everything your AI did for the swarm, on this machine
@@ -267,17 +270,28 @@ async function main(): Promise<void> {
     }
     case 'coordinator':
     case 'coordinateur': {
-      const founder = opts.founder ?? opts.fondateur ?? loadOrCreateIdentity().identite.id;
+      const publique = opts.public !== undefined;
+      const moi = loadOrCreateIdentity().identite;
+      const founder = opts.founder ?? opts.fondateur ?? moi.id;
       if (!isContributorId(founder)) throw new Error('--founder must be an ed25519:… identity');
       const port = Number(opts.port ?? 7777);
+      // Public mode listens on this machine only: Caddy, in front, brings HTTPS and relays the visitors.
       const host = opts.host ?? opts.hote ?? '127.0.0.1';
       const dataDir = resolve(opts.data ?? opts.donnees ?? 'data');
       process.env.KICKSWARM_SANDBOX = opts.sandbox || process.env.KICKSWARM_SANDBOX || 'auto';
       const sandbox = resolveSandbox();
-      if (!LOCAL_HOSTS.has(host) && sandbox === 'process' && opts.unsafe === undefined) {
+      if ((publique || !LOCAL_HOSTS.has(host)) && sandbox === 'process' && opts.unsafe === undefined) {
         throw new Error(
           'Refusing to expose a coordinator beyond this machine with the process sandbox (it does not cut the network). Use the default WebAssembly sandbox or a container, or pass --unsafe on a network you fully trust.',
         );
+      }
+      if (publique) {
+        if (opts.beacon === 'none') throw new Error('A public coordinator draws with the public drand beacon: --beacon none is for private tests');
+        // Nobody tests the network before everyone comes in: it tests itself, end to end, before it opens.
+        console.log('Self-check: a whole hive in memory (proposal, split, work, verification, guards, trap, audit)…');
+        const t = Date.now();
+        if (!(await demo(() => {}))) throw new Error('The self-check failed: this machine cannot verify deliverables correctly. Nothing was opened.');
+        console.log(`Self-check passed in ${((Date.now() - t) / 1000).toFixed(1)} s.`);
       }
       // Random draws come from drand by default: nobody, not even the coordinator, chooses them.
       let balise: SourceBalise | undefined;
@@ -292,13 +306,40 @@ async function main(): Promise<void> {
       } else if (beacon !== 'none') throw new Error('--beacon must be drand or none');
       const coord = new Coordinator({ fondateur: founder, dataDir, balise });
       // Private hives (OSP v0.3) run next to the public ones, each in its own instance and registry.
-      const hote = new Hote(coord, { dataDir, ...(balise ? { balise } : {}) });
-      createCoordinatorServer(coord, hote).listen(port, host, () => {
-        console.log(`OSP v0.1 coordinator on http://${host}:${port}`);
-        console.log(`Live hive: http://${host}:${port}/hive`);
-        console.log(`Founder: ${founder}\nData: ${dataDir}\nSandbox: ${sandbox}${sandbox === 'process' ? ' (network not cut: keep this coordinator private)' : ''}`);
-        console.log(`Random draws: ${balise ? 'public drand beacon (League of Entropy, quicknet), verifiable by anyone' : 'drawn by the coordinator itself (not verifiable)'}`);
-      });
+      const hote = new Hote(coord, { dataDir, ...(balise ? { balise } : {}), ...(publique ? { privesMax: Number(opts['max-private'] ?? 500) } : {}) });
+      const garde = publique ? new Garde({ proxy: LOCAL_HOSTS.has(host) }) : undefined;
+      // The package built next to this program (deploy/install.sh runs `npm pack`): the join command installs it from here.
+      const paquet = opts.package ? resolve(opts.package) : fileURLToPath(new URL('../kickswarm.tgz', import.meta.url));
+      const serveur = createCoordinatorServer(coord, hote, { ...(garde ? { garde } : {}), ...(existsSync(paquet) ? { paquet } : {}) });
+      await new Promise<void>((ok) => serveur.listen(port, host, ok));
+      console.log(`OSP v0.1 coordinator on http://${host}:${port}${publique ? ' (public mode: budgets per address, bounded queue)' : ''}`);
+      console.log(`Live hive: http://${host}:${port}/hive`);
+      console.log(`Founder: ${founder}\nData: ${dataDir}\nSandbox: ${sandbox}${sandbox === 'process' ? ' (network not cut: keep this coordinator private)' : ''}`);
+      console.log(`Random draws: ${balise ? 'public drand beacon (League of Entropy, quicknet), verifiable by anyone' : 'drawn by the coordinator itself (not verifiable)'}`);
+      // The prepared projects of docs/projets.md open by themselves (safe to run at every start).
+      const lancer = String(opts.launch ?? (publique ? 'all' : 'none'));
+      const projets = lancer === 'none' ? [] : lancer === 'all' ? Object.values(PROJETS) : lancer.split(',').map((n) => PROJETS[n.trim()] ?? (() => { throw new Error(`Unknown project: ${n}`); })());
+      if (projets.length && founder !== moi.id) console.log('The prepared projects are not opened: the founder\'s key is not on this machine (run "kickswarm launch <project>" from the founder\'s machine).');
+      else {
+        const local = new CoordinatorClient(`http://${LOCAL_HOSTS.has(host) ? host : '127.0.0.1'}:${port}`.replace('://::1', '://[::1]'), moi);
+        for (const p of projets) {
+          try {
+            const r = await lancerProjet(local, p);
+            console.log(r.deja ? `Project “${p.nom}”: already open.` : `Project “${p.nom}”: opened, ${r.cellules} cells.`);
+          } catch (e) {
+            console.error(`Project “${p.nom}” could not be opened: ${(e as Error).message}`);
+          }
+        }
+      }
+      // Stopped by the service manager: finish the requests in flight, then leave (the state is saved after every command).
+      for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+        process.once(signal, () => {
+          console.log('Stopping…');
+          serveur.close(() => process.exit(0));
+          serveur.closeIdleConnections();
+          setTimeout(() => process.exit(0), 5000).unref();
+        });
+      }
       return;
     }
     case 'plugin':
@@ -364,7 +405,8 @@ async function main(): Promise<void> {
         // State hash first, then the registry cut at the same entry: the live hive keeps moving.
         // Entries still under embargo (open verifications) come later; the head hash already commits to them.
         const head = (await (await fetch(new URL('/v0/state-hash', url))).json()) as { seq: number; etat: string | null; tete?: { seq: number } | null };
-        const all = (await (await fetch(new URL('/v0/registry', url))).json()) as RegistryEntry[];
+        const all: RegistryEntry[] = [];
+        for (let page: RegistryEntry[]; all.length <= head.seq && (page = (await (await fetch(new URL(`/v0/registry?since=${all.length}`, url))).json()) as RegistryEntry[]).length; ) all.push(...page);
         entries = all.slice(0, head.seq + 1);
         announced = head.etat ?? undefined;
         source = url;

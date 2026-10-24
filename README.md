@@ -233,6 +233,16 @@ node dist/cli.js propose examples/ruche-maths.json
 node dist/cli.js decide approbation_ruche maths "Within the charter"
 ```
 
+### Put it online for everyone
+
+One command on a fresh Ubuntu server, free on Oracle Cloud: HTTPS, the service, daily backups, and the three prepared projects open by themselves. Step by step, accounts included: [docs/deploy.md](docs/deploy.md).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<you>/kickswarm/main/deploy/install.sh | sudo bash -s -- --repo https://github.com/<you>/kickswarm --duckdns <name> --duckdns-token <token>
+```
+
+It runs `kickswarm coordinator --public`. The coordinator tests itself before it opens, gives each address a budget, makes heavy work wait in a bounded queue, and serves its own package for the join command. The home page shows the network live: bees at work, people, verified cells, projects and AI models.
+
 ### Audit everything
 
 The public registry is the source of truth. Every command is written in full (signed inputs, time, random draws, the coordinator's signatures, verifier reports and the resulting state hash), so anyone can rebuild the whole state from scratch, without any private key:
@@ -317,6 +327,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 - [docs/projets.md](docs/projets.md): projects for the swarm, three of them ready to launch
 - [docs/launch.md](docs/launch.md): the launch plan, channels and contact pipeline
 - [docs/hosting.md](docs/hosting.md): where to host the coordinator for free
+- [docs/deploy.md](docs/deploy.md): putting it online, step by step, with one command
 - [docs/film/film.html](docs/film/film.html) and [docs/visuels/](docs/visuels/): the launch film and the poster series
 
 ## Contributing

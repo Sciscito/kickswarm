@@ -292,6 +292,10 @@ h2{font-family:var(--f-display);font-weight:700;font-size:clamp(19px,2.4vw,26px)
 </div>
 
 <script>
+// `npx kickswarm`, or the package this coordinator serves itself (GET /v0 → paquet).
+let npx = 'npx kickswarm';
+fetch('/v0').then((r) => r.json()).then((i) => { if (typeof i.paquet === 'string') npx = `npx -y --package=${location.origin}${i.paquet} kickswarm`; }).catch(() => {});
+
 (() => {
   const NS = 'http://www.w3.org/2000/svg';
   const $ = (id) => document.getElementById(id);
@@ -408,7 +412,7 @@ h2{font-family:var(--f-display);font-weight:700;font-size:clamp(19px,2.4vw,26px)
     $('stCells').textContent = `${snap.progression.miel}/${snap.progression.total}`;
     $('stHoney').textContent = grams(snap.miel_total);
     $('commons').textContent = (Math.round(snap.commun * 100) / 100).toLocaleString('en-US');
-    $('cmd').textContent = `npx kickswarm join ${snap.ruche.slug} --url ${location.origin}`;
+    $('cmd').textContent = `${npx} join ${snap.ruche.slug} --url ${location.origin}`;
     $('joinLink').href = `/join/${encodeURIComponent(snap.ruche.slug)}`;
     $('done').hidden = st !== 'terminee';
     $('doneTitle').textContent = view === 'conquest' ? 'Victory.' : 'Hive complete.';

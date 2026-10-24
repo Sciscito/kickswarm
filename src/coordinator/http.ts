@@ -1,8 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isContributorId } from '../protocol/identity.js';
 import type { Adhesion, CellSpec, Decision, Decomposition, EngagementVerdict, FusionDepot, Hash, Hive, Invitation, LienGithub, Livrable, RecuDepot, Requete, Result, Secrets, Verdict } from '../protocol/types.js';
-import { Coordinator, OspError } from './coordinator.js';
+import { Coordinator, OspError, type Compteurs } from './coordinator.js';
+import { Garde } from './garde.js';
 import { Hote } from './hote.js';
 import { COMMUN } from './ledger.js';
 import { servirStatique } from './statique.js';
@@ -40,6 +42,8 @@ function send(res: ServerResponse, status: number, body: unknown, prive = false)
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(json),
     ...(prive ? { 'cache-control': 'no-store' } : { 'access-control-allow-origin': '*' }),
+    // Busy or over budget: the bees and pages wait this long before trying again.
+    ...(status === 429 || status === 503 ? { 'retry-after': '60' } : {}),
   });
   res.end(json);
 }
@@ -59,7 +63,7 @@ async function sendPage(res: ServerResponse, page: keyof typeof PAGES): Promise<
 }
 
 /** Real-time stream (Server-Sent Events): one notification per new registry entry, for one registry. */
-function streamEvents(coord: Coordinator, req: IncomingMessage, res: ServerResponse, prive = false): void {
+function streamEvents(coord: Coordinator, req: IncomingMessage, res: ServerResponse, prive = false, fermer: () => void = () => {}): void {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
@@ -72,6 +76,7 @@ function streamEvents(coord: Coordinator, req: IncomingMessage, res: ServerRespo
   req.on('close', () => {
     off();
     clearInterval(ping);
+    fermer();
   });
 }
 
@@ -84,12 +89,36 @@ function ticketDe(req: IncomingMessage, url: URL): string | null {
 
 const ID_PRIVE = /^p[0-9a-f]{32}$/;
 
+/** At most this many registry entries per read: a client pages with `?since=`. */
+export const PAGE_REGISTRE = 2000;
+
+/** Heavy requests: they run deliverables or measure tests, so they wait in the guard's queue. */
+const LOURDES = new Set(['POST /v0/work/submit', 'POST /v0/work/decompose', 'POST /v0/work/verdict', 'POST /v0/hives', 'POST /v0/private']);
+
+export interface OptionsServeur {
+  /** Public mode (`kickswarm coordinator --public`): budgets per address, capped streams, bounded queue. */
+  garde?: Garde;
+  /** A proposer may have at most this many projects waiting for the founder (public mode). */
+  enAttenteParPorteur?: number;
+  /**
+   * The kickswarm package built on this server (`npm pack`), served at /kickswarm.tgz: the join command
+   * installs it from the coordinator itself, so nobody depends on a name someone else could take on npm.
+   */
+  paquet?: string;
+}
+
 /**
  * The coordinator's HTTP server. Public hives answer at /v0/…; each private hive answers at
  * /v0/p/{id}/… from its own coordinator instance (OSP v0.3 §2.8), where every read needs a ticket.
  */
-export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hote(coord)): Server {
-  return createServer(async (req, res) => {
+export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hote(coord), options: OptionsServeur = {}): Server {
+  const garde = options.garde;
+  // The home page's counters, computed at most every few seconds whatever the number of visitors.
+  let compteurs: { valeur: Compteurs; at: number } | null = null;
+  const server = createServer(async (req, res) => {
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
+    if (garde) res.setHeader('x-frame-options', 'DENY');
     const url = new URL(req.url ?? '/', 'http://localhost');
     let parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
     // A private hive's routes mirror the public ones, on its own instance.
@@ -97,6 +126,8 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
     if (prive) parts = ['v0', ...parts.slice(3)];
     const route = `${req.method} /${parts.slice(0, 3).join('/')}`;
     try {
+      garde?.admettre(req, route);
+      if (route === 'GET /healthz') return send(res, 200, { ok: true, ...(garde ? garde.charge() : {}) }, true);
       let cible = coord;
       if (prive) {
         if (!ID_PRIVE.test(prive)) throw new OspError('Unknown private hive', 404);
@@ -109,14 +140,26 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
         if (req.method === 'GET' && /^\/project\/[a-z0-9-]{1,40}\/?$/.test(url.pathname)) return await sendPage(res, 'projet');
         // OSP v0.4 §2.3: the chat door and the guard door, and the modules they load.
         if (req.method === 'GET' && (url.pathname === '/bee' || url.pathname === '/bee/')) return await sendPage(res, 'bee');
+        if (req.method === 'GET' && url.pathname === '/kickswarm.tgz' && options.paquet) {
+          const taille = (await stat(options.paquet)).size;
+          res.writeHead(200, { 'content-type': 'application/gzip', 'content-length': taille, 'cache-control': 'no-cache' });
+          return void createReadStream(options.paquet).pipe(res);
+        }
         if (req.method === 'GET' && (await servirStatique(url.pathname, res))) return;
         // The way in, and its share links: /join/<hive> opens with that hive picked.
         if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/join' || /^\/join\/[a-z0-9-]{1,40}\/?$/.test(url.pathname))) return await sendPage(res, 'join');
       }
-      if (route === 'GET /v0/events') return streamEvents(cible, req, res, prive !== null);
+      if (route === 'GET /v0/events') return streamEvents(cible, req, res, prive !== null, garde?.ouvrirFlux(req));
       if (parts[0] !== 'v0') throw new OspError('Unknown route', 404);
       const body = req.method === 'POST' ? ((await readBody(req)) as Record<string, unknown>) : {};
       const ok = (status: number, b: unknown) => send(res, status, b, prive !== null);
+      if (garde && LOURDES.has(route) && !garde.estLocal(req)) {
+        if (route === 'POST /v0/hives') verifierEnAttente(coord, body.ruche as Hive, options.enAttenteParPorteur ?? 3);
+        return await garde.lourd(() => repondre());
+      }
+      return await repondre();
+
+      async function repondre(): Promise<void> {
 
       if (prive) {
         switch (route) {
@@ -141,7 +184,7 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
 
       switch (true) {
         case route === 'GET /v0':
-          return ok(200, { protocole: 'OSP', version: '0.1', fondateur: cible.fondateur, coordinateur: cible.identite.id, ...(prive ? { prive } : {}) });
+          return ok(200, { protocole: 'OSP', version: '0.1', fondateur: cible.fondateur, coordinateur: cible.identite.id, ...(prive ? { prive } : options.paquet ? { paquet: '/kickswarm.tgz' } : {}) });
         case route === 'GET /v0/hives' && parts.length === 2:
           return ok(200, cible.listHives());
         case route.startsWith('GET /v0/hives/') && parts.length === 3:
@@ -175,9 +218,10 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
         case route === 'GET /v0/state-hash':
           return ok(200, cible.etatPublie());
         case route === 'GET /v0/registry': {
-          // The content is published up to the embargo horizon (OSP v0.2 P0-3).
+          // The content is published up to the embargo horizon (OSP v0.2 P0-3), one page at a time.
           const since = Number(url.searchParams.get('since') ?? 0);
-          return ok(200, cible.registry.entries.slice(Number.isFinite(since) ? Math.max(0, since) : 0, cible.horizon() + 1));
+          const debut = Number.isFinite(since) ? Math.max(0, Math.floor(since)) : 0;
+          return ok(200, cible.registry.entries.slice(debut, Math.min(cible.horizon() + 1, debut + PAGE_REGISTRE)));
         }
         case route.startsWith('GET /v0/contributors/') && parts.length === 3: {
           const id = parts[2]!;
@@ -197,8 +241,12 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
           return ok(201, cible.lienGithub(body as unknown as LienGithub));
         case route === 'POST /v0/repo/merges':
           return ok(201, cible.fusionDepot(body as unknown as FusionDepot));
+        case route === 'GET /v0/stats':
+          if (!compteurs || Date.now() - compteurs.at > 5000) compteurs = { valeur: cible.compteurs(), at: Date.now() };
+          return ok(200, compteurs.valeur);
         default:
           throw new OspError('Unknown route', 404);
+      }
       }
     } catch (e) {
       const status = e instanceof OspError ? e.status : 500;
@@ -207,4 +255,18 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
       if (!res.headersSent) send(res, status, { erreur: message }, prive !== null);
     }
   });
+  if (garde) {
+    // A slow client cannot hold a connection open forever.
+    server.headersTimeout = 20_000;
+    server.requestTimeout = 60_000;
+  }
+  return server;
+}
+
+/** Public mode: a proposer cannot flood the founder's queue with projects. */
+function verifierEnAttente(coord: Coordinator, ruche: Hive | undefined, max: number): void {
+  const porteur = ruche?.porteur;
+  if (!porteur) return;
+  const enAttente = coord.listHives().filter((h) => h.statut === 'proposee' && coord.hiveView(h.slug).ruche.porteur === porteur).length;
+  if (enAttente >= max) throw new OspError(`You already have ${enAttente} projects waiting for the founder’s approval: wait for a decision`, 429);
 }

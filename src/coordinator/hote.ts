@@ -23,6 +23,8 @@ export interface HoteOptions {
   /** At most this many join attempts per address in `fenetreEssaisMs` (codes must not be guessable). */
   essaisMax?: number;
   fenetreEssaisMs?: number;
+  /** At most this many private hives on this host (public mode: each one is a coordinator in memory). */
+  privesMax?: number;
 }
 
 /** A private hive's defaults (§2.5): a 5% target error rate and one guard, so two members can cross-review. */
@@ -115,6 +117,7 @@ export class Hote {
     if (!(Number.isInteger(gardiennes) && gardiennes >= 0 && gardiennes <= 3)) throw new OspError('The guard floor is 0, 1, 2 or 3');
     const id = idRuchePrivee(ruche);
     if (this.prives.has(id)) throw new OspError('This private hive already exists', 409);
+    if (this.opts.privesMax !== undefined && this.prives.size >= this.opts.privesMax) throw new OspError('This coordinator hosts as many private hives as it can: try again later or run your own', 503);
     const params = { prive: true, alpha_faux: alpha, gardiennes_v0: gardiennes };
     const dossier = this.dossierPrives() ? join(this.dossierPrives()!, id) : undefined;
     const c = new Coordinator({ fondateur: ruche.porteur, ...(dossier ? { dataDir: dossier } : {}), params, ...(this.opts.balise ? { balise: this.opts.balise } : {}) });

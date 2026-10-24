@@ -42,7 +42,7 @@ We publish nothing until every line of this list is checked.
 | Phase | When | Goal |
 |---|---|---|
 | **Building** | Now → D-30 | Meet the launch condition |
-| **Closed pioneers** | D-30 → D-7 | 50 to 200 hand-picked testers, on Discord, run the flagship hive |
+| **Open from day one** | As soon as it is online | No closed test phase: everyone who wants comes in. The public coordinator tests and protects itself (self-check at every start, budgets per address, a bounded queue for heavy work, mandatory sandbox and drand beacon; see [deploy.md](deploy.md)). The first comers play the pioneers' part |
 | **Teasing** | D-14 → D-1 | 15 s teaser, waiting list, contacts with creators under embargo |
 | **Launch** | D0, a Tuesday | Show HN, X thread, 45 s video, Product Hunt, Reddit, creators |
 | **Wildfire** | D+1 → D+90 | Referral, communities, a hive of the week, live streams, hackathons |

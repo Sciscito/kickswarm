@@ -28,6 +28,8 @@ Free offers change often. **Check the current terms before you commit.**
 
 ## The recommended stack
 
+**The deployment kit does all of this in one command**: [deploy.md](deploy.md).
+
 1. **Coordinator**: an Oracle Cloud Always Free VM (Ubuntu, ARM).
 
    ```bash

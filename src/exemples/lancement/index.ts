@@ -18,11 +18,17 @@ export const PROJETS: Record<string, ProjetLancement> = {
   [BOUCLIER.slug]: BOUCLIER,
 };
 
-export async function lancerProjet(client: CoordinatorClient, p: ProjetLancement, log: (l: string) => void = () => {}): Promise<{ cellules: number }> {
+export async function lancerProjet(client: CoordinatorClient, p: ProjetLancement, log: (l: string) => void = () => {}): Promise<{ cellules: number; deja?: true }> {
   const moi = client.identite;
   const info = await client.info();
-  // Safe to run again: a project already proposed goes on from where it stopped.
-  let statut = await client.hive(p.slug).then((h) => h.statut, () => null);
+  // Safe to run again: a project already proposed goes on from where it stopped, one already split is left alone.
+  const vue = await client.hive(p.slug).catch(() => null);
+  let statut = vue?.statut ?? null;
+  const coeur = vue?.alveoles.find((a) => a.profondeur === 0);
+  if (statut !== null && statut !== 'proposee' && (!coeur || coeur.enfants > 0 || !['libre', 'reservee', 'en_cours'].includes(coeur.etat))) {
+    log(`“${p.nom}” is already open.`);
+    return { cellules: 0, deja: true };
+  }
   if (statut === null) {
     await client.proposeHive(makeHive(moi, { slug: p.slug, nom: p.nom, objectif: p.objectif }), p.racine);
     log(`Proposed “${p.nom}”.`);

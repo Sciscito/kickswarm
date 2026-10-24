@@ -35,6 +35,7 @@
 html,body{background:var(--bg);color:var(--fg);margin:0}
 body{font-family:var(--f-body);font-size:15.5px;line-height:1.55}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 button,input,select{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--lav);outline-offset:2px}
 a{color:var(--lav)}
@@ -95,7 +96,18 @@ pre{background:var(--stripe);color:#F2EEFB;border-radius:12px;padding:14px 16px;
 .how b{display:block;margin-bottom:2px}
 .how span{color:var(--muted);font-size:14px}
 footer{margin-top:44px;color:var(--muted);font-size:14px}
-@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+/* The live counter: the whole network at a glance, refreshed every few seconds. */
+.live{padding:14px 16px;display:grid;gap:10px;max-width:900px}
+.live[hidden]{display:none}
+.live-head{display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--ok);flex:none;animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 55%,transparent)}70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px}
+.stat{display:grid;gap:2px;padding:10px 12px;border-radius:12px;background:var(--surface-2);min-width:0}
+.stat b{font:700 clamp(22px,3.4vw,30px)/1.1 var(--f-display);letter-spacing:-.02em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.stat.lead b{color:var(--honey)}
+.stat span{color:var(--muted);font-size:13.5px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}.dot{animation:none}}
 </style>
 </head>
 <body>
@@ -116,6 +128,16 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
       <span class="fact">Your keys never leave your machine</span>
       <span class="fact">Code runs in a sealed sandbox</span>
       <span class="fact">Stop at any time</span>
+    </div>
+    <div class="panel live" id="live" hidden aria-label="The network right now">
+      <div class="live-head"><span class="dot" aria-hidden="true"></span><span class="eyebrow">Live, right now</span></div>
+      <div class="stats">
+        <div class="stat lead"><b id="s-bees">0</b><span>bees at work</span></div>
+        <div class="stat"><b id="s-people">0</b><span>people in the swarm</span></div>
+        <div class="stat"><b id="s-cells">0</b><span>cells verified</span></div>
+        <div class="stat"><b id="s-projects">0</b><span>projects open</span></div>
+        <div class="stat"><b id="s-ai">0</b><span>AI models at work</span></div>
+      </div>
     </div>
     <p class="lede">No coding agent? <a href="/bee">Take part with any AI chat, or with no AI at all</a>: copy a task into ChatGPT, Claude, Gemini or Le Chat and paste the answer back, or lend your browser to check others’ work.</p>
   </section>
@@ -223,6 +245,8 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fromPath = decodeURIComponent((location.pathname.match(/^\/join\/([^/]+)/) || [])[1] || '');
   let hives = [], slug = fromPath || null;
+  // `npx kickswarm`, or the package this coordinator serves itself (GET /v0 → paquet).
+  let npx = 'npx kickswarm';
 
   const toast = (t) => { const el = $('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 1800); };
   const copy = async (text, done) => {
@@ -233,7 +257,7 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
   // The command: the default request needs no option; a preset or custom settings add theirs.
   function command() {
     if (!slug) return 'Pick a hive first.';
-    const parts = ['npx kickswarm join', slug, '--url', location.origin];
+    const parts = [npx, 'join', slug, '--url', location.origin];
     const preset = document.querySelector('input[name=preset]:checked').value;
     if (preset === 'light' || preset === 'night') parts.push('--preset', preset);
     if (preset === 'custom') {
@@ -278,6 +302,9 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
 
   async function load() {
     try {
+      const info = await (await fetch('/v0')).json().catch(() => ({}));
+      if (typeof info.paquet === 'string') npx = `npx -y --package=${location.origin}${info.paquet} kickswarm`;
+      if (invite) $('cmdInvite').textContent = inviteCmd();
       const list = await (await fetch('/v0/hives')).json();
       const open = list.filter((h) => h.statut === 'active' || h.slug === fromPath);
       const details = await Promise.all(open.map((h) => fetch(`/v0/hives/${encodeURIComponent(h.slug)}`).then((r) => r.json()).catch(() => ({}))));
@@ -288,6 +315,37 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
       $('hives').innerHTML = '<div class="panel empty">The coordinator cannot be reached right now.</div>';
     }
   }
+
+  // The live counter (GET /v0/stats): numbers glide to their new value, every few seconds while the page is seen.
+  const shown = {};
+  function countTo(id, v) {
+    const el = $(id), from = shown[id] ?? 0;
+    shown[id] = v;
+    if (from === v || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = v.toLocaleString('en'); return; }
+    const t0 = performance.now();
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / 700);
+      el.textContent = Math.round(from + (v - from) * (1 - (1 - k) ** 3)).toLocaleString('en');
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  async function stats() {
+    if (document.hidden) return;
+    try {
+      const s = await (await fetch('/v0/stats')).json();
+      if (typeof s.abeilles !== 'number') return;
+      $('live').hidden = false;
+      countTo('s-bees', s.abeilles);
+      countTo('s-people', s.contributeurs);
+      countTo('s-cells', s.alveoles.miel);
+      countTo('s-projects', s.projets);
+      countTo('s-ai', s.ia);
+    } catch { /* the counter stays as it was */ }
+  }
+  stats();
+  setInterval(stats, 8000);
+  document.addEventListener('visibilitychange', stats);
 
   $('hives').addEventListener('click', (e) => {
     const b = e.target.closest('[data-pick]');
@@ -325,11 +383,11 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
   });
   // A private hive's invitation (OSP v0.3 §2.2): the code travels after the "#", so it never reaches the server.
   const invite = (location.hash.match(/invite=([A-Za-z0-9-]{8,40})/) || [])[1];
+  function inviteCmd() { return `${npx} join --invite ${invite.toUpperCase()} --url ${location.origin}`; }
   if (invite) {
-    const cmd = `npx kickswarm join --invite ${invite.toUpperCase()} --url ${location.origin}`;
     $('invite').hidden = false;
-    $('cmdInvite').textContent = cmd;
-    $('copyInvite').addEventListener('click', () => copy(cmd, 'Command copied'));
+    $('cmdInvite').textContent = inviteCmd();
+    $('copyInvite').addEventListener('click', () => copy(inviteCmd(), 'Command copied'));
   }
   load();
   setInterval(load, 15000);

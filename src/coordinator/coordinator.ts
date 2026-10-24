@@ -175,6 +175,18 @@ interface FusionRecord {
 }
 
 
+/** The network's live counters (see Coordinator.compteurs). */
+export interface Compteurs {
+  projets: number;
+  termines: number;
+  alveoles: { miel: number; total: number };
+  abeilles: number;
+  contributeurs: number;
+  grammes: number;
+  ia: number;
+  activite?: string;
+}
+
 /** A project's dashboard (see Coordinator.tableauProjet). */
 export interface TableauProjet {
   ruche: { slug: string; nom: string; objectif: string; statut: HiveStatus; porteur: string; playbook?: string };
@@ -1086,6 +1098,40 @@ export class Coordinator {
       statut: h.statut,
       progression: this.progression(h.ruche.slug),
     }));
+  }
+
+  /**
+   * The network's live counters, for the home page: projects, cells, bees at work right now, people,
+   * honey and AIs. Same discretion as the dashboards: a trap's seat counts like any guard seat.
+   */
+  compteurs(): Compteurs {
+    const now = this.now();
+    const hives = Object.values(this.state.hives);
+    const abeilles = new Set<string>();
+    let miel = 0;
+    let total = 0;
+    for (const c of Object.values(this.state.cells)) {
+      if (this.state.hives[c.cell.ruche]?.statut === 'proposee') continue;
+      total++;
+      if (c.state === 'miel') miel++;
+      if (c.bail && c.bail.expire > now && (c.state === 'reservee' || c.state === 'en_cours')) abeilles.add(c.bail.par);
+      if (c.state === 'en_verification') {
+        for (const g of c.gardiennes) if (g.expire > now) abeilles.add(g.par);
+        for (const g of this.engagesSur(c.en_attente)) abeilles.add(g.par);
+        for (const p of this.piegesSur(c)) if (p.expire > now) abeilles.add(p.attribue_a);
+      }
+    }
+    const visibles = this.registry.entries.slice(0, this.horizon() + 1);
+    return {
+      projets: hives.filter((h) => h.statut === 'active' || h.statut === 'terminee').length,
+      termines: hives.filter((h) => h.statut === 'terminee').length,
+      alveoles: { miel, total },
+      abeilles: abeilles.size,
+      contributeurs: this.state.contributeurs.length,
+      grammes: Math.round(hives.reduce((s, h) => s + Object.values(h.contributions).reduce((a, g) => a + g, 0), 0) * 1000) / 1000,
+      ia: this.classementModeles().modeles.length,
+      ...(visibles.length ? { activite: visibles[visibles.length - 1]!.date } : {}),
+    };
   }
 
   hiveView(slug: string): HiveView {

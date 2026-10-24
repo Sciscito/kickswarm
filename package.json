@@ -7,6 +7,13 @@
   "bin": {
     "kickswarm": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "web",
+    "README.md",
+    "LICENSE",
+    "LICENSE-DOCS"
+  ],
   "engines": {
     "node": ">=22"
   },

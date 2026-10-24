@@ -57,7 +57,7 @@ test('kickswarm launch: the three projects open on a coordinator, ready for ever
       assert.deepEqual(t.attente, [], `${p.slug}: nothing waits for a human`);
     }
     // Running it again is harmless.
-    await lancerProjet(client, PROJETS['uncopyable-benchmark']!).catch((e: Error) => assert.match(e.message, /scout|lease|cell/i));
+    assert.deepEqual(await lancerProjet(client, PROJETS['uncopyable-benchmark']!), { cellules: 0, deja: true });
     // Someone else's coordinator: the project waits for its founder.
     const autre = new CoordinatorClient(url, generateIdentity());
     const p = { ...PROJETS['open-source-shield']!, slug: 'shield-elsewhere' };
