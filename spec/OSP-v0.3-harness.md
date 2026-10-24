@@ -835,6 +835,8 @@ Guards come from at least two model families. A **back-translation** into Englis
 
 Each step says what can be **shown** when it is done. **The first milestone is the private hive of the founder and their cousin**: P0 is exactly what that hive needs, and nothing more.
 
+> **Update:** the order of work below is replaced by [OSP-v0.4 §6](OSP-v0.4-universal-engine.md#6-the-order-of-work), which puts the doors for every kind of AI first. P0-1 to P0-3 are done; the other designs of this document stay valid.
+
 ### P0: the cousins' private hive
 
 | Step | Work item | What can be shown |
