@@ -11,7 +11,11 @@ import { makeDecision, makeHive, makeRequete } from '../src/protocol/builders.js
 import { generateIdentity, signObject } from '../src/protocol/identity.js';
 import { CoordinatorClient } from '../src/plugin/client.js';
 import type { CritereV0 } from '../src/protocol/types.js';
+import { JournalLocal } from '../src/plugin/journal.js';
 import { createPluginServer } from '../src/plugin/server.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 type Texte = { content: Array<{ type: string; text: string }>; isError?: boolean };
 const texte = (r: unknown) => (r as Texte).content.map((c) => c.text).join('\n');
@@ -39,11 +43,13 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
     const abeille = generateIdentity();
     const mcp = new Client({ name: 'agent-de-test', version: '1.0.0' });
     const [cote1, cote2] = InMemoryTransport.createLinkedPair();
-    await createPluginServer(new CoordinatorClient(url, abeille)).connect(cote2);
+    const home = mkdtempSync(join(tmpdir(), 'osp-journal-'));
+    const journal = new JournalLocal(home);
+    await createPluginServer(new CoordinatorClient(url, abeille), journal).connect(cote2);
     await mcp.connect(cote1);
 
     const outils = (await mcp.listTools()).tools.map((t) => t.name).sort();
-    assert.deepEqual(outils, ['hive_board', 'swarm_decompose', 'swarm_join', 'swarm_leave', 'swarm_next', 'swarm_status', 'swarm_submit']);
+    assert.deepEqual(outils, ['hive_board', 'swarm_decompose', 'swarm_join', 'swarm_journal', 'swarm_leave', 'swarm_next', 'swarm_status', 'swarm_submit']);
 
     assert.match(texte(await mcp.callTool({ name: 'swarm_join', arguments: { ruche: 'maths' } })), /You joined “Maths”/);
     const eclaireuse = texte(await mcp.callTool({ name: 'swarm_next', arguments: {} }));
@@ -73,7 +79,20 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
     assert.match(texte(await mcp.callTool({ name: 'swarm_status', arguments: {} })), /Reputation/);
     assert.match(texte(await mcp.callTool({ name: 'hive_board', arguments: {} })), /empty/, 'rien n’est encore validé ni rejeté');
 
+    // Le journal local a tout noté : ce qu'on a demandé à l'IA, et tout ce qu'elle a envoyé.
+    const natures = journal.dernieres(100).map((e) => e.nature);
+    for (const n of ['rejoint', 'consigne', 'decoupage', 'controle_local', 'livraison']) assert.ok(natures.includes(n), `journal : ${n}`);
+    const consigne = journal.dernieres(100).find((e) => e.nature === 'consigne' && (e.donnees as { caste: string }).caste === 'ouvriere')!;
+    assert.match((consigne.donnees as { consignes: string }).consignes, /Worker bee/, 'la consigne complète est conservée');
+    const livraison = journal.dernieres(100).find((e) => e.nature === 'livraison')!;
+    assert.equal((livraison.donnees as { fichiers: Record<string, string> }).fichiers[module], SOLUTIONS[module], 'le code envoyé est conservé tel quel');
+    assert.deepEqual(journal.verifier(), { ok: true });
+    const vue = texte(await mcp.callTool({ name: 'swarm_journal', arguments: { n: 10 } }));
+    assert.match(vue, /delivered cell/);
+    assert.match(vue, /local check failed/);
+
     await mcp.close();
+    rmSync(home, { recursive: true, force: true });
   } finally {
     await new Promise<void>((r) => http.close(() => r()));
   }

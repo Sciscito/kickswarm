@@ -8,6 +8,7 @@ import { validateCritere, verifierV0 } from '../verifier/v0.js';
 import { CoordinatorClient } from './client.js';
 import { consignes } from './consignes.js';
 import { loadOrCreateIdentity } from './identite.js';
+import { JournalLocal, resumer } from './journal.js';
 
 // The Kickswarm plugin: a local MCP server that connects any agent to the swarm (§3, §21.1).
 // Keys stay here; the coordinator only ever receives signed objects.
@@ -66,10 +67,20 @@ const enfantSchema = z.object({
   reference: z.record(z.string(), z.string()).optional().describe('Your own implementation (file name → code), kept secret, used to measure how strong the tests are'),
 });
 
-export function createPluginServer(client: CoordinatorClient): McpServer {
+export function createPluginServer(client: CoordinatorClient, journal?: JournalLocal): McpServer {
   const server = new McpServer({ name: 'kickswarm', version: '0.1.0' });
   let ruche: string | undefined;
   let enCours: Assignment | undefined;
+  // Tout ce que l'IA fait pour l'essaim est noté dans le journal local du contributeur.
+  const note = (nature: string, donnees: Record<string, unknown>) => journal?.note(nature, { coordinateur: client.url, ...donnees });
+  const journalise = <A,>(nom: string, fn: (args: A) => Promise<ToolResult>) => async (args: A): Promise<ToolResult> => {
+    try {
+      return await fn(args);
+    } catch (e) {
+      note('erreur', { outil: nom, erreur: (e as Error).message });
+      throw e;
+    }
+  };
 
   server.registerTool(
     'swarm_join',
@@ -78,14 +89,15 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
       description: 'Joins a Kickswarm hive. The next cells will come from this hive.',
       inputSchema: { ruche: z.string().describe('Hive slug, e.g. math-toolkit') },
     },
-    outil(async ({ ruche: slug }: { ruche: string }) => {
+    outil(journalise('swarm_join', async ({ ruche: slug }: { ruche: string }) => {
       const vue = await client.hive(slug);
       ruche = slug;
+      note('rejoint', { ruche: slug, nom: vue.ruche.nom, statut: vue.statut });
       return texte(
         `You joined “${vue.ruche.nom}” (${vue.statut}). ${vue.progression.miel}/${vue.progression.total} cells verified.\n` +
           `Goal: ${vue.ruche.objectif}\nCall swarm_next to receive a cell.`,
       );
-    }),
+    })),
   );
 
   server.registerTool(
@@ -96,7 +108,7 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
         'Takes the next task from the swarm. The caste is drawn at random: worker, builder, scout or guard. Guard verifications are done automatically by the plugin, in a sandbox.',
       inputSchema: {},
     },
-    outil(async () => {
+    outil(journalise('swarm_next', async () => {
       if (enCours) return texte(`You already have a cell in progress.\n\n${consignes(enCours)}`);
       const a = await client.claim(ruche);
       if (!a) return texte('Nothing left to do in this hive right now. Try again a bit later.');
@@ -105,7 +117,9 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
         const cible = a.a_verifier!;
         const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
         const verdict = makeVerdict(client.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
+        note('verification', { ruche, chemin: a.alveole.chemin, resultat: cible.id, ok: rejeu.ok, motif: rejeu.motif, sandbox: rejeu.sandbox });
         const r = await client.verdict(verdict);
+        note('verdict', { ruche, chemin: a.alveole.chemin, resultat: cible.id, decision: verdict.decision, statut: r.statut, piege: r.piege ?? false });
         const issue = r.piege
           ? r.correct
             ? 'It was a trap cell, and you caught it (+12 g).'
@@ -118,8 +132,10 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
 
       await client.start(a.alveole_id);
       enCours = a;
-      return texte(consignes(a));
-    }),
+      const texteConsignes = consignes(a);
+      note('consigne', { ruche, caste: a.caste, chemin: a.alveole.chemin, alveole: a.alveole_id, objectif: a.alveole.objectif, consignes: texteConsignes });
+      return texte(texteConsignes);
+    })),
   );
 
   server.registerTool(
@@ -134,24 +150,28 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
         modele: z.string().optional().describe('Model used (self-declared)'),
       },
     },
-    outil(async ({ fichiers, impasses, modele }: { fichiers: Record<string, string>; impasses?: string[]; modele?: string }) => {
+    outil(journalise('swarm_submit', async ({ fichiers, impasses, modele }: { fichiers: Record<string, string>; impasses?: string[]; modele?: string }) => {
       const a = enCours;
       if (!a || (a.caste !== 'ouvriere' && a.caste !== 'batisseuse')) return erreur('No worker or builder cell in progress. Call swarm_next.');
       const livrable: Livrable = { fichiers };
       const local = await verifierV0(a.alveole.critere_fini, livrable, { sansCaches: true });
-      if (!local.ok) return erreur(`Not yet: ${local.motif}\nFix it and call swarm_submit again. Nothing was sent.`);
+      if (!local.ok) {
+        note('controle_local', { ruche, chemin: a.alveole.chemin, motif: local.motif, fichiers });
+        return erreur(`Not yet: ${local.motif}\nFix it and call swarm_submit again. Nothing was sent.`);
+      }
       const resultat = makeResult(client.identite, a.alveole_id, a.caste, livrable, {
         impasses,
         agent: { famille: 'mcp', ...(modele ? { modele } : {}) },
       });
       const r = await client.submit(resultat, livrable);
+      note('livraison', { ruche, chemin: a.alveole.chemin, fichiers, impasses: impasses ?? [], resultat: r.resultat, statut: r.statut, motif: r.rapport.motif });
       enCours = undefined;
       return texte(
         `Delivered: ${r.rapport.motif}. Status: ${r.statut}.` +
           (r.statut === 'en_verification' ? ' Two random guards will now check it; the honey arrives once they confirm.' : '') +
           '\nCall swarm_next to continue.',
       );
-    }),
+    })),
   );
 
   server.registerTool(
@@ -161,7 +181,7 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
       description: 'Hands in the split of the current cell (scout): 2 to 12 sub-cells, each with its tests.',
       inputSchema: { enfants: z.array(enfantSchema).min(2).max(12) },
     },
-    outil(async ({ enfants }: { enfants: z.infer<typeof enfantSchema>[] }) => {
+    outil(journalise('swarm_decompose', async ({ enfants }: { enfants: z.infer<typeof enfantSchema>[] }) => {
       const a = enCours;
       if (!a || a.caste !== 'eclaireuse') return erreur('No scout cell in progress. Call swarm_next.');
       // Secrets (hidden tests, reference) never enter the signed object: only their commitments do.
@@ -186,13 +206,14 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
       }));
       for (const s of specs) validateCritere(s.critere_fini);
       const r = await client.decompose(makeDecomposition(client.identite, a.alveole_id, specs), secrets);
+      note('decoupage', { ruche, chemin: a.alveole.chemin, n: specs.length, enfants: specs, secrets_envoyes: secrets.some((x) => x.tests_caches || x.reference), statut: r.statut });
       enCours = undefined;
       return texte(
         r.statut === 'adopte'
           ? `Split adopted: ${r.enfants.length} new cells in the swarm.`
           : 'Split proposed. At the first levels, the hive owner must approve it (§6.3).',
       );
-    }),
+    })),
   );
 
   server.registerTool(
@@ -221,6 +242,7 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
       if (!enCours) return texte('No cell in progress.');
       await client.release(enCours.alveole_id);
       const chemin = enCours.alveole.chemin;
+      note('rappel', { ruche, chemin });
       enCours = undefined;
       return texte(`Bee recalled: cell ${chemin} goes back to the swarm.`);
     }),
@@ -242,13 +264,28 @@ export function createPluginServer(client: CoordinatorClient): McpServer {
     }),
   );
 
+  server.registerTool(
+    'swarm_journal',
+    {
+      title: 'What my AI did',
+      description: 'Shows the local journal: every task your AI received, every deliverable it sent, every check and verdict. It lives only on this machine.',
+      inputSchema: { n: z.number().optional().describe('How many entries, 15 by default') },
+    },
+    outil(async ({ n }: { n?: number }) => {
+      if (!journal) return texte('No local journal on this plugin.');
+      const lignes = journal.dernieres(Math.min(Math.max(1, n ?? 15), 200)).map(resumer);
+      return texte(lignes.length ? `Local journal (${journal.fichier}):\n${lignes.join('\n')}` : 'The local journal is empty for now.');
+    }),
+  );
+
   return server;
 }
 
 export async function startPlugin(url: string): Promise<void> {
   const { identite, fichier, creee } = loadOrCreateIdentity();
   if (creee) console.error(`[kickswarm] New identity created: ${fichier}`);
-  const server = createPluginServer(new CoordinatorClient(url, identite));
+  const journal = new JournalLocal();
+  const server = createPluginServer(new CoordinatorClient(url, identite), journal);
   await server.connect(new StdioServerTransport());
-  console.error(`[kickswarm] MCP plugin ready. Coordinator: ${url} · identity ${identite.id}`);
+  console.error(`[kickswarm] MCP plugin ready. Coordinator: ${url} · identity ${identite.id} · journal ${journal.fichier}`);
 }

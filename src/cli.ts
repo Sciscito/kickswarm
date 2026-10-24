@@ -12,7 +12,8 @@ import { makeDecision, makeHive } from './protocol/builders.js';
 import { isContributorId } from './protocol/identity.js';
 import type { CellSpec, DecisionNature } from './protocol/types.js';
 import { CoordinatorClient } from './plugin/client.js';
-import { loadOrCreateIdentity } from './plugin/identite.js';
+import { kickswarmHome, loadOrCreateIdentity } from './plugin/identite.js';
+import { JournalLocal, resumer } from './plugin/journal.js';
 import { startPlugin } from './plugin/server.js';
 import { resolveSandbox } from './verifier/v0.js';
 
@@ -24,6 +25,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox auto|container|process]
   kickswarm plugin [--url <coordinator>]                MCP server for your agent (stdio)
   kickswarm identity                                    Show (and create if needed) your identity
+  kickswarm journal [--n 20] [--full] [--verify]        Everything your AI did for the swarm, on this machine
   kickswarm hives [--url ...]                           List hives
   kickswarm propose <hive.json> [--url ...]             Propose a hive (slug, nom, objectif, racine)
   kickswarm decide <nature> <target> <reason> [--multiplier n] [--url ...]
@@ -108,6 +110,19 @@ async function main(): Promise<void> {
       const m = opts.multiplier ?? opts.multiplicateur;
       const r = await c.decide(makeDecision(c.identite, nature as DecisionNature, cible, motif.join(' '), m ? { multiplicateur: Number(m) } : undefined));
       console.log(`Decision written to the public registry: ${r.decision}`);
+      return;
+    }
+    case 'journal': {
+      const j = new JournalLocal(kickswarmHome());
+      if (opts.verify !== undefined) {
+        const v = j.verifier();
+        console.log(v.ok ? `Journal intact: ${j.fichier}` : `Journal ALTERED: ${v.erreur}`);
+        process.exitCode = v.ok ? 0 : 1;
+        return;
+      }
+      const entries = j.dernieres(Number(opts.n ?? 20));
+      if (!entries.length) console.log('Your local journal is empty: your AI has not worked for the swarm yet.');
+      for (const e of entries) console.log(opts.full !== undefined ? JSON.stringify(e, null, 2) : resumer(e));
       return;
     }
     case 'audit': {
