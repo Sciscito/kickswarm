@@ -1,6 +1,7 @@
-import { commitment, hashOf } from '../protocol/canonical.js';
 import { algoOf, isPostQuantum, verifyObject } from '../protocol/identity.js';
-import type { ContributorId, EngagementVerdict, Hash, Livrable, Result, TestCase, Verdict } from '../protocol/types.js';
+import { canonicalize, commitment, hashOf } from '../protocol/canonical.js';
+import { blobsDuLivrable } from '../protocol/depot.js';
+import type { ContributorId, EngagementVerdict, FusionDepot, Hash, Livrable, RecuDepot, Result, TestCase, Verdict } from '../protocol/types.js';
 import { mutants } from '../verifier/mutation.js';
 import { verifierV0 } from '../verifier/v0.js';
 import { QUICKNET } from './balise.js';
@@ -35,6 +36,11 @@ export interface AuditOptions {
   etatAnnonce?: Hash;
   /** For a private hive's registry: its anchors found in the public registry (OSP v0.3 §2.4). */
   ancres?: Array<{ seq: number; tete: Hash }>;
+  /**
+   * OSP v0.3 §3.3: checks a repo receipt's commit in a local clone of the repository
+   * (see bridge/verifier.ts). Returns null when the commit holds exactly the deliverable.
+   */
+  verifierCommit?: (r: RecuDepot) => Promise<string | null>;
 }
 
 interface Lancement {
@@ -278,6 +284,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     const en = (e.donnees as CommandeDonnees).entree as Record<string, Record<string, unknown> | undefined>;
     for (const [obj, champ] of [
       ['requete', 'contributeur'], ['ruche', 'porteur'], ['decision', 'auteur'], ['resultat', 'auteur'], ['decomposition', 'auteur'], ['engagement', 'gardienne'], ['verdict', 'gardienne'],
+      ['recu', 'auteur'], ['lien', 'contributeur'], ['fusion', 'auteur'],
     ] as const) {
       const v = en[obj]?.[champ];
       if (typeof v === 'string') signataires.push(v);
@@ -337,6 +344,64 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
       'The Commons holds 30% of every power share',
       communOk,
       communOk ? `Commons ${(share * 100).toFixed(2)}% of ${totalParts.toFixed(3)} shares` : `bad split at ${communIssues.slice(0, 5).join(', ') || 'global share'}; share ${(share * 100).toFixed(2)}%`,
+    );
+  }
+
+  // OSP v0.3 §3.3: each repo receipt names exactly the validated deliverable. Recomputed here from the
+  // signed objects alone: the result that turned the cell into honey, and the git hash of each of its files.
+  const recus: Array<{ seq: number; recu: RecuDepot }> = [];
+  const fusions: FusionDepot[] = [];
+  const livrables = new Map<string, Livrable>();
+  const valide = new Map<string, string>();
+  for (const e of entries) {
+    if (e.nature === 'alveole_miel') {
+      const d = e.donnees as { alveole: string; resultat: string };
+      valide.set(d.alveole, d.resultat);
+    }
+    if (e.nature !== 'commande') continue;
+    const c = e.donnees as CommandeDonnees;
+    if (c.type === 'submitResult') {
+      const en = c.entree as { resultat: Result; livrable: Livrable };
+      livrables.set(hashOf(en.resultat), en.livrable);
+    } else if (c.type === 'recuDepot') recus.push({ seq: e.seq, recu: (c.entree as { recu: RecuDepot }).recu });
+    else if (c.type === 'fusionDepot') fusions.push((c.entree as { fusion: FusionDepot }).fusion);
+  }
+  if (recus.length) {
+    const faux = recus.filter(({ recu }) => {
+      const l = livrables.get(recu.resultat);
+      return (
+        !l ||
+        valide.get(recu.alveole) !== recu.resultat ||
+        canonicalize(recu.fichiers) !== canonicalize(blobsDuLivrable(l)) ||
+        canonicalize(recu.supprimes) !== canonicalize([...(l.supprimes ?? [])].sort())
+      );
+    });
+    const doubles = recus.length - new Set(recus.map((r) => r.recu.alveole)).size;
+    add(
+      'Repo receipts name exactly the validated deliverables',
+      faux.length === 0,
+      faux.length
+        ? `${faux.length} receipt(s) do not match their validated deliverable: ${faux.slice(0, 5).map((r) => `#${r.seq}`).join(', ')}`
+        : `${recus.length} receipt(s), each with the git hash of every validated file${doubles ? `; ${doubles} cell(s) written twice (two bridges), harmless` : ''}`,
+    );
+    if (opts.verifierCommit) {
+      const problemes: string[] = [];
+      for (const { seq, recu } of recus) {
+        const p = await opts.verifierCommit(recu);
+        if (p) problemes.push(`#${seq}: ${p}`);
+      }
+      add(
+        'Each receipt’s commit holds exactly that deliverable (checked in your clone)',
+        problemes.length === 0,
+        problemes.length ? problemes.slice(0, 3).join('; ') : `${recus.length} commit(s): right parent, right files, nothing else`,
+      );
+    }
+    add(
+      'External evidence, not replayable offline',
+      true,
+      fusions.length
+        ? `${fusions.length} pull request(s) merged by a human, as seen by the bridge: ${fusions.slice(0, 3).map((f) => `${f.pr} by ${f.fusionnee_par}`).join('; ')}`
+        : 'no merge recorded yet; GitHub facts (merges, CI runs) are listed apart because only GitHub can attest them',
     );
   }
 

@@ -199,7 +199,7 @@ export function mutants(livrable: Livrable, opts: { max?: number; fichiers?: str
     for (const s of mutationSites(src, opts.version)) {
       const ligne = src.slice(0, s.index).split('\n').length;
       const muted = src.slice(0, s.index) + s.apres + src.slice(s.index + s.avant.length);
-      all.push({ fichier, ligne, avant: s.avant, apres: s.apres, livrable: { fichiers: { ...livrable.fichiers, [fichier]: muted } } });
+      all.push({ fichier, ligne, avant: s.avant, apres: s.apres, livrable: { ...livrable, fichiers: { ...livrable.fichiers, [fichier]: muted } } });
     }
   }
   if (all.length <= max) return all;

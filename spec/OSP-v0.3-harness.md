@@ -393,7 +393,45 @@ Using your own AI subscription, yourself, for your own project, is ordinary use.
 - the "unused quota" daemon mode stays off by default and is enabled provider by provider (§20);
 - for companies, whether employees' personal plans may be used for company work depends on each provider's terms: the plugin's provider profiles say so.
 
-### 3.8 Summary
+### 3.8 What is implemented (P0-2)
+
+Protocol identifiers stay French until the v0.3 rename (§11): `repo` is `depot`, `read` is `lecture`, `read_hashes` is `empreintes_lecture`, `write` is `ecriture`, and `osp.repo_receipt/0.3` is `osp.recu_depot/0.3`.
+
+- **Repo capsules** (`src/protocol/depot.ts`). A cell MAY carry `depot = { url, commit, lecture, empreintes_lecture, ecriture }`. The coordinator checks it: an https address, a full git hash, plain relative paths (no `..`, no hidden file, at most 8 folders), one sha256 hash per file read. The signed cell carries it as is.
+  - The plugin reads each file of `lecture` from the member's own clone, with `git cat-file blob <commit>:<path>`, and gives it to the agent only if its hash matches. The files are framed as data. The member says where their clone is with `kickswarm settings --clone <url>=<path>`.
+  - A scout's children MAY carry `depot = { lecture, ecriture }`. The plugin completes them with the parent's repository and commit, and pins the files read with their hashes (an agent cannot hash).
+  - A child stays on its parent's repository, inside its parent's write scope.
+- **Write scopes.** `ecriture` lists files, or folders ending in `/`. When it hands out work, the coordinator never opens a cell whose scope overlaps a cell of the same repository that is reserved, in progress or being verified. The check is deterministic, so the replay and the audit enforce it too.
+- **Repo deliverables.**
+  - File names are now repository paths, with more text extensions (`.luau`, `.lua`, `.ts`, `.md`, `.json`, …). The module under test is still JavaScript until P0-3.
+  - `supprimes` lists the files the deliverable deletes.
+  - Every path written or deleted must be inside the cell's scope: the plugin checks before sending, and the coordinator refuses the rest (403).
+  - **`contexte`, a necessary addition.** The coordinator runs the tests but has no copy of the repository. So a repo deliverable carries the files of `lecture` it needs, exactly as pinned: the coordinator checks each one against its hash. They are present when the tests run and never written to the repository. The plugin attaches them on its own.
+- **The bridge** (`src/bridge/pont.ts`, `kickswarm bridge <hive> --clone <path>`). It runs on a member's machine, with their own `git` and `gh`. The coordinator holds no credential.
+  1. It reads the cells turned into honey that have no receipt yet, in the order they became honey.
+  2. It builds each commit with git's plumbing and a temporary index, starting from the branch's head or the cell's base commit. The member's working tree, index and current branch are never touched, and files are written byte for byte.
+  3. The commit message names the cell, the result, the verifier and the number of guards. It carries `Co-authored-by` for the author's linked GitHub name, `AI: <family>` as declared, `Kickswarm-Author` and `Kickswarm-Cell`.
+  4. It pushes to `kickswarm/<hive>/branch-<n>`, or `…/cell-<path>` with `--per-cell`, and opens one pull request per branch through `gh` (`--no-pr` to skip).
+  5. It signs an `osp.recu_depot/0.3` receipt: cell, result, repository, branch, commit, parent, the git hash of every file, the files deleted and the pull request. The coordinator recomputes those git hashes from the validated deliverable and refuses any difference. A commit already pushed by a pass that could not write its receipt is found again by its trailer, not pushed twice.
+  6. When a human merges the pull request, the next pass signs an `osp.fusion_depot/0.3` statement: receipt, pull request, GitHub reviewer, merge commit.
+- **GitHub names.** A member links theirs once with `kickswarm github <name>`, a signed `osp.lien_github/0.3`. One name, one identity.
+- **The audit.**
+  - It checks that every receipt names exactly the validated deliverable, recomputed from the signed objects alone.
+  - `kickswarm audit … --clone <path>` also checks each commit in the member's clone: its only parent is the stated one, every file has the right git hash, the deleted files are gone, and nothing else changed (`src/bridge/verifier.ts`).
+  - Merges are listed apart, as external evidence.
+- **API.** `GET /v0/cells/{id}` (cell, capsule, validated honey, receipts), `GET /v0/repo/honey`, `POST /v0/repo/receipts`, `POST /v0/repo/github`, `POST /v0/repo/merges`. On a private hive they sit under `/v0/p/{id}/…`, with a ticket for reads. In a public hive, only the hive owner writes repository facts.
+
+**Different from §3.2 and §3.3, for now:**
+
+- **A merge is recorded as external evidence, not as a V2-human verdict.** Verdicts go through the drawn guards' commit-reveal, and the honey is already validated when the pull request opens. Turning the merge into a verdict comes with V2-human verification (P1).
+- **The size limits stay global** (32 files, 256 KB), not per hive.
+- **Not done yet:**
+  - assisted mode (the bee works in the member's clone with its usual tools);
+  - showing CI status on the dashboard (P0-5);
+  - the optional GitHub App.
+
+
+### 3.9 Summary
 
 **Reused.** Cells, splitting, contract first (v0.2 §7.1), playbooks, the board's `question` type, the WebAssembly sandbox model, the mutation engine design, trap cells, sealed verdicts, owner approvals and arbitration, `hive.html`.
 
@@ -781,7 +819,7 @@ Each step says what can be **shown** when it is done. **The first milestone is t
 | Step | Work item | What can be shown |
 |---|---|---|
 | **P0-1** ✅ | *Done: see §2.9.* **Private hives**: `visibility`, invitations and codes, memberships, roles, one `Coordinator` instance per private hive, private routes, read tickets, per-hive parameters, local honey, public anchors | On two machines, the cousin joins with a code; a third identity gets "403"; both run `kickswarm audit` on the private registry and see every ✓; the public registry shows only an anchor. |
-| **P0-2** | **Repo capsules, write scopes and the bridge** | A cell's honey becomes a pull request on the real repository, with the right co-author; the audit checks that the commit holds exactly the validated deliverable. Two cells on the same file are never open at the same time. |
+| **P0-2** ✅ | *Done: see §3.8.* **Repo capsules, write scopes and the bridge** | A cell's honey becomes a pull request on the real repository, with the right co-author; the audit checks that the commit holds exactly the validated deliverable. Two cells on the same file are never open at the same time. |
 | **P0-3** | **`tests-luau@1` and `luau-checks@1`**, the Luau mutation engine, the "pure logic first" Roblox playbook | A Luau module of the game (coins, shop) is validated by tests and hidden tests; a guard catches a mutated trap; the same verdict on both machines. |
 | **P0-4** | **Questions with choices**: `osp.question`, `osp.answer`, `attente_decision`, routing to the owner and the branch owner, defaults and deadlines; answered from the terminal or the dashboard | A bee asks "R15 or R6?"; only its cell waits while the cousin's bee keeps working on another branch; the answer is signed, and the branch resumes. |
 | **P0-5** | **The private dashboard**: "Needs you", lanes, milestones, waiting cells, what checked it, repository; `kickswarm open` | Both cousins watch the same page and see who does what, what waits for whom, and which pull requests are open. |

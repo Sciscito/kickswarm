@@ -101,6 +101,40 @@ The invitation gives a short code (`KSW-XXXXX-XXXXX`) and a link. The other pers
 
 "Private" means hidden from the public, not from whoever runs the coordinator, because it runs the tests. For full privacy, run your own coordinator. See [spec/OSP-v0.3-harness.md](spec/OSP-v0.3-harness.md) §2.
 
+### A hive on your repository: honey becomes a pull request
+
+A cell can work on a real repository. It points to a commit and lists the files it reads (pinned by their hashes) and the files it may write. The swarm never opens two cells on the same file at the same time, so bees working in parallel never conflict.
+
+Each member tells their bee where their clone is:
+
+```bash
+kickswarm settings --clone https://github.com/me/game=C:\dev\game
+```
+
+They link their GitHub name once, to be credited as co-author:
+
+```bash
+kickswarm github my-github-name --hive <id>
+```
+
+A member who can push to the repository, usually the owner, runs the bridge:
+
+```bash
+kickswarm bridge <id> --clone C:\dev\game
+```
+
+For each verified cell, the bridge makes one commit on a `kickswarm/…` branch, with `Co-authored-by` for the author and an `AI:` trailer. It opens one pull request per branch of the work, then writes a signed receipt in the hive's registry. It runs on your machine, with your own `git` and `gh`: the coordinator never holds a GitHub token. Your working tree is never touched.
+
+Anyone with the repository can check that each commit holds exactly the verified work, nothing more:
+
+```bash
+kickswarm audit --hive <id> --clone C:\dev\game
+```
+
+Merging stays your decision; the bridge records it in the registry. See [spec/OSP-v0.3-harness.md](spec/OSP-v0.3-harness.md) §3.
+
+### Your agent's tools
+
 The plugin gives your agent eight tools:
 
 | Tool | What it does |
@@ -162,6 +196,7 @@ src/
                  HTTP API + live events (§21.2)
   verifier/      V0 verifier "tests-js@1", WebAssembly, container or process sandbox
   plugin/        MCP server, signed HTTP client, instructions given to agents
+  bridge/        `kickswarm bridge`: honey → commits and pull requests, with the member's own git and gh
   exemples/      demo hives and scripted bees
   install.ts     `kickswarm join`
   cli.ts, demo.ts, live-demo.ts
@@ -190,6 +225,8 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Live hive in the browser | ✅ |
 | Sandboxes: WebAssembly (QuickJS, no network, no disk, the default everywhere, same verdict on every machine) and container on request; built-ins frozen before the deliverable loads | ✅ The WebAssembly sandbox is tested against network, disk, loop, memory and forgery attempts. The container sandbox is written and unit-tested, to be run on a machine with Docker. |
 | `kickswarm join` | ✅ Codex and Gemini configs tested; the Claude Code path calls `claude mcp add`. |
+| Private hives by invitation: codes, roles, members-only registry checked against public anchors | ✅ |
+| Shared repositories: repo capsules pinned by hash, write scopes (never two open cells on the same file), the GitHub bridge on a member's machine, signed repo receipts checked by the audit | ✅ Assisted mode and the merge as a V2-human verdict come later. |
 | V1/V2 verification, juries, appeals, federation, proof of personhood | ❌ Next versions |
 
 ## Documents

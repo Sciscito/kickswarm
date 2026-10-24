@@ -1,6 +1,7 @@
 import { makeRequete } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
-import type { Adhesion, Assignment, CellSpec, Decision, Decomposition, EngagementVerdict, Hash, Hive, Invitation, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
+import type { DetailCellule } from '../coordinator/coordinator.js';
+import type { Adhesion, Assignment, CellSpec, Decision, Decomposition, EngagementVerdict, FusionDepot, Hash, Hive, Invitation, LienGithub, Livrable, RecuDepot, Result, Secrets, Verdict } from '../protocol/types.js';
 
 /** HTTP client for the coordinator. It signs every request with the local identity. */
 export class CoordinatorClient {
@@ -119,5 +120,21 @@ export class CoordinatorClient {
   }
   etatPublie() {
     return this.call<{ seq: number; etat: Hash | null; tete: { seq: number; hash: Hash } | null }>('GET', '/v0/state-hash');
+  }
+  // OSP v0.3 §3.3: the bridge's routes.
+  cellule(id: Hash) {
+    return this.call<DetailCellule>('GET', `/v0/cells/${encodeURIComponent(id)}`);
+  }
+  mielsDepot() {
+    return this.call<Array<{ id: Hash; chemin: string; ruche: string; recus: number }>>('GET', '/v0/repo/honey');
+  }
+  recuDepot(r: RecuDepot) {
+    return this.call<{ recu: Hash }>('POST', '/v0/repo/receipts', r);
+  }
+  lienGithub(l: LienGithub) {
+    return this.call<{ github: string }>('POST', '/v0/repo/github', l);
+  }
+  fusionDepot(f: FusionDepot) {
+    return this.call<{ fusion: Hash }>('POST', '/v0/repo/merges', f);
   }
 }

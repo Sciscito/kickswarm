@@ -8,6 +8,8 @@ import type { Assignment, CellSpec, Livrable, Propriete, Secrets, TestCase } fro
 import { validateCritere, verifierV0 } from '../verifier/v0.js';
 import { CoordinatorClient } from './client.js';
 import { consignes } from './consignes.js';
+import { cloneDe, empreintes, lireDepot } from './depot-local.js';
+import { horsPortee } from '../protocol/depot.js';
 import { kickswarmHome, loadOrCreateIdentity } from './identite.js';
 import { JournalLocal, resumer } from './journal.js';
 import { chargerParticipation, CompteurJour, decrire, DEFAULT_PARTICIPATION, enHeuresCalmes, ROLE_OF, type Participation } from './participation.js';
@@ -67,6 +69,13 @@ const enfantSchema = z.object({
     timeout_ms: z.number().optional(),
   }),
   tests_caches: z.array(testSchema).optional().describe('Hidden tests: the workers never see them'),
+  depot: z
+    .object({
+      lecture: z.array(z.string()).optional().describe('Repository files this child needs to read'),
+      ecriture: z.array(z.string()).describe('Its write scope: files, or folders ending in "/", inside yours'),
+    })
+    .optional()
+    .describe('Repo cells only: what this child reads and writes in the repository'),
   reference: z.record(z.string(), z.string()).optional().describe('Your own implementation (file name → code), kept secret, used to measure how strong the tests are'),
 });
 
@@ -104,6 +113,9 @@ export function createPluginServer(
   const server = new McpServer({ name: 'kickswarm', version: '0.1.0' });
   let ruche: string | undefined;
   let enCours: Assignment | undefined;
+  let consignesEnCours: string | undefined;
+  /** OSP v0.3 §3.2: the repository files read for the current cell, sent with the deliverable for its tests. */
+  let contexteEnCours: Record<string, string> | undefined;
   // Everything the AI does for the swarm is noted in the contributor's local journal.
   const note = (nature: string, donnees: Record<string, unknown>) => journal?.note(nature, { coordinateur: client.url, ...donnees });
 
@@ -191,7 +203,7 @@ export function createPluginServer(
     outil(journalise('swarm_next', async () => {
       const avant = await reveler();
       const prefixe = avant.length ? `${lignes(avant)}\n` : '';
-      if (enCours) return texte(`${prefixe}You already have a cell in progress.\n\n${consignes(enCours)}`);
+      if (enCours) return texte(`${prefixe}You already have a cell in progress.\n\n${consignesEnCours ?? consignes(enCours)}`);
       const p = participation();
       const pourquoi = repos(p);
       if (pourquoi) return texte(`${prefixe}${pourquoi}`);
@@ -264,7 +276,11 @@ export function createPluginServer(
 
       await client.start(a.alveole_id);
       enCours = a;
-      const texteConsignes = consignes(a);
+      // OSP v0.3 §3.2: a repo cell's files come from this member's clone, checked against the signed cell.
+      const lu = a.alveole.depot ? await lireDepot(a.alveole.depot, p.depots) : undefined;
+      const texteConsignes = consignes(a, lu);
+      consignesEnCours = texteConsignes;
+      contexteEnCours = lu && Object.keys(lu.fichiers).length ? lu.fichiers : undefined;
       note('consigne', { ruche, caste: a.caste, chemin: a.alveole.chemin, alveole: a.alveole_id, objectif: a.alveole.objectif, consignes: texteConsignes });
       return texte(texteConsignes);
     })),
@@ -277,15 +293,20 @@ export function createPluginServer(
       description:
         'Hands in the deliverable of the current cell (worker or builder). The plugin runs the tests locally first: if one fails, nothing is sent and you can fix it.',
       inputSchema: {
-        fichiers: z.record(z.string(), z.string()).describe('File name → content'),
+        fichiers: z.record(z.string(), z.string()).describe('File name → content (in a repo cell: path in the repository → content)'),
+        supprimes: z.array(z.string()).optional().describe('Repo cells only: files of your write scope to delete'),
         impasses: z.array(z.string()).optional().describe('Approaches you tried that failed'),
         modele: z.string().optional().describe('Model used (self-declared)'),
       },
     },
-    outil(journalise('swarm_submit', async ({ fichiers, impasses, modele }: { fichiers: Record<string, string>; impasses?: string[]; modele?: string }) => {
+    outil(journalise('swarm_submit', async ({ fichiers, supprimes, impasses, modele }: { fichiers: Record<string, string>; supprimes?: string[]; impasses?: string[]; modele?: string }) => {
       const a = enCours;
       if (!a || (a.caste !== 'ouvriere' && a.caste !== 'batisseuse')) return erreur('No worker or builder cell in progress. Call swarm_next.');
-      const livrable: Livrable = { fichiers };
+      const livrable: Livrable = { fichiers, ...(supprimes?.length ? { supprimes } : {}), ...(a.alveole.depot && contexteEnCours ? { contexte: contexteEnCours } : {}) };
+      if (a.alveole.depot) {
+        const hors = horsPortee(a.alveole.depot, livrable);
+        if (hors.length) return erreur(`Outside your write scope (${a.alveole.depot.ecriture.join(', ')}): ${hors.join(', ')}\nNothing was sent.`);
+      } else if (supprimes?.length) return erreur('Only a repo cell deletes files. Nothing was sent.');
       const local = await verifierV0(a.alveole.critere_fini, livrable, { sansCaches: true });
       if (!local.ok) {
         note('controle_local', { ruche, chemin: a.alveole.chemin, motif: local.motif, fichiers });
@@ -298,6 +319,8 @@ export function createPluginServer(
       const r = await client.submit(resultat, livrable);
       note('livraison', { ruche, chemin: a.alveole.chemin, fichiers, impasses: impasses ?? [], resultat: r.resultat, statut: r.statut, motif: r.rapport.motif });
       enCours = undefined;
+      consignesEnCours = undefined;
+      contexteEnCours = undefined;
       return texte(
         `Delivered: ${r.rapport.motif}. Status: ${r.statut}.` +
           (r.statut === 'en_verification' ? ' Two random guards will now check it; the honey arrives once they confirm.' : '') +
@@ -321,6 +344,26 @@ export function createPluginServer(
         ...(e.tests_caches?.length ? { tests_caches: e.tests_caches as TestCase[] } : {}),
         ...(e.reference ? { reference: { fichiers: e.reference } } : {}),
       }));
+      // OSP v0.3 §3.2: a child's repo capsule, completed here: the parent's repository and commit, and the hashes of the files read.
+      const parent = a.alveole.depot;
+      const depots: Array<CellSpec['depot']> = [];
+      for (const e of enfants) {
+        if (!e.depot) {
+          depots.push(undefined);
+          continue;
+        }
+        if (!parent) return erreur('This cell does not work on a repository: its children cannot either.');
+        const lecture = e.depot.lecture ?? [];
+        const clone = cloneDe(parent.url, participation().depots);
+        if (lecture.length && !clone) return erreur(`No local clone of ${parent.url} on this machine to pin the files read. The member sets it with: kickswarm settings --clone ${parent.url}=<path>`);
+        let pins: Record<string, `sha256:${string}`> = {};
+        try {
+          pins = lecture.length ? await empreintes(clone!, parent.commit, lecture) : {};
+        } catch (err) {
+          return erreur(`Could not read a file to pin from ${clone}: ${(err as Error).message}`);
+        }
+        depots.push({ url: parent.url, commit: parent.commit, lecture, empreintes_lecture: pins, ecriture: e.depot.ecriture });
+      }
       const specs: CellSpec[] = enfants.map((e, i) => ({
         objectif: e.objectif,
         capsule: e.capsule,
@@ -335,6 +378,7 @@ export function createPluginServer(
           ...(secrets[i]!.reference ? { reference_hash: commitment(secrets[i]!.reference) } : {}),
           ...(e.critere_fini.timeout_ms ? { timeout_ms: e.critere_fini.timeout_ms } : {}),
         },
+        ...(depots[i] ? { depot: depots[i] } : {}),
       }));
       for (const s of specs) validateCritere(s.critere_fini);
       const r = await client.decompose(makeDecomposition(client.identite, a.alveole_id, specs), secrets);

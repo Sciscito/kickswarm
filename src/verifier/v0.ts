@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { commitment, hashOf, sha256 } from '../protocol/canonical.js';
@@ -70,7 +70,16 @@ export interface VerifOptions {
   sansCaches?: boolean;
 }
 
-const FILE_RE = /^[A-Za-z0-9-][A-Za-z0-9_.-]{0,63}\.(mjs|js|json)$/;
+// Paths inside a deliverable (OSP v0.3 §3.2, repo deliverables): up to 8 folders, plain characters,
+// no segment starting with a dot (so no "..", no hidden file), never absolute.
+const SEGMENT = '[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}';
+const DOSSIERS = `(?:${SEGMENT}/){0,8}`;
+const FILE_RE = new RegExp(`^${DOSSIERS}[A-Za-z0-9-][A-Za-z0-9_.-]{0,63}\\.(mjs|js|json|luau|lua|ts|tsx|md|txt|css|html|yml|yaml|toml|csv|svg)$`);
+/** The module the tests import: JavaScript only. */
+const MODULE_RE = new RegExp(`^${DOSSIERS}[A-Za-z0-9-][A-Za-z0-9_.-]{0,63}\\.(mjs|js)$`);
+/** A file a deliverable deletes: any name, same path rules. */
+const CHEMIN_RE = new RegExp(`^${DOSSIERS}${SEGMENT}$`);
+const MAX_SUPPRIMES = 64;
 const FN_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const HASH_RE = /^sha256:[0-9a-f]{64}$/;
 const MAX_FILES = 32;
@@ -253,13 +262,13 @@ export function validateCritere(critere: CritereFini): void {
   }
   if (critere.verificateur === 'tests-de-tests@1') {
     validateLivrable(critere.cible);
-    if (!FILE_RE.test(critere.module) || !(critere.module in critere.cible.fichiers)) throw new Error('The target module must be one of the target files');
+    if (!MODULE_RE.test(critere.module) || !(critere.module in critere.cible.fichiers)) throw new Error('The target module must be one of the target files');
     if (!Array.isArray(critere.fonctions) || !critere.fonctions.length || !critere.fonctions.every((f) => FN_RE.test(f))) throw new Error('List the target functions the tests must cover');
     if (critere.score_min !== undefined && !(critere.score_min > 0 && critere.score_min <= 1)) throw new Error('score_min must be in (0, 1]');
     return;
   }
   if (critere.verificateur !== 'tests-js@1') throw new Error(`Unknown verifier: ${String((critere as { verificateur?: unknown }).verificateur)}`);
-  if (critere.module !== undefined && !FILE_RE.test(critere.module)) throw new Error(`Invalid module name: ${critere.module}`);
+  if (critere.module !== undefined && !MODULE_RE.test(critere.module)) throw new Error(`Invalid module name: ${critere.module}`);
   validateTests(critere.tests);
   validateProprietes(critere.proprietes);
   if (!critere.tests.length && !critere.proprietes?.length) throw new Error('A V0 criterion needs at least one test or one property');
@@ -269,16 +278,32 @@ export function validateCritere(critere: CritereFini): void {
 export function validateLivrable(livrable: Livrable): void {
   if (!livrable || typeof livrable.fichiers !== 'object' || livrable.fichiers === null) throw new Error('Deliverable has no files');
   const names = Object.keys(livrable.fichiers);
-  if (names.length === 0) throw new Error('Empty deliverable');
+  if (names.length === 0 && !livrable.supprimes?.length) throw new Error('Empty deliverable');
   if (names.length > MAX_FILES) throw new Error(`Too many files (maximum ${MAX_FILES})`);
   let total = 0;
   for (const name of names) {
-    if (!FILE_RE.test(name) || name.startsWith('__osp')) throw new Error(`File name refused: ${name}`);
+    if (!FILE_RE.test(name) || name.split('/').some((s) => s.startsWith('__osp'))) throw new Error(`File name refused: ${name}`);
     const content = livrable.fichiers[name];
     if (typeof content !== 'string') throw new Error(`Non-text content: ${name}`);
     total += Buffer.byteLength(content, 'utf8');
   }
   if (total > MAX_BYTES) throw new Error(`Deliverable too large (maximum ${MAX_BYTES} bytes)`);
+  if (livrable.contexte !== undefined) {
+    if (typeof livrable.contexte !== 'object' || livrable.contexte === null || Array.isArray(livrable.contexte)) throw new Error('contexte maps a path to its content');
+    for (const [p, c] of Object.entries(livrable.contexte)) {
+      if (!FILE_RE.test(p) || p.split('/').some((x) => x.startsWith('__osp')) || typeof c !== 'string') throw new Error(`Context file refused: ${p}`);
+      if (p in livrable.fichiers || livrable.supprimes?.includes(p)) throw new Error(`A file read cannot also be written or deleted: ${p}`);
+      total += Buffer.byteLength(c, 'utf8');
+    }
+    if (total > MAX_BYTES) throw new Error(`Deliverable too large (maximum ${MAX_BYTES} bytes)`);
+  }
+  if (livrable.supprimes !== undefined) {
+    if (!Array.isArray(livrable.supprimes) || livrable.supprimes.length > MAX_SUPPRIMES) throw new Error(`Up to ${MAX_SUPPRIMES} deleted files`);
+    for (const p of livrable.supprimes) {
+      if (typeof p !== 'string' || !CHEMIN_RE.test(p)) throw new Error(`Deleted path refused: ${String(p)}`);
+      if (p in livrable.fichiers) throw new Error(`A file cannot be both written and deleted: ${p}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------- sandboxes
@@ -494,7 +519,10 @@ async function execute(livrable: Livrable, input: string, timeoutMs: number, mod
   if (mode === 'wasm') return runWasm(livrable.fichiers, input, timeoutMs);
   const dir = await mkdtemp(join(tmpdir(), 'osp-v0-'));
   try {
-    for (const [name, content] of Object.entries(livrable.fichiers)) await writeFile(join(dir, name), content, 'utf8');
+    for (const [name, content] of Object.entries(livrable.fichiers)) {
+      await mkdir(dirname(join(dir, name)), { recursive: true });
+      await writeFile(join(dir, name), content, 'utf8');
+    }
     await writeFile(join(dir, RUNNER_FILE), RUNNER, 'utf8');
     return await run(dir, input, timeoutMs, mode);
   } finally {
@@ -568,7 +596,9 @@ export async function verifierV0(critere: CritereFini, livrable: Livrable, opts:
   if (critere.verificateur === 'tests-de-tests@1') return verifierTestsDeTests(critere, livrable, opts);
   const bad = opts.sansCaches ? null : checkCaches(critere, opts.caches);
   if (bad) return fail(bad);
-  return runSuite(suiteOf(critere, opts.sansCaches ? [] : (opts.caches ?? [])), livrable, opts);
+  // OSP v0.3 §3.2: the repository files a repo deliverable reads are present when its tests run, unchanged.
+  const lance: Livrable = livrable.contexte ? { fichiers: { ...livrable.contexte, ...livrable.fichiers } } : livrable;
+  return runSuite(suiteOf(critere, opts.sansCaches ? [] : (opts.caches ?? [])), lance, opts);
 }
 
 /**

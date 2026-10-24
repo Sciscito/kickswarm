@@ -20,6 +20,8 @@ export interface Participation {
   pause: boolean;
   /** Hives joined, most recent last: the default hive when the agent does not pick one. */
   ruches: string[];
+  /** OSP v0.3 §3.2: where this member's clone of each repository is, by repository address. */
+  depots?: Record<string, string>;
 }
 
 /** The default request: every role, a reasonable daily share, no quiet hours. */
@@ -64,7 +66,15 @@ function valider(p: Participation): Participation {
   if (h !== null && !(Array.isArray(h) && h.length === 2 && h.every((x) => Number.isInteger(x) && x >= 0 && x <= 23) && h[0] !== h[1])) {
     throw new Error('Quiet hours look like 23-7 (from 23:00 to 07:00), or off');
   }
-  return { roles, parJour, heuresCalmes: h, pause: !!p.pause, ruches: [...new Set((p.ruches ?? []).filter((s) => typeof s === 'string'))] };
+  const depots = Object.fromEntries(Object.entries(p.depots ?? {}).filter(([u, c]) => /^https:\/\//.test(u) && typeof c === 'string' && c.length > 0));
+  return {
+    roles,
+    parJour,
+    heuresCalmes: h,
+    pause: !!p.pause,
+    ruches: [...new Set((p.ruches ?? []).filter((s) => typeof s === 'string'))],
+    ...(Object.keys(depots).length ? { depots } : {}),
+  };
 }
 
 export interface OptionsParticipation {
@@ -75,6 +85,8 @@ export interface OptionsParticipation {
   pause?: boolean;
   resume?: boolean;
   ruche?: string;
+  /** "<repository url>=<path of the local clone>"; an empty path forgets the clone. */
+  clone?: string;
 }
 
 /** Applies command-line options (a preset first, then each explicit option) and validates the result. */
@@ -98,6 +110,16 @@ export function appliquerOptions(p: Participation, o: OptionsParticipation): Par
   if (o.pause) r.pause = true;
   if (o.resume) r.pause = false;
   if (o.ruche) r.ruches = [...r.ruches.filter((s) => s !== o.ruche), o.ruche];
+  if (o.clone !== undefined) {
+    const i = o.clone.indexOf('=');
+    const url = i < 0 ? '' : o.clone.slice(0, i).trim().replace(/\.git$/, '').replace(/\/+$/, '');
+    if (!/^https:\/\/\S+$/.test(url)) throw new Error('A clone is given as <repository https address>=<path>, e.g. https://github.com/me/game=C:\\dev\\game');
+    const depots = { ...r.depots };
+    const chemin = o.clone.slice(i + 1).trim();
+    if (chemin) depots[url] = chemin;
+    else delete depots[url];
+    r.depots = depots;
+  }
   return valider(r);
 }
 
@@ -116,6 +138,7 @@ export function decrire(p: Participation): string {
     p.parJour ? `up to ${p.parJour} tasks a day` : 'no daily limit',
     p.heuresCalmes ? `resting from ${String(p.heuresCalmes[0]).padStart(2, '0')}:00 to ${String(p.heuresCalmes[1]).padStart(2, '0')}:00` : 'no quiet hours',
   ];
+  if (p.depots && Object.keys(p.depots).length) parts.push(`${Object.keys(p.depots).length} local clone(s)`);
   if (p.pause) parts.unshift('PAUSED');
   return parts.join(' · ');
 }

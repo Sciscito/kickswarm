@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isContributorId } from '../protocol/identity.js';
-import type { Adhesion, CellSpec, Decision, Decomposition, EngagementVerdict, Hive, Invitation, Livrable, Requete, Result, Secrets, Verdict } from '../protocol/types.js';
+import type { Adhesion, CellSpec, Decision, Decomposition, EngagementVerdict, FusionDepot, Hash, Hive, Invitation, LienGithub, Livrable, RecuDepot, Requete, Result, Secrets, Verdict } from '../protocol/types.js';
 import { Coordinator, OspError } from './coordinator.js';
 import { Hote } from './hote.js';
 import { COMMUN } from './ledger.js';
@@ -171,6 +171,17 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
         }
         case route === 'POST /v0/decisions':
           return ok(201, cible.decide(body as unknown as Decision));
+        // OSP v0.3 §3.3: what the bridge reads and writes. It runs on a member's machine, with their own git.
+        case route.startsWith('GET /v0/cells/') && parts.length === 3:
+          return ok(200, cible.detailCellule(parts[2]! as Hash));
+        case route === 'GET /v0/repo/honey':
+          return ok(200, cible.mielsDepot());
+        case route === 'POST /v0/repo/receipts':
+          return ok(201, cible.recuDepot(body as unknown as RecuDepot));
+        case route === 'POST /v0/repo/github':
+          return ok(201, cible.lienGithub(body as unknown as LienGithub));
+        case route === 'POST /v0/repo/merges':
+          return ok(201, cible.fusionDepot(body as unknown as FusionDepot));
         default:
           throw new OspError('Unknown route', 404);
       }

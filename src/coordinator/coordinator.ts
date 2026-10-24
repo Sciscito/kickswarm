@@ -3,8 +3,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path';
 import { idRuchePrivee, normaliserCode } from '../protocol/builders.js';
 import { canonicalize, commitment, hashOf, sha256 } from '../protocol/canonical.js';
+import { blobsDuLivrable, chevauchent, empreinteLecture, horsPortee, inclus, validateDepot } from '../protocol/depot.js';
 import { generateIdentity, isContributorId, signObject, verifyObject, type Identity } from '../protocol/identity.js';
 import type {
+  FusionDepot,
+  LienGithub,
+  RecuDepot,
   Adhesion,
   Assignment,
   Caste,
@@ -150,6 +154,38 @@ export interface BoardEntry {
   source?: Hash;
 }
 
+interface RecuRecord {
+  alveole: Hash;
+  resultat: Hash;
+  branche: string;
+  commit: string;
+  parent: string;
+  pr: string | null;
+  auteur: ContributorId;
+  date: string;
+}
+
+interface FusionRecord {
+  pr: string;
+  fusionnee_par: string;
+  commit_fusion: string;
+  auteur: ContributorId;
+  date: string;
+}
+
+export interface DetailCellule {
+  cell: Cell;
+  etat: CellState;
+  capsule: string;
+  resultat?: { id: Hash; auteur: ContributorId; agent: Result['agent']; livrable: Livrable; validee_par: ContributorId[] };
+  /** The author's GitHub name, if they linked it. */
+  github?: string;
+  recus: Array<RecuRecord & { id: string; fusion?: FusionRecord }>;
+}
+
+const SHA_GIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+const GITHUB_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
 interface State {
   fondateur: ContributorId;
   lancement: number;
@@ -166,6 +202,12 @@ interface State {
   membres?: Record<string, { role: RolePrive; gardienne: boolean; depuis: number }>;
   /** OSP v0.3 §2.2, private hives only: invitations, by identifier. */
   invitations?: Record<string, { code_hash: Hash; sel: string; role: 'membre' | 'observateur'; utilisations_max: number; utilisations: number; expire: number; revoquee: boolean }>;
+  /** OSP v0.3 §3.3, created with the first one: GitHub names linked to identities. */
+  liens_github?: Record<string, string>;
+  /** OSP v0.3 §3.3, created with the first one: repo receipts, by identifier. */
+  recus?: Record<string, RecuRecord>;
+  /** OSP v0.3 §3.3: merges seen by a bridge, by receipt. External evidence. */
+  fusions?: Record<string, FusionRecord>;
   board: Record<string, BoardEntry[]>;
   accounts: Record<string, Account>;
   nonces: Record<string, number>;
@@ -177,7 +219,8 @@ interface State {
 
 /** The commands that change the state. Each one is written in full to the registry (OSP v0.2, §6.1). */
 export type CommandeType =
-  | 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'engageVerdict' | 'submitVerdict' | 'inviter' | 'rejoindre';
+  | 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'engageVerdict' | 'submitVerdict' | 'inviter' | 'rejoindre'
+  | 'recuDepot' | 'lienGithub' | 'fusionDepot';
 
 /**
  * The content of a `commande` entry: the signed objects received, plus everything that is not
@@ -527,6 +570,7 @@ export class Coordinator {
     const e = c.entree as {
       ruche: Hive; racine: CellSpec; decision: Decision; requete: Requete; resultat: Result; livrable: Livrable; decomposition: Decomposition;
       engagement: EngagementVerdict; verdict: Verdict; invitation: Invitation; adhesion: Adhesion;
+      recu: RecuDepot; lien: LienGithub; fusion: FusionDepot;
     };
     try {
       switch (c.type) {
@@ -541,6 +585,9 @@ export class Coordinator {
         case 'submitVerdict': await this.submitVerdict(e.verdict); break;
         case 'inviter': this.inviter(e.invitation); break;
         case 'rejoindre': this.rejoindre(e.adhesion); break;
+        case 'recuDepot': this.recuDepot(e.recu); break;
+        case 'lienGithub': this.lienGithub(e.lien); break;
+        case 'fusionDepot': this.fusionDepot(e.fusion); break;
         default: throw new ReplayDivergence(`Unknown command: ${String(c.type)}`);
       }
     } finally {
@@ -841,6 +888,128 @@ export class Coordinator {
     membres[a.contributeur] = { role: inv.role, gardienne: inv.role === 'membre', depuis: this.now() };
     this.registry.append('membre_ajoute', { contributeur: a.contributeur, role: inv.role, invitation: id });
     return { ruche: this.rucheUnique().ruche.slug, role: inv.role };
+  }
+
+  // ---------------------------------------------------------------- repository (OSP v0.3 §3.3)
+
+  /** Who may write the repository's facts: a working member in a private hive, the owner in a public one. */
+  private exigerPont(auteur: ContributorId, rec: CellRecord): void {
+    if (this.params.prive) return this.exigerMembre(auteur);
+    if (auteur !== this.state.hives[rec.cell.ruche]?.ruche.porteur) throw new OspError("Only the hive owner runs this hive's bridge", 403);
+  }
+
+  /**
+   * The bridge says which commit holds a cell's honey. The coordinator holds no repository access
+   * (principle 2), so it checks what it can: the cell, the validated result, and the git hash of every
+   * file against the validated deliverable. Anyone with the repository can then check the commit.
+   */
+  recuDepot(r: RecuDepot): { recu: Hash } {
+    return this.run('recuDepot', { recu: r }, [], () => this.doRecuDepot(r));
+  }
+
+  private doRecuDepot(r: RecuDepot): { recu: Hash } {
+    if (r?.type !== 'osp.recu_depot/0.3') throw new OspError('Expected a repo receipt (osp.recu_depot/0.3)');
+    if (!isContributorId(r.auteur) || !verifyObject(r, r.auteur)) throw new OspError('Invalid receipt signature', 401);
+    const rec = this.cellOrThrow(r.alveole);
+    this.exigerPont(r.auteur, rec);
+    const depot = rec.cell.depot;
+    if (!depot) throw new OspError('This cell does not work on a repository', 400);
+    if (rec.state !== 'miel' || rec.resultat_valide !== r.resultat) throw new OspError('A receipt is for the validated result of a cell turned into honey', 409);
+    if (r.depot !== depot.url) throw new OspError("This receipt is for another repository than the cell's", 400);
+    if (!SHA_GIT.test(String(r.commit)) || !SHA_GIT.test(String(r.parent))) throw new OspError('commit and parent are full git hashes');
+    if (typeof r.branche !== 'string' || !/^kickswarm\/[A-Za-z0-9._/-]{1,200}$/.test(r.branche) || r.branche.includes('..')) throw new OspError('The branch is named kickswarm/…');
+    if (r.pr !== null && (typeof r.pr !== 'string' || !/^https:\/\/\S{1,300}$/.test(r.pr))) throw new OspError('The pull request is an https address, or null');
+    const livrable = this.state.results[r.resultat]!.livrable;
+    if (canonicalize(r.fichiers ?? null) !== canonicalize(blobsDuLivrable(livrable))) throw new OspError('The receipt does not hold exactly the validated deliverable (git hashes differ)', 409);
+    if (canonicalize(r.supprimes ?? null) !== canonicalize([...(livrable.supprimes ?? [])].sort())) throw new OspError('The receipt does not delete exactly what the deliverable deletes', 409);
+    this.fraicheur(r.auteur, r.ts, r.nonce);
+    const id = hashOf(r);
+    // Two bridges may write the same honey: the receipts make it visible, and harmless.
+    (this.state.recus ??= {})[id] = {
+      alveole: rec.id,
+      resultat: r.resultat,
+      branche: r.branche,
+      commit: r.commit,
+      parent: r.parent,
+      pr: r.pr,
+      auteur: r.auteur,
+      date: new Date(this.now()).toISOString(),
+    };
+    this.registry.append('recu_depot', { id, alveole: rec.id, chemin: rec.cell.chemin, branche: r.branche, commit: r.commit, pr: r.pr });
+    return { recu: id };
+  }
+
+  /** A member links their GitHub name to their identity, once: the bridge credits them as co-author. */
+  lienGithub(l: LienGithub): { github: string } {
+    return this.run('lienGithub', { lien: l }, [], () => this.doLienGithub(l));
+  }
+
+  private doLienGithub(l: LienGithub): { github: string } {
+    if (l?.type !== 'osp.lien_github/0.3') throw new OspError('Expected a GitHub link (osp.lien_github/0.3)');
+    if (!isContributorId(l.contributeur) || !verifyObject(l, l.contributeur)) throw new OspError('Invalid link signature', 401);
+    this.exigerMembre(l.contributeur, false);
+    if (typeof l.github !== 'string' || !GITHUB_RE.test(l.github)) throw new OspError('Invalid GitHub name');
+    const pris = Object.entries(this.state.liens_github ?? {}).some(([id, g]) => g.toLowerCase() === l.github.toLowerCase() && id !== l.contributeur);
+    if (pris) throw new OspError('This GitHub name is already linked to another identity', 409);
+    this.fraicheur(l.contributeur, l.ts, l.nonce);
+    (this.state.liens_github ??= {})[l.contributeur] = l.github;
+    this.registry.append('lien_github', { contributeur: l.contributeur, github: l.github });
+    return { github: l.github };
+  }
+
+  /** The bridge saw a human merge the pull request of a receipt. The audit lists it as external evidence. */
+  fusionDepot(f: FusionDepot): { fusion: Hash } {
+    return this.run('fusionDepot', { fusion: f }, [], () => this.doFusionDepot(f));
+  }
+
+  private doFusionDepot(f: FusionDepot): { fusion: Hash } {
+    if (f?.type !== 'osp.fusion_depot/0.3') throw new OspError('Expected a merge statement (osp.fusion_depot/0.3)');
+    if (!isContributorId(f.auteur) || !verifyObject(f, f.auteur)) throw new OspError('Invalid statement signature', 401);
+    const recu = this.state.recus?.[f.recu];
+    if (!recu) throw new OspError('Unknown receipt', 404);
+    this.exigerPont(f.auteur, this.cellOrThrow(recu.alveole));
+    if (!recu.pr || f.pr !== recu.pr) throw new OspError("This is not the receipt's pull request", 400);
+    if (typeof f.fusionnee_par !== 'string' || !GITHUB_RE.test(f.fusionnee_par)) throw new OspError('Invalid GitHub name');
+    if (!SHA_GIT.test(String(f.commit_fusion))) throw new OspError('The merge commit is a full git hash');
+    if (this.state.fusions?.[f.recu]) throw new OspError('This merge is already recorded', 409);
+    this.fraicheur(f.auteur, f.ts, f.nonce);
+    (this.state.fusions ??= {})[f.recu] = { pr: f.pr, fusionnee_par: f.fusionnee_par, commit_fusion: f.commit_fusion, auteur: f.auteur, date: new Date(this.now()).toISOString() };
+    this.registry.append('fusion_depot', { recu: f.recu, pr: f.pr, fusionnee_par: f.fusionnee_par, commit_fusion: f.commit_fusion });
+    return { fusion: hashOf(f) };
+  }
+
+  /** What the bridge and the dashboard need about a cell: its capsule, its validated honey, its receipts. */
+  detailCellule(id: Hash): DetailCellule {
+    const rec = this.cellOrThrow(id);
+    const rr = rec.resultat_valide ? this.state.results[rec.resultat_valide] : undefined;
+    return {
+      cell: rec.cell,
+      etat: rec.state,
+      capsule: rec.capsule_texte,
+      ...(rr
+        ? {
+            resultat: { id: rec.resultat_valide!, auteur: rr.resultat.auteur, agent: rr.resultat.agent, livrable: rr.livrable, validee_par: rec.validee_par ?? [] },
+            ...(this.state.liens_github?.[rr.resultat.auteur] ? { github: this.state.liens_github[rr.resultat.auteur] } : {}),
+          }
+        : {}),
+      recus: Object.entries(this.state.recus ?? {})
+        .filter(([, r]) => r.alveole === rec.id)
+        .map(([rid, r]) => ({ id: rid, ...r, ...(this.state.fusions?.[rid] ? { fusion: this.state.fusions[rid] } : {}) })),
+    };
+  }
+
+  /** Cells turned into honey on a repository, with their number of receipts: the bridge's work list. */
+  mielsDepot(): Array<{ id: Hash; chemin: string; ruche: string; recus: number }> {
+    const n: Record<string, number> = {};
+    for (const r of Object.values(this.state.recus ?? {})) n[r.alveole] = (n[r.alveole] ?? 0) + 1;
+    return Object.values(this.state.cells)
+      .filter((c) => c.state === 'miel' && c.cell.depot)
+      .map((c) => ({ id: c.id, chemin: c.cell.chemin, ruche: c.cell.ruche, recus: n[c.id] ?? 0 }));
+  }
+
+  /** The repository facts of the registry, for the audit: every receipt and merge. */
+  faitsDepot(): { recus: Record<string, RecuRecord>; fusions: Record<string, FusionRecord> } {
+    return { recus: this.state.recus ?? {}, fusions: this.state.fusions ?? {} };
   }
 
   /**
@@ -1150,7 +1319,13 @@ export class Coordinator {
       if (c.gardiennes.some((g) => g.par === who) || c.verdicts.includes(who) || engages.some((e) => e.par === who) || pieges.some((p) => p.attribue_a === who)) return false;
       return c.gardiennes.length + engages.length + pieges.length < this.placesRequises(c);
     });
-    const libres = cells.filter((c) => c.state === 'libre');
+    // OSP v0.3 §3.2: never two open cells whose write scopes overlap, so no merge conflicts between cells.
+    const ouvertes = cells.filter((c) => c.cell.depot && (c.state === 'reservee' || c.state === 'en_cours' || c.state === 'en_verification'));
+    const libres = cells.filter((c) => {
+      if (c.state !== 'libre') return false;
+      const d = c.cell.depot;
+      return !d || !ouvertes.some((o) => o.cell.depot!.url === d.url && chevauchent(o.cell.depot!.ecriture, d.ecriture));
+    });
 
     if (aVerifier.length && (libres.length === 0 || this.rng() < 0.5)) {
       const rec = aVerifier[Math.floor(this.rng() * aVerifier.length)]!;
@@ -1278,6 +1453,14 @@ export class Coordinator {
       throw new OspError((e as Error).message);
     }
     if (hashOf(livrable) !== res.livrable) throw new OspError('The deliverable hash does not match the signed result');
+    const depot = rec.cell.depot;
+    if (depot) {
+      const hors = horsPortee(depot, livrable);
+      if (hors.length) throw new OspError(`Outside this cell's write scope: ${hors.slice(0, 5).join(', ')}`, 403);
+      for (const [p, contenu] of Object.entries(livrable.contexte ?? {})) {
+        if (!depot.lecture.includes(p) || empreinteLecture(contenu) !== depot.empreintes_lecture[p]) throw new OspError(`Context file ${p} is not a file read by this cell, as pinned by its hash`);
+      }
+    } else if (livrable.supprimes !== undefined || livrable.contexte !== undefined) throw new OspError('Only a repo cell deletes files or reads repository files');
     return rec;
   }
 
@@ -1378,6 +1561,15 @@ export class Coordinator {
     }
     if (rec.profondeur + 1 > this.params.profondeur_max) throw new OspError('Maximum depth reached (§6.4)');
     d.enfants.forEach((e) => this.validateSpec(e));
+    // OSP v0.3 §3.2: the children of a repo cell work on the same repository, inside its write scope.
+    const depot = rec.cell.depot;
+    if (depot) {
+      for (const e of d.enfants) {
+        if (!e.depot) continue;
+        if (e.depot.url !== depot.url) throw new OspError('A child works on the same repository as its parent');
+        if (!inclus(e.depot.ecriture, depot.ecriture)) throw new OspError("A child's write scope stays inside its parent's");
+      }
+    }
     return rec;
   }
 
@@ -1645,6 +1837,7 @@ export class Coordinator {
         budget: spec.budget ?? DEFAULT_BUDGET,
         atomique: spec.atomique,
         emise_par: 'coordinateur',
+        ...(spec.depot ? { depot: spec.depot } : {}),
       },
       this.identite,
     );
@@ -1973,6 +2166,13 @@ export class Coordinator {
       validateCritere(spec.critere_fini);
     } catch (e) {
       throw new OspError(`Invalid done criterion for "${spec.objectif.slice(0, 60)}": ${(e as Error).message}`);
+    }
+    if (spec.depot !== undefined) {
+      try {
+        validateDepot(spec.depot);
+      } catch (e) {
+        throw new OspError(`Invalid repo capsule for "${spec.objectif.slice(0, 60)}": ${(e as Error).message}`);
+      }
     }
   }
 

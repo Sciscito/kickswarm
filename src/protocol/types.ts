@@ -106,6 +106,20 @@ export interface CellSpec {
   critere_fini: CritereFini;
   atomique: boolean;
   budget?: Budget;
+  /** OSP v0.3 §3.2: the cell works on a shared repository. */
+  depot?: CapsuleDepot;
+}
+
+/**
+ * OSP v0.3 §3.2: a repo capsule. The files read are taken from the member's own clone at `commit`
+ * and checked against their hashes; `ecriture` is the cell's write scope (files, or folders ending in "/").
+ */
+export interface CapsuleDepot {
+  url: string;
+  commit: string;
+  lecture: string[];
+  empreintes_lecture: Record<string, Hash>;
+  ecriture: string[];
 }
 
 /** The secret part of a cell, sent next to the signed object, never inside it. */
@@ -176,10 +190,61 @@ export interface Cell extends Signed {
   budget: Budget;
   atomique: boolean;
   emise_par: 'coordinateur';
+  /** OSP v0.3 §3.2, only on repo cells. */
+  depot?: CapsuleDepot;
 }
 
 export interface Livrable {
   fichiers: Record<string, string>;
+  /** OSP v0.3 §3.2: files of the write scope that the deliverable deletes. */
+  supprimes?: string[];
+  /**
+   * OSP v0.3 §3.2: repository files the deliverable reads (the cell's `lecture`), exactly as pinned by
+   * their hashes. Present when the tests run, never written to the repository.
+   */
+  contexte?: Record<string, string>;
+}
+
+/**
+ * OSP v0.3 §3.3: a repo receipt, signed by the member who runs the bridge. It says which commit
+ * holds a cell's honey; `fichiers` gives the git hash of each file, so anyone can compare.
+ */
+export interface RecuDepot extends Signed {
+  type: 'osp.recu_depot/0.3';
+  alveole: Hash;
+  resultat: Hash;
+  depot: string;
+  branche: string;
+  commit: string;
+  /** The commit it was built on: the branch's previous head, or the cell's base commit. */
+  parent: string;
+  fichiers: Record<string, string>;
+  supprimes: string[];
+  pr: string | null;
+  auteur: ContributorId;
+  ts: number;
+  nonce: string;
+}
+
+/** OSP v0.3 §3.3: a member links their GitHub name to their Kickswarm identity, once. */
+export interface LienGithub extends Signed {
+  type: 'osp.lien_github/0.3';
+  contributeur: ContributorId;
+  github: string;
+  ts: number;
+  nonce: string;
+}
+
+/** OSP v0.3 §3.3: the bridge saw a pull request merged by a human. External evidence: the audit lists it apart. */
+export interface FusionDepot extends Signed {
+  type: 'osp.fusion_depot/0.3';
+  recu: Hash;
+  pr: string;
+  fusionnee_par: string;
+  commit_fusion: string;
+  auteur: ContributorId;
+  ts: number;
+  nonce: string;
 }
 
 /** §4.4 */

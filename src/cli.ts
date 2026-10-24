@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { pontUneFois, suivrePont, type PontRapport } from './bridge/pont.js';
+import { verifierCommit } from './bridge/verifier.js';
 import { auditRegistry } from './coordinator/audit.js';
 import { DrandHttp, QUICKNET, tourA, type SourceBalise } from './coordinator/balise.js';
 import { Coordinator } from './coordinator/coordinator.js';
@@ -10,7 +12,7 @@ import { Hote } from './coordinator/hote.js';
 import { demo } from './demo.js';
 import { joinHive } from './install.js';
 import { liveDemo } from './live-demo.js';
-import { makeAdhesion, makeDecision, makeHive, makeInvitation } from './protocol/builders.js';
+import { makeAdhesion, makeDecision, makeHive, makeInvitation, makeLienGithub } from './protocol/builders.js';
 import { isContributorId } from './protocol/identity.js';
 import type { CellSpec, DecisionNature } from './protocol/types.js';
 import { CoordinatorClient } from './plugin/client.js';
@@ -35,12 +37,16 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm hives [--url ...]                           List hives
   kickswarm propose <hive.json> [--url ...]             Propose a hive (slug, nom, objectif, racine)
   kickswarm decide <nature> <target> <reason> [--multiplier n] [--url ...]
-  kickswarm audit [--data ./data | --file registre.jsonl | --url ...] [--hive <private id>] [--reverify]   Replay a registry and check everything
+  kickswarm audit [--data ./data | --file registre.jsonl | --url ...] [--hive <private id>] [--clone <path>] [--reverify]   Replay a registry and check everything
   kickswarm private create <hive.json> [--alpha 0.05] [--guards 1]   Create a private hive, by invitation only
   kickswarm private invite <id> [--role member|observer] [--uses 1] [--days 14]
   kickswarm private members <id>  ·  private role <id> <member> member|observer <reason> [--no-guard]
   kickswarm private remove <id> <member> <reason>  ·  private revoke <id> <invitation> <reason>  ·  private leave <id>
   kickswarm join --invite <code>                       Join a private hive with an invitation code
+  kickswarm bridge <hive> --clone <path> [--remote origin] [--base main] [--per-cell] [--no-pr] [--once]
+                                                        Turn honey into commits and pull requests, with your own git and gh
+  kickswarm github <your GitHub name> [--hive <id>]     Link your GitHub name, to be credited as co-author
+  kickswarm settings --clone <repository url>=<path>    Where your clone of a hive's repository is
 
 Default coordinator: $KICKSWARM_URL or http://127.0.0.1:7777
 Identity: $KICKSWARM_HOME/identite.json (default ~/.kickswarm)`;
@@ -53,7 +59,15 @@ const SETTINGS_HELP = `How your bee takes part (saved on this machine, applied b
   --roles scout,worker,builder,guard   The roles your AI accepts
   --per-day 20      At most this many tasks a day (0: no limit)
   --quiet 23-7      Rest from 23:00 to 07:00 (off: never rest)
-  --pause / --resume`;
+  --pause / --resume
+  --clone https://github.com/me/game=C:\dev\game   Your local clone of a hive's repository (empty path: forget it)`;
+
+/** "<url>=<path>", with the path made absolute: the plugin runs from another folder. */
+function cloneOption(v: string): string {
+  const i = v.indexOf('=');
+  const chemin = v.slice(i + 1).trim();
+  return `${v.slice(0, i)}=${chemin ? resolve(chemin) : ''}`;
+}
 
 /** The participation options of the command line (a hive joined is remembered too). */
 function participationOptions(opts: Record<string, string>, ruche?: string): OptionsParticipation {
@@ -64,6 +78,7 @@ function participationOptions(opts: Record<string, string>, ruche?: string): Opt
     ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
     ...(opts.pause !== undefined ? { pause: true } : {}),
     ...(opts.resume !== undefined ? { resume: true } : {}),
+    ...(opts.clone !== undefined && opts.clone.includes('=') ? { clone: cloneOption(opts.clone) } : {}),
     ...(ruche ? { ruche } : {}),
   };
 }
@@ -172,6 +187,41 @@ async function main(): Promise<void> {
     case 'private':
     case 'privee':
       return commandePrivee(pos.slice(1), opts, client());
+    case 'bridge':
+    case 'pont': {
+      // OSP v0.3 §3.3: runs here, with this member's own git and gh. The coordinator never sees a token.
+      const ruche = pos[1];
+      if (!ruche || !opts.clone) throw new Error('Usage: kickswarm bridge <hive> --clone <path> [--remote origin] [--base main] [--per-cell] [--no-pr] [--once] [--every 30]');
+      const c = client();
+      if (/^p[0-9a-f]{32}$/.test(ruche)) c.utiliserRuchePrivee(ruche);
+      const o = {
+        client: c,
+        identite: c.identite,
+        clone: resolve(opts.clone),
+        remote: opts.remote || 'origin',
+        base: opts.base || 'main',
+        parCellule: opts['per-cell'] !== undefined,
+        ...(opts['no-pr'] !== undefined ? { forge: null } : {}),
+        log: (l: string) => console.log(`[bridge] ${l}`),
+      };
+      if (opts.once !== undefined) {
+        const r: PontRapport = await pontUneFois(o);
+        for (const i of r.ignorees) console.log(`[bridge] Skipped cell ${i.chemin}: ${i.raison}`);
+        console.log(`[bridge] ${r.commits.length} commit(s), ${r.fusions.length} merge(s) recorded.`);
+        return;
+      }
+      console.log(`[bridge] Following ${ruche} into ${o.clone}. Ctrl+C to stop.`);
+      return suivrePont({ ...o, intervalleMs: Number(opts.every ?? 30) * 1000 });
+    }
+    case 'github': {
+      const login = pos[1];
+      if (!login) throw new Error('Usage: kickswarm github <your GitHub name> [--hive <private id>]');
+      const c = client();
+      if (opts.hive) c.utiliserRuchePrivee(opts.hive);
+      const r = await c.lienGithub(makeLienGithub(c.identite, login));
+      console.log(`Linked: commits from your honey will credit ${r.github} as co-author.`);
+      return;
+    }
     case 'settings':
     case 'participation': {
       const home = kickswarmHome();
@@ -300,7 +350,13 @@ async function main(): Promise<void> {
         if (head.tete && head.tete.seq > head.seq) embargo = head.tete.seq - head.seq;
       }
       console.log(`\nAuditing ${entries.length} registry entries from ${source}${opts.reverify !== undefined ? ', re-running every verification' : ''}…\n`);
-      const report = await auditRegistry(entries, { reverifier: opts.reverify !== undefined, etatAnnonce: announced as `sha256:${string}` | undefined, ...(ancres ? { ancres } : {}) });
+      const clone = opts.clone ? resolve(opts.clone) : undefined;
+      const report = await auditRegistry(entries, {
+        reverifier: opts.reverify !== undefined,
+        etatAnnonce: announced as `sha256:${string}` | undefined,
+        ...(ancres ? { ancres } : {}),
+        ...(clone ? { verifierCommit: (r) => verifierCommit(clone, r) } : {}),
+      });
       for (const c of report.controles) console.log(`  ${c.ok ? '✓' : '✗'} ${c.nom}${c.detail ? `\n      ${c.detail}` : ''}`);
       console.log(`\n${report.ok ? 'AUDIT PASSED' : 'AUDIT FAILED'}: ${report.commandes} commands replayed${report.etat ? `, state ${report.etat}` : ''}`);
       if (embargo) console.log(`${embargo} newer entr${embargo > 1 ? 'ies are' : 'y is'} still under embargo while verifications are open; audit again later to cover them.`);

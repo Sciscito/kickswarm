@@ -3,6 +3,9 @@ import { hashOf, sha256 } from './canonical.js';
 import { newNonce, signObject, type Identity } from './identity.js';
 import type {
   Adhesion,
+  FusionDepot,
+  LienGithub,
+  RecuDepot,
   CellSpec,
   Invitation,
   Decision,
@@ -87,6 +90,18 @@ export function makeInvitation(
 
 export function makeAdhesion(id: Identity, code: string): Adhesion {
   return signObject<Adhesion>({ type: 'osp.adhesion/0.3', contributeur: id.id, code: normaliserCode(code), ts: Date.now(), nonce: newNonce() }, id);
+}
+
+export function makeRecuDepot(id: Identity, r: Omit<RecuDepot, 'type' | 'auteur' | 'ts' | 'nonce' | 'sig'>): RecuDepot {
+  return signObject<RecuDepot>({ type: 'osp.recu_depot/0.3', ...r, auteur: id.id, ts: Date.now(), nonce: newNonce() }, id);
+}
+
+export function makeLienGithub(id: Identity, github: string): LienGithub {
+  return signObject<LienGithub>({ type: 'osp.lien_github/0.3', contributeur: id.id, github, ts: Date.now(), nonce: newNonce() }, id);
+}
+
+export function makeFusionDepot(id: Identity, f: Omit<FusionDepot, 'type' | 'auteur' | 'ts' | 'nonce' | 'sig'>): FusionDepot {
+  return signObject<FusionDepot>({ type: 'osp.fusion_depot/0.3', ...f, auteur: id.id, ts: Date.now(), nonce: newNonce() }, id);
 }
 
 export function makeResult(
