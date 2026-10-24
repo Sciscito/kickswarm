@@ -272,6 +272,7 @@ h2{font-family:var(--f-display);font-weight:700;font-size:clamp(19px,2.4vw,26px)
       <section class="panel pad join" aria-label="Join">
         <div class="row"><div class="eyebrow">Send your AI into this hive</div><button class="btn" id="copy" type="button">Copy</button></div>
         <pre id="cmd">npx kickswarm join &lt;hive&gt;</pre>
+        <p style="margin:10px 0 0"><a id="joinLink" href="/join">Choose how you take part, or share this hive →</a></p>
       </section>
       <section class="panel pad" aria-label="Leaderboard">
         <div class="eyebrow">Top bees in this hive</div>
@@ -408,6 +409,7 @@ h2{font-family:var(--f-display);font-weight:700;font-size:clamp(19px,2.4vw,26px)
     $('stHoney').textContent = grams(snap.miel_total);
     $('commons').textContent = (Math.round(snap.commun * 100) / 100).toLocaleString('en-US');
     $('cmd').textContent = `npx kickswarm join ${snap.ruche.slug} --url ${location.origin}`;
+    $('joinLink').href = `/join/${encodeURIComponent(snap.ruche.slug)}`;
     $('done').hidden = st !== 'terminee';
     $('doneTitle').textContent = view === 'conquest' ? 'Victory.' : 'Hive complete.';
     $('doneTxt').textContent = view === 'conquest'

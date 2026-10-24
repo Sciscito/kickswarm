@@ -15,13 +15,15 @@ import type { CellSpec, DecisionNature } from './protocol/types.js';
 import { CoordinatorClient } from './plugin/client.js';
 import { kickswarmHome, loadOrCreateIdentity } from './plugin/identite.js';
 import { JournalLocal, resumer } from './plugin/journal.js';
+import { appliquerOptions, chargerParticipation, decrire, enregistrerParticipation, type OptionsParticipation } from './plugin/participation.js';
 import { startPlugin } from './plugin/server.js';
 import { trial } from './trial.js';
 import { resolveSandbox } from './verifier/v0.js';
 
 const HELP = `kickswarm · Open Swarm Protocol v0.1
 
-  kickswarm join <hive> [--url <coordinator>] [--yes]   Send your AI into a hive (one command)
+  kickswarm join <hive> [--url <coordinator>] [--yes] [--preset full|light|night]   Send your AI into a hive (one command)
+  kickswarm settings [--preset ...] [--roles ...] [--per-day n] [--quiet 23-7|off] [--pause|--resume]   How your bee takes part
   kickswarm demo live [--port 7777] [--bees 6] [--speed 1] [--beacon none|drand]   Live hive demo in your browser
   kickswarm demo                                        End-to-end demo in the terminal
   kickswarm trial [--port 7777] [--guards 4] [--beacon none|drand] [--rehearse]   First run with a real AI (see docs/trial.md)
@@ -36,6 +38,29 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
 
 Default coordinator: $KICKSWARM_URL or http://127.0.0.1:7777
 Identity: $KICKSWARM_HOME/identite.json (default ~/.kickswarm)`;
+
+const SETTINGS_HELP = `How your bee takes part (saved on this machine, applied before every task):
+
+  --preset full     Every role, up to 20 tasks a day (the default)
+  --preset light    Only verify other bees' work: your machine replays the tests, almost no AI usage
+  --preset night    Every role, only from 22:00 to 08:00
+  --roles scout,worker,builder,guard   The roles your AI accepts
+  --per-day 20      At most this many tasks a day (0: no limit)
+  --quiet 23-7      Rest from 23:00 to 07:00 (off: never rest)
+  --pause / --resume`;
+
+/** The participation options of the command line (a hive joined is remembered too). */
+function participationOptions(opts: Record<string, string>, ruche?: string): OptionsParticipation {
+  return {
+    ...(opts.preset !== undefined ? { preset: opts.preset } : {}),
+    ...(opts.roles !== undefined ? { roles: opts.roles } : {}),
+    ...(opts['per-day'] !== undefined ? { perDay: opts['per-day'] } : {}),
+    ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+    ...(opts.pause !== undefined ? { pause: true } : {}),
+    ...(opts.resume !== undefined ? { resume: true } : {}),
+    ...(ruche ? { ruche } : {}),
+  };
+}
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 
@@ -58,8 +83,29 @@ async function main(): Promise<void> {
 
   switch (pos[0]) {
     case 'join': {
-      if (!pos[1]) throw new Error('Usage: kickswarm join <hive> [--url <coordinator>]');
+      if (!pos[1]) throw new Error('Usage: kickswarm join <hive> [--url <coordinator>] [--preset full|light|night] [--roles ...] [--per-day n] [--quiet 23-7]');
+      // How you take part: the default request, or a preset, or your own options.
+      const home = kickswarmHome();
+      const p = appliquerOptions(chargerParticipation(home), participationOptions(opts, pos[1]));
+      enregistrerParticipation(home, p);
+      console.log(`\nHow your bee takes part: ${decrire(p)}\n   Change it at any time: kickswarm settings --help`);
       return joinHive(pos[1], { url, yes: opts.yes !== undefined });
+    }
+    case 'settings':
+    case 'participation': {
+      const home = kickswarmHome();
+      if (opts.help !== undefined) {
+        console.log(SETTINGS_HELP);
+        return;
+      }
+      const avant = chargerParticipation(home);
+      const apres = appliquerOptions(avant, participationOptions(opts));
+      const change = JSON.stringify(avant) !== JSON.stringify(apres);
+      if (change) enregistrerParticipation(home, apres);
+      console.log(`${change ? 'Saved. ' : ''}How your bee takes part: ${decrire(apres)}`);
+      if (apres.ruches.length) console.log(`Hives joined: ${apres.ruches.join(', ')}`);
+      if (!change) console.log('Options: kickswarm settings --help');
+      return;
     }
     case 'identity':
     case 'identite': {

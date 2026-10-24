@@ -41,11 +41,11 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(json);
 }
 
-// The live hive (web/hive.html), served by the coordinator itself.
-const PAGE = new URL('../../web/hive.html', import.meta.url);
+// The pages the coordinator serves itself: the way in (web/join.html) and the live hive (web/hive.html).
+const PAGES = { join: new URL('../../web/join.html', import.meta.url), hive: new URL('../../web/hive.html', import.meta.url) };
 
-async function sendPage(res: ServerResponse): Promise<void> {
-  const html = await readFile(PAGE, 'utf8');
+async function sendPage(res: ServerResponse, page: keyof typeof PAGES): Promise<void> {
+  const html = await readFile(PAGES[page], 'utf8');
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache' });
   res.end(html);
 }
@@ -73,7 +73,9 @@ export function createCoordinatorServer(coord: Coordinator): Server {
     const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
     const route = `${req.method} /${parts.slice(0, 3).join('/')}`;
     try {
-      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/hive')) return await sendPage(res);
+      if (req.method === 'GET' && url.pathname === '/hive') return await sendPage(res, 'hive');
+      // The way in, and its share links: /join/<hive> opens with that hive picked.
+      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/join' || /^\/join\/[a-z0-9-]{1,40}\/?$/.test(url.pathname))) return await sendPage(res, 'join');
       if (route === 'GET /v0/events') return streamEvents(coord, req, res);
       if (parts[0] !== 'v0') throw new OspError('Unknown route', 404);
       const body = req.method === 'POST' ? ((await readBody(req)) as Record<string, unknown>) : {};

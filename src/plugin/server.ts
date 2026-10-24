@@ -10,6 +10,7 @@ import { CoordinatorClient } from './client.js';
 import { consignes } from './consignes.js';
 import { kickswarmHome, loadOrCreateIdentity } from './identite.js';
 import { JournalLocal, resumer } from './journal.js';
+import { chargerParticipation, CompteurJour, decrire, DEFAULT_PARTICIPATION, enHeuresCalmes, ROLE_OF, type Participation } from './participation.js';
 import { Scelles, type VerdictScelle } from './scelles.js';
 
 // The Kickswarm plugin: a local MCP server that connects any agent to the swarm (§3, §21.1).
@@ -79,10 +80,27 @@ function issueVerdict(r: Revelation): string {
 export function createPluginServer(
   client: CoordinatorClient,
   journal?: JournalLocal,
-  options: { scelles?: Scelles; intervalleRevelationMs?: number; attenteMs?: number } = {},
+  options: {
+    scelles?: Scelles;
+    intervalleRevelationMs?: number;
+    attenteMs?: number;
+    /** The contributor's settings, read before every task so a change applies at once. */
+    participation?: () => Participation;
+    compteur?: { aujourdhui(): number; plusUn(): void };
+  } = {},
 ): McpServer {
   // When nothing is available, swarm_next waits up to this delay before answering.
   const attente = options.attenteMs ?? 30_000;
+  const participation = options.participation ?? (() => DEFAULT_PARTICIPATION);
+  let tachesEnMemoire = 0;
+  const compteur = options.compteur ?? { aujourdhui: () => tachesEnMemoire, plusUn: () => void tachesEnMemoire++ };
+  /** Why the bee rests right now, if it does: paused, quiet hours, or today's share already done. */
+  const repos = (p: Participation): string | null => {
+    if (p.pause) return 'Your bee is paused. Resume with: kickswarm settings --resume';
+    if (enHeuresCalmes(p)) return `Quiet hours: your bee rests from ${p.heuresCalmes![0]}:00 to ${p.heuresCalmes![1]}:00. Change it with: kickswarm settings --quiet off`;
+    if (p.parJour && compteur.aujourdhui() >= p.parJour) return `Your bee has done its ${p.parJour} tasks for today. Thank you! Raise the limit with: kickswarm settings --per-day <n>`;
+    return null;
+  };
   const server = new McpServer({ name: 'kickswarm', version: '0.1.0' });
   let ruche: string | undefined;
   let enCours: Assignment | undefined;
@@ -158,35 +176,53 @@ export function createPluginServer(
       const avant = await reveler();
       const prefixe = avant.length ? `${lignes(avant)}\n` : '';
       if (enCours) return texte(`${prefixe}You already have a cell in progress.\n\n${consignes(enCours)}`);
-      let a = await client.claim(ruche);
+      const p = participation();
+      const pourquoi = repos(p);
+      if (pourquoi) return texte(`${prefixe}${pourquoi}`);
+      const cible = ruche ?? p.ruches.at(-1);
+      // Only the roles the contributor accepts: any other task goes straight back to the swarm, with no penalty.
+      let ecarte = false;
+      const prendre = async (): Promise<Assignment | null> => {
+        for (let i = 0; i < 5; i++) {
+          const x = await client.claim(cible);
+          if (!x) return null;
+          if (p.roles.includes(ROLE_OF[x.caste])) return x;
+          ecarte = true;
+          await client.release(x.alveole_id);
+        }
+        return null;
+      };
+      let a = await prendre();
       // Nothing to take, but the hive is alive: guards are verifying. Wait a little rather than
       // sending the agent back right away (it cannot wait on its own).
       let terminee = false;
       const fin = Date.now() + attente;
       while (!a && Date.now() < fin) {
-        if (ruche && (await client.hive(ruche)).statut === 'terminee') {
+        if (cible && (await client.hive(cible)).statut === 'terminee') {
           terminee = true;
           break;
         }
         await new Promise((r) => setTimeout(r, Math.min(2000, attente)));
         await reveler();
-        a = await client.claim(ruche);
+        a = await prendre();
       }
       if (!a) {
         if (terminee) return texte(`${prefixe}The hive is complete: every cell is honey. Nothing left to do. Call swarm_journal to see what you did.`);
+        if (ecarte) return texte(`${prefixe}Nothing matching your settings right now (you take: ${p.roles.join(', ')}). Call swarm_next again a bit later.`);
         return texte(
           attente > 0
             ? `${prefixe}Nothing to do right now: cells are being verified by guards. Call swarm_next again.`
             : `${prefixe}Nothing left to do in this hive right now. Try again a bit later.`,
         );
       }
+      compteur.plusUn();
 
       if (a.caste === 'gardienne') {
-        const cible = a.a_verifier!;
+        const aVerifier = a.a_verifier!;
         const chemin = a.alveole.chemin;
-        const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
-        const verdict = makeVerdict(client.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
-        note('verification', { ruche, chemin, resultat: cible.id, ok: rejeu.ok, motif: rejeu.motif, sandbox: rejeu.sandbox });
+        const rejeu = await verifierV0(a.alveole.critere_fini, aVerifier.livrable, { sansCaches: true });
+        const verdict = makeVerdict(client.identite, aVerifier.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
+        note('verification', { ruche, chemin, resultat: aVerifier.id, ok: rejeu.ok, motif: rejeu.motif, sandbox: rejeu.sandbox });
         // The verdict is kept on disk before its commitment is sent: it can always be revealed.
         const s: VerdictScelle = { verdict, coordinateur: client.url, chemin, ...(ruche ? { ruche } : {}) };
         scelles.ajouter(s);
@@ -196,7 +232,7 @@ export function createPluginServer(
           scelles.retirer(s);
           throw e;
         }
-        note('engagement', { ruche, chemin, resultat: cible.id, decision: verdict.decision, engagement: hashOf(verdict) });
+        note('engagement', { ruche, chemin, resultat: aVerifier.id, decision: verdict.decision, engagement: hashOf(verdict) });
         const apres = await reveler();
         const mien = apres.find((x) => x.scelle === s);
         const issue = mien
@@ -308,6 +344,7 @@ export function createPluginServer(
           `Reputation: ${c.reputation}`,
           `Trophies: ${c.trophees?.length ? c.trophees.map((t) => t.id).join(', ') : 'none yet'}`,
           `In progress: ${enCours ? `${enCours.caste} · cell ${enCours.alveole.chemin}` : 'nothing'}`,
+          `Your settings: ${decrire(participation())} · ${compteur.aujourdhui()} task(s) today`,
         ].join('\n'),
       );
     }),
@@ -364,7 +401,12 @@ export async function startPlugin(url: string): Promise<void> {
   if (creee) console.error(`[kickswarm] New identity created: ${fichier}`);
   const journal = new JournalLocal();
   const scelles = new Scelles(join(kickswarmHome(), 'verdicts-scelles.json'));
-  const server = createPluginServer(new CoordinatorClient(url, identite), journal, { scelles });
+  const home = kickswarmHome();
+  const server = createPluginServer(new CoordinatorClient(url, identite), journal, {
+    scelles,
+    participation: () => chargerParticipation(home),
+    compteur: new CompteurJour(home),
+  });
   await server.connect(new StdioServerTransport());
   console.error(`[kickswarm] MCP plugin ready. Coordinator: ${url} · identity ${identite.id} · journal ${journal.fichier}`);
 }
