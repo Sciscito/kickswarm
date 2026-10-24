@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kickswarm · Lend your AI</title>
+<meta name="description" content="Take part in the swarm with any AI chat, or with no AI at all: lend your browser to verify the work.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=JetBrains+Mono:wght@500;600&family=Unbounded:wght@600;700&display=swap" rel="stylesheet">
+<!-- OSP v0.4 §2.3: the libraries the doors import, served by this coordinator (no build step). -->
+<script type="importmap">
+{
+  "imports": {
+    "@noble/hashes/": "/vendor/@noble/hashes/",
+    "@noble/curves/": "/vendor/@noble/curves/",
+    "@noble/post-quantum/": "/vendor/@noble/post-quantum/",
+    "@noble/ciphers/": "/vendor/@noble/ciphers/",
+    "quickjs-emscripten-core": "/vendor/quickjs-emscripten-core/dist/index.mjs",
+    "@jitl/quickjs-ffi-types": "/vendor/@jitl/quickjs-ffi-types/dist/index.mjs",
+    "@jitl/quickjs-wasmfile-release-sync": "/vendor/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs",
+    "@jitl/quickjs-wasmfile-release-sync/emscripten-module": "/vendor/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs",
+    "@luau-rs/luau": "/vendor/@luau-rs/luau/dist/direct-api.js",
+    "@luau-rs/luau/analysis": "/vendor/@luau-rs/luau/dist/analysis.js",
+    "valibot": "/vendor/valibot/dist/index.mjs"
+  }
+}
+</script>
+<style>
+/* The chat door and the guard door. Same tokens as the way in and the live hive: every piece of text
+   sits on a solid surface with enough contrast, in light and dark. */
+:root{
+  --bg:#F1EFF7; --surface:#FFFFFF; --surface-2:#E9E5F2; --line:#D3CCE3;
+  --fg:#1D1931; --muted:#57516F;
+  --honey:#B97C00; --honey-2:#F5C24A; --honey-ink:#2E1E00;
+  --lav:#5E45C9; --ok:#1F7A45; --bad:#B42318; --stripe:#2A2233; --shadow:rgba(29,25,49,.10);
+  --f-display:"Unbounded","Trebuchet MS",system-ui,sans-serif;
+  --f-body:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F0D1A; --surface:#191628; --surface-2:#231F37; --line:#3A3354;
+  --fg:#F2EEFB; --muted:#B8B1D6;
+  --honey:#F5B83D; --honey-2:#FFD472; --honey-ink:#2A1B00;
+  --lav:#B3A3FF; --ok:#5BD68E; --bad:#FF8A80; --stripe:#0A0813; --shadow:rgba(0,0,0,.45); color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0F0D1A; --surface:#191628; --surface-2:#231F37; --line:#3A3354;
+  --fg:#F2EEFB; --muted:#B8B1D6;
+  --honey:#F5B83D; --honey-2:#FFD472; --honey-ink:#2A1B00;
+  --lav:#B3A3FF; --ok:#5BD68E; --bad:#FF8A80; --stripe:#0A0813; --shadow:rgba(0,0,0,.45); color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--fg);margin:0}
+body{font-family:var(--f-body);font-size:15.5px;line-height:1.55}
+*{box-sizing:border-box}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+a{color:var(--lav)}
+.wrap{max-width:860px;margin:0 auto;padding-block:20px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-weight:700;font-size:20px;color:var(--fg);text-decoration:none}
+.brand svg{width:32px;height:32px}
+.navlink{font:600 12.5px/1 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--fg);text-decoration:none}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(28px,5vw,44px);line-height:1.08;letter-spacing:-.02em;margin:30px 0 10px;text-wrap:balance}
+h1 em{font-style:normal;color:var(--honey)}
+h2{font-family:var(--f-display);font-weight:700;font-size:19px;margin:0}
+.lede{color:var(--muted);margin:0;font-size:17px;max-width:62ch}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:0 14px 34px -22px var(--shadow);padding:18px;display:grid;gap:14px;margin-top:18px;min-width:0}
+.me{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font:600 13px/1.4 var(--f-mono);color:var(--muted)}
+.me b{color:var(--fg)}
+.honey{color:var(--honey-ink);background:var(--honey-2);border-radius:999px;padding:4px 10px}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:22px}
+.tab{text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:16px;padding:14px;cursor:pointer;display:grid;gap:4px}
+.tab b{font-size:16px}
+.tab span{color:var(--muted);font-size:14px}
+.tab[aria-selected="true"]{border-color:var(--honey);box-shadow:0 0 0 2px var(--honey-2)}
+@media (max-width:560px){.tabs{grid-template-columns:1fr}}
+.step{display:grid;gap:10px}
+.step h3{margin:0;font-size:15.5px;display:flex;gap:8px;align-items:center}
+.num{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:999px;background:var(--honey-2);color:var(--honey-ink);font:700 13px/1 var(--f-mono)}
+.btn{border:1px solid var(--line);background:var(--surface-2);color:var(--fg);border-radius:10px;padding:10px 14px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:var(--honey-2);border-color:var(--honey);color:var(--honey-ink)}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 10px;width:100%}
+select{width:auto;max-width:100%}
+textarea{min-height:150px;font:13.5px/1.5 var(--f-mono);resize:vertical}
+textarea[readonly]{background:var(--surface-2)}
+.task{border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--surface-2);display:grid;gap:4px}
+.task b{font-size:16px}
+.small{color:var(--muted);font-size:13.5px;margin:0}
+.result{border-radius:12px;padding:12px 14px;border:1px solid var(--line);background:var(--surface)}
+.result.ok{border-color:var(--ok)}
+.result.bad{border-color:var(--bad)}
+.result strong.ok{color:var(--ok)}
+.result strong.bad{color:var(--bad)}
+.result ul{margin:6px 0 0;padding-left:20px}
+.log{display:grid;gap:6px;max-height:320px;overflow:auto}
+.log div{font:13px/1.45 var(--f-mono);padding:8px 10px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
+details summary{cursor:pointer;color:var(--muted);font-size:14px}
+[hidden]{display:none !important}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/join" aria-label="Kickswarm">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2l12 7v14l-12 7-12-7V9z" fill="var(--honey-2)" stroke="var(--honey)" stroke-width="2"/><path d="M16 9l6 3.5v7L16 23l-6-3.5v-7z" fill="var(--surface)"/></svg>
+      Kickswarm
+    </a>
+    <nav class="row"><a class="navlink" href="/join">Join</a><a class="navlink" href="/hive">Live hive</a></nav>
+  </header>
+
+  <h1>Lend <em>any AI</em> to the swarm</h1>
+  <p class="lede">A free chat, a subscription, on your phone: copy a task into your AI, paste the answer back. No AI at all? Lend your browser: it checks other bees’ work.</p>
+
+  <section class="panel" aria-label="Your bee">
+    <div class="me">
+      <span>Your bee: <b id="me-id">…</b></span>
+      <span class="honey" id="me-honey">0 g of honey</span>
+      <span>Hive:
+        <select id="hive" aria-label="Hive"></select>
+      </span>
+    </div>
+    <details>
+      <summary>Keep this bee (backup)</summary>
+      <p class="small">Your bee’s keys stay in this browser. Save a copy to use it elsewhere, or if you clear your browser’s data. Whoever has this file can sign as your bee.</p>
+      <div class="row">
+        <button class="btn" id="export">Download my bee</button>
+        <label class="btn">Restore a bee<input type="file" id="import" accept=".json,application/json" hidden></label>
+      </div>
+    </details>
+  </section>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-chat" aria-selected="true" aria-controls="chat"><b>I have an AI chat</b><span>ChatGPT, Claude, Gemini, Le Chat… free or paid, on any device</span></button>
+    <button class="tab" role="tab" id="tab-guard" aria-selected="false" aria-controls="guard"><b>Lend my browser</b><span>No AI needed: your browser verifies others’ work</span></button>
+  </div>
+
+  <section class="panel" id="chat" role="tabpanel" aria-labelledby="tab-chat">
+    <div class="step">
+      <h3><span class="num">1</span> Get a task</h3>
+      <div class="row"><button class="btn primary" id="take">Get a task</button><span class="small" id="take-msg"></span></div>
+      <div class="task" id="task" hidden>
+        <b id="task-goal"></b>
+        <span class="small" id="task-meta"></span>
+      </div>
+    </div>
+    <div class="step" id="step-copy" hidden>
+      <h3><span class="num">2</span> Copy it into your AI chat</h3>
+      <div class="row"><button class="btn primary" id="copy">Copy the task</button><span class="small">Paste it into any AI chat, as one message.</span></div>
+      <details><summary>See the task text</summary><textarea id="prompt" readonly aria-label="Task text"></textarea></details>
+      <p class="small">The task text goes to the chat you use. Only public hives are offered here.</p>
+    </div>
+    <div class="step" id="step-paste" hidden>
+      <h3><span class="num">3</span> Paste the AI’s answer</h3>
+      <textarea id="answer" placeholder="Paste the whole answer here" aria-label="The AI’s answer"></textarea>
+      <div class="row">
+        <select id="ai" aria-label="Which AI did you use?">
+          <option value="">Which AI did you use?</option>
+          <option>ChatGPT</option><option>Claude</option><option>Gemini</option><option>Le Chat</option><option>DeepSeek</option><option>Copilot</option><option>Llama</option><option>Other</option>
+        </select>
+        <button class="btn primary" id="check">Check it</button>
+        <button class="btn" id="giveback">Give this task back</button>
+      </div>
+      <div class="result" id="result" hidden></div>
+      <div class="row" id="after" hidden>
+        <button class="btn primary" id="submit">Hand it in</button>
+        <button class="btn" id="copyfix" hidden>Copy the fix message</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="guard" role="tabpanel" aria-labelledby="tab-guard" hidden>
+    <div class="step">
+      <h3>Your browser checks other bees’ work</h3>
+      <p class="small">It replays each result’s tests here, in a sandbox with no network and no disk, then seals its verdict. Some results are traps with a hidden bug: catching them earns trust and honey.</p>
+      <div class="row"><button class="btn primary" id="guard-toggle">Start verifying</button><span class="small" id="guard-msg"></span></div>
+      <div class="log" id="guard-log" aria-live="polite"></div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script type="module">
+import { Porte, ErreurPorte } from '/app/web/porte.js';
+import { executeursNavigateur } from '/app/web/executeurs.js';
+import { ErreurLecture } from '/app/taches/lecteur.js';
+
+const $ = (id) => document.getElementById(id);
+const toast = (t) => { const e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove('on'), 2600); };
+const store = {
+  lire: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  ecrire: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  effacer: (k) => { try { localStorage.removeItem(k); } catch {} },
+};
+const porte = new Porte(location.origin, store, executeursNavigateur());
+const message = (e) => (e instanceof ErreurPorte || e instanceof ErreurLecture || e instanceof Error ? e.message : String(e));
+let verification = null;
+
+async function rafraichir() {
+  const id = porte.identite().id;
+  $('me-id').textContent = id.slice(0, 14) + '…';
+  $('me-id').title = id;
+  try { const c = await porte.compte(); $('me-honey').textContent = `${Math.round((c.miel_gagne ?? 0) * 10) / 10} g of honey`; } catch {}
+}
+
+async function ruches() {
+  const sel = $('hive');
+  try {
+    const liste = (await porte.ruches()).filter((h) => h.statut === 'active');
+    sel.innerHTML = '';
+    for (const h of liste) { const o = document.createElement('option'); o.value = h.slug; o.textContent = `${h.nom} (${h.progression.miel}/${h.progression.total})`; sel.append(o); }
+    if (!liste.length) { const o = document.createElement('option'); o.textContent = 'No active hive right now'; o.value = ''; sel.append(o); }
+    const wanted = new URLSearchParams(location.search).get('hive');
+    if (wanted && liste.some((h) => h.slug === wanted)) sel.value = wanted;
+  } catch (e) { toast(message(e)); }
+}
+
+function montrerTache(t) {
+  $('task').hidden = false;
+  $('task-goal').textContent = t.fiche.objectif;
+  const role = t.fiche.role === 'batisseuse' ? 'Assemble' : 'Write';
+  $('task-meta').textContent = `${role} ${t.fiche.livrable.module} · ${t.fiche.livrable.langage} · about ${t.fiche.taille.prompt} tokens · until ${new Date(t.assignment.bail_expire).toLocaleTimeString()}`;
+  $('prompt').value = t.prompt;
+  $('step-copy').hidden = false;
+  $('step-paste').hidden = false;
+  $('take').textContent = 'Task in progress';
+  $('take').disabled = true;
+}
+
+function effacerTache() {
+  $('task').hidden = true; $('step-copy').hidden = true; $('step-paste').hidden = true;
+  $('result').hidden = true; $('after').hidden = true; $('answer').value = '';
+  $('take').textContent = 'Get a task'; $('take').disabled = false; verification = null;
+}
+
+$('take').onclick = async () => {
+  $('take-msg').textContent = 'Asking the swarm…';
+  try {
+    const t = await porte.prendre($('hive').value || undefined);
+    $('take-msg').textContent = t ? '' : 'Nothing for an AI chat right now. Try again in a moment, or lend your browser meanwhile.';
+    if (t) montrerTache(t);
+  } catch (e) { $('take-msg').textContent = message(e); }
+};
+
+async function copier(texte, quoi) {
+  try { await navigator.clipboard.writeText(texte); toast(`${quoi} copied`); }
+  catch { $('prompt').closest('details').open = true; $('prompt').select(); toast('Select the text and copy it'); }
+}
+$('copy').onclick = () => copier($('prompt').value, 'Task');
+$('copyfix').onclick = () => verification?.correctif && copier(verification.correctif, 'Fix message');
+
+$('check').onclick = async () => {
+  const r = $('result');
+  r.hidden = false; r.className = 'result'; r.textContent = 'Checking in your browser…';
+  $('after').hidden = true;
+  try {
+    verification = await porte.verifier($('answer').value);
+    const v = verification.rapport;
+    r.className = `result ${v.ok ? 'ok' : 'bad'}`;
+    r.innerHTML = '';
+    const s = document.createElement('strong'); s.className = v.ok ? 'ok' : 'bad'; s.textContent = v.ok ? 'Passed: ' : 'Not yet: ';
+    r.append(s, document.createTextNode(v.motif));
+    const files = document.createElement('p'); files.className = 'small'; files.textContent = `Files read from the answer: ${Object.keys(verification.livrable.fichiers).join(', ')}`;
+    r.append(files);
+    $('after').hidden = false;
+    $('submit').hidden = !v.ok;
+    $('copyfix').hidden = v.ok;
+    if (!v.ok) r.append(Object.assign(document.createElement('p'), { className: 'small', textContent: 'Copy the fix message into the same chat, then paste the new answer here.' }));
+  } catch (e) { r.className = 'result bad'; r.textContent = message(e); }
+};
+
+$('submit').onclick = async () => {
+  if (!verification) return;
+  $('submit').disabled = true;
+  try {
+    const r = await porte.rendre(verification.livrable, $('ai').value);
+    toast(r.statut === 'rejete' ? `Refused: ${r.motif}` : 'Handed in: guards will now check it');
+    effacerTache();
+    rafraichir();
+  } catch (e) { toast(message(e)); }
+  $('submit').disabled = false;
+};
+
+$('giveback').onclick = async () => { try { await porte.liberer(); toast('Task given back, no penalty'); } catch (e) { toast(message(e)); } effacerTache(); };
+
+// The guard door.
+let garde = false;
+const log = (t) => { const d = document.createElement('div'); d.textContent = t; $('guard-log').prepend(d); };
+async function boucle() {
+  while (garde) {
+    try {
+      for (const r of await porte.reveler()) log(`Cell ${r.chemin}: ${r.issue}`);
+      const g = await porte.garder($('hive').value || undefined);
+      if (g) log(`Cell ${g.chemin}: ${g.ok ? 'valid' : 'rejected'} (${g.motif})${g.issue ? ` · ${g.issue}` : ' · verdict sealed'}`);
+      $('guard-msg').textContent = g ? 'Verifying…' : 'Nothing to verify right now, waiting…';
+      if (g) rafraichir();
+      await new Promise((ok) => setTimeout(ok, g ? 800 : 5000));
+    } catch (e) {
+      $('guard-msg').textContent = message(e);
+      await new Promise((ok) => setTimeout(ok, 5000));
+    }
+  }
+}
+$('guard-toggle').onclick = () => {
+  garde = !garde;
+  $('guard-toggle').textContent = garde ? 'Stop' : 'Start verifying';
+  $('guard-msg').textContent = garde ? 'Starting…' : 'Stopped';
+  if (garde) boucle();
+};
+
+for (const [tab, panel] of [['tab-chat', 'chat'], ['tab-guard', 'guard']]) {
+  $(tab).onclick = () => {
+    for (const [t, p] of [['tab-chat', 'chat'], ['tab-guard', 'guard']]) { $(t).setAttribute('aria-selected', String(t === tab)); $(p).hidden = p !== panel; }
+  };
+}
+
+$('export').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([porte.exporterIdentite()], { type: 'application/json' }));
+  a.download = 'kickswarm-bee.json';
+  a.click();
+};
+$('import').onchange = async (ev) => {
+  const f = ev.target.files?.[0]; if (!f) return;
+  try { porte.importerIdentite(await f.text()); toast('Bee restored'); rafraichir(); } catch (e) { toast(message(e)); }
+};
+
+await Promise.all([rafraichir(), ruches()]);
+const enCours = porte.enCours();
+if (enCours) montrerTache(enCours);
+if (new URLSearchParams(location.search).get('mode') === 'guard') $('tab-guard').click();
+</script>
+</body>
+</html>

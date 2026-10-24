@@ -356,6 +356,8 @@ export interface Requete extends Signed {
   contributeur: ContributorId;
   ruche?: string;
   alveole?: Hash;
+  /** OSP v0.4 §2: for a claim, the castes this bee takes (the chat door writes, the guard door verifies). */
+  castes?: Caste[];
   ts: number;
   nonce: string;
 }

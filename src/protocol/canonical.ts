@@ -1,5 +1,8 @@
-import { createHash } from 'node:crypto';
+import { sha256 as sha256Octets } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { Hash } from './types.js';
+
+// Isomorphic: no Node API here, so browsers (the chat door, OSP v0.4 §2.3) compute the same hashes.
 
 /**
  * Canonical JSON (RFC 8785, JCS): keys sorted by UTF-16 code units, no whitespace,
@@ -23,7 +26,7 @@ export function canonicalize(value: unknown): string {
 }
 
 export function sha256(text: string): Hash {
-  return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`;
+  return `sha256:${bytesToHex(sha256Octets(utf8ToBytes(text)))}`;
 }
 
 /** Commitment to a secret value (hidden tests, reference): the hash is published, the value revealed later. */

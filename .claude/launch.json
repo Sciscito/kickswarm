@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev-bee",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx", "scripts/dev-bee.ts", "7788"],
+      "port": 7788
+    }
+  ]
+}

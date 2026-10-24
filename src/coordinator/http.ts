@@ -5,6 +5,7 @@ import type { Adhesion, CellSpec, Decision, Decomposition, EngagementVerdict, Fu
 import { Coordinator, OspError } from './coordinator.js';
 import { Hote } from './hote.js';
 import { COMMUN } from './ledger.js';
+import { servirStatique } from './statique.js';
 
 // Coordinator HTTP API (spec §21.2). Every request that changes the state carries a signed object.
 
@@ -44,7 +45,11 @@ function send(res: ServerResponse, status: number, body: unknown, prive = false)
 }
 
 // The pages the coordinator serves itself: the way in (web/join.html) and the live hive (web/hive.html).
-const PAGES = { join: new URL('../../web/join.html', import.meta.url), hive: new URL('../../web/hive.html', import.meta.url) };
+const PAGES = {
+  join: new URL('../../web/join.html', import.meta.url),
+  hive: new URL('../../web/hive.html', import.meta.url),
+  bee: new URL('../../web/bee.html', import.meta.url),
+};
 
 async function sendPage(res: ServerResponse, page: keyof typeof PAGES): Promise<void> {
   const html = await readFile(PAGES[page], 'utf8');
@@ -99,6 +104,9 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
         if (req.method === 'GET') hote.lecteur(prive, ticketDe(req, url));
       } else {
         if (req.method === 'GET' && url.pathname === '/hive') return await sendPage(res, 'hive');
+        // OSP v0.4 §2.3: the chat door and the guard door, and the modules they load.
+        if (req.method === 'GET' && (url.pathname === '/bee' || url.pathname === '/bee/')) return await sendPage(res, 'bee');
+        if (req.method === 'GET' && (await servirStatique(url.pathname, res))) return;
         // The way in, and its share links: /join/<hive> opens with that hive picked.
         if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/join' || /^\/join\/[a-z0-9-]{1,40}\/?$/.test(url.pathname))) return await sendPage(res, 'join');
       }

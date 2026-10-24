@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { sha1 } from '@noble/hashes/legacy.js';
+import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { sha256 } from './canonical.js';
 import type { CapsuleDepot, Hash, Livrable } from './types.js';
 
 // OSP v0.3 §3.2: repo capsules and write scopes. A cell can point to a shared repository at an
@@ -55,8 +57,8 @@ export function horsPortee(d: CapsuleDepot, livrable: Livrable): string[] {
 
 /** The hash git gives a file's content (a "blob"), as written byte for byte (UTF-8, no line-end conversion). */
 export function gitBlobSha1(contenu: string): string {
-  const octets = Buffer.from(contenu, 'utf8');
-  return createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${octets.length}\0`, 'utf8'), octets])).digest('hex');
+  const octets = utf8ToBytes(contenu);
+  return bytesToHex(sha1(concatBytes(utf8ToBytes(`blob ${octets.length}\0`), octets)));
 }
 
 /** The git hashes of a deliverable's files, by path. */
@@ -68,7 +70,7 @@ export function blobsDuLivrable(livrable: Livrable): Record<string, string> {
 
 /** A file read by the plugin from the member's clone: the hash pinned in the signed cell. */
 export function empreinteLecture(contenu: string): Hash {
-  return `sha256:${createHash('sha256').update(contenu, 'utf8').digest('hex')}`;
+  return sha256(contenu);
 }
 
 /** The branch the bridge writes a cell's honey on (§3.3): one per branch of the comb, or one per cell. */

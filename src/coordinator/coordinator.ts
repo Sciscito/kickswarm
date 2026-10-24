@@ -185,6 +185,7 @@ export interface DetailCellule {
 }
 
 const SHA_GIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+const CASTES = new Set<string>(['eclaireuse', 'ouvriere', 'batisseuse', 'gardienne']);
 const GITHUB_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 
 interface State {
@@ -1310,7 +1311,9 @@ export class Coordinator {
 
     // Locks 1 and 2 (§9.2): distinct guards, drawn by lot, never the author; as many as
     // the Wald test requires (OSP v0.2 P0-4), never fewer than the floor.
+    const prend = (caste: Caste) => r.castes === undefined || r.castes.includes(caste);
     const aVerifier = cells.filter((c) => {
+      if (!prend('gardienne')) return false;
       if (c.state !== 'en_verification' || !c.en_attente) return false;
       // OSP v0.3 §2.3: in a private hive, only members with the guard role are drawn to verify.
       if (this.params.prive && !this.state.membres?.[who]?.gardienne) return false;
@@ -1325,6 +1328,7 @@ export class Coordinator {
     const ouvertes = cells.filter((c) => c.cell.depot && (c.state === 'reservee' || c.state === 'en_cours' || c.state === 'en_verification'));
     const libres = cells.filter((c) => {
       if (c.state !== 'libre') return false;
+      if (r.castes !== undefined && !r.castes.includes(this.casteFor(c))) return false;
       const d = c.cell.depot;
       return !d || !ouvertes.some((o) => o.cell.depot!.url === d.url && chevauchent(o.cell.depot!.ecriture, d.ecriture));
     });
@@ -2157,6 +2161,7 @@ export class Coordinator {
     if (typeof r.ts !== 'number' || Math.abs(this.now() - r.ts) > this.params.fenetre_requete_ms) throw new OspError('Request expired: check your clock', 401);
     const key = `${r.contributeur}:${r.nonce}`;
     if (!r.nonce || this.state.nonces[key] !== undefined) throw new OspError('Replayed request', 409);
+    if (r.castes !== undefined && (!Array.isArray(r.castes) || !r.castes.length || !r.castes.every((c) => CASTES.has(c)))) throw new OspError('castes: a list among eclaireuse, ouvriere, batisseuse, gardienne');
     this.state.nonces[key] = r.ts;
   }
 

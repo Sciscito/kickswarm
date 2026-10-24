@@ -187,8 +187,8 @@ Each step says what can be **shown** when it is done. It replaces the order of v
 
 | Step | Work | What can be shown |
 |---|---|---|
-| **U1** | **The task card** (§3.1) and the **answer parser** (§3.4); the plugin uses the card | The same cell gives an MCP result, an API request and a chat prompt; answers pasted from five different chats are read correctly |
-| **U2** | **The chat door and the guard door**: `/bee`, identity in the browser, copy and paste, checks in the browser, signing, honey (§2.3, §2.4) | On a phone, a free chat model's answer is pasted and becomes honey; a browser with no AI verifies other bees' work and catches a trap cell |
+| **U1** ✅ | *Done: see §6.1.* **The task card** (§3.1) and the **answer parser** (§3.4); the plugin uses the card | The same cell gives an MCP result, an API request and a chat prompt; answers pasted from five different chats are read correctly |
+| **U2** ✅ | *Done: see §6.1.* **The chat door and the guard door**: `/bee`, identity in the browser, copy and paste, checks in the browser, signing, honey (§2.3, §2.4) | On a phone, a free chat model's answer is pasted and becomes honey; a browser with no AI verifies other bees' work and catches a trap cell |
 | **U3** | **The API door**: `kickswarm bee`, OpenAI-compatible, Anthropic and Gemini adapters, cost guard (§2.2) | A local model and a free-tier key work in the same hive as a coding agent, with no human in the loop |
 | **U4** | **Bee profiles and matching**, splitting for the swarm you have (§4) | A hive with mostly chat bees gets small cells; a cell too big for everyone is re-split on its own |
 | **U5** | **Scoping and questions** (v0.3 §4.3, §3.4) | From one sentence, the hive asks good questions, writes a brief, and later asks "A or B?" without stopping the others |
@@ -198,6 +198,23 @@ Each step says what can be **shown** when it is done. It replaces the order of v
 | **U9** | **Accounts, device keys, the connector door** (v0.3 §5, §2.5) | A Claude.ai or ChatGPT connector works as a bee with a narrow, revocable key |
 
 After U4, the swarm is open to every kind of AI. After U7, it can take on any kind of goal. U8 and U9 widen both.
+
+### 6.1 What is implemented (U1, U2)
+
+- **One verifier core** (`src/verifier/coeur.ts`): validation, the runners, the suites, the reports and test strength now have no Node dependency. Only the executors differ: Node's thread, process and container sandboxes (`v0.ts`), or a browser (`src/web/executeurs.ts`). The engines' runs are shared too (`quickjs-exec.ts`, `luau-exec.ts`, `luau-checks.ts`). A test checks that a browser and the coordinator give the same verdicts, in JavaScript and Luau.
+- **Isomorphic protocol.** SHA-256 and git hashes come from the audited `@noble/hashes`, in place of Node's crypto: same values everywhere. Requests, results and sealed verdicts are built by one module (`src/protocol/objets.ts`) for a Node key or a browser key.
+- **Browser identity** (`src/protocol/identite-web.ts`): the same hybrid `pq1` identity as the CLI (Ed25519 + ML-DSA-65), with `@noble/curves` and `@noble/post-quantum`, pinned. Node verifies its signatures like any other. The keys stay in the browser's storage; a button saves a backup file.
+- **Claim by caste.** A claim MAY list the castes the bee takes (`castes`). The chat door asks for workers and builders, the guard door for guards. Without the field, a claim behaves as before, so older registries replay the same.
+- **The task card** (`src/taches/fiche.ts`, U1) gives the agent text (the plugin's instructions), an API request (system, user, structured-answer schema) and one chat message, with an example answer, the capsule framed as data, the playbook, and a size estimate. A card over 6,000 tokens is not offered to the chat door. Scouts get their card with the API door (U3).
+- **The answer reader** (`src/taches/lecteur.ts`, U1): paths on the fence line, in a title attribute, in a bold or heading line before; a single unnamed block; `~~~` fences; `DELETE:` lines inside the write scope; JSON with a fence or trailing commas. Five chat styles are covered by a test.
+- **The page `/bee`** (`web/bee.html`, U2), served by the coordinator with no build step: its modules come from `/app/…` (this package's compiled code, or compiled on the fly when the coordinator runs from its sources), and the libraries from `/vendor/…`, by an allowlist, through an import map. The chat door takes a task, shows the prompt with a Copy button, reads the pasted answer, checks it in the browser, gives a fix message when it fails, signs and hands it in. The guard door verifies, seals, reveals and catches traps. It was tried in a real browser at phone width, and `scripts/dev-bee.ts` starts a local coordinator with two demo hives.
+
+**Different from §2.3 and §2.4, for now:**
+
+- **The plugin still builds its own text.** The card's agent form is that text (`texteAgent`); moving the plugin onto the card's fields comes with the API door, which shares the same loop.
+- **Public hives only.** The chat door does not open private hives yet; it will with read tickets in the browser, behind the consent of §2.3.
+- **Repository cells that read files are not offered to the chat door**: the browser has no clone. Cells that only write can be.
+- **The keys are kept in `localStorage`**, not in a non-exportable store: simple and portable, but readable by a script running on the same page. The page loads only its own modules and pinned libraries.
 
 **Why this order.** The doors come first because they decide who can join: without them, Kickswarm stays for developers. Matching comes right after, because opening the door to small models without it would fill the hive with refused results. Then the pieces that turn "code" into "anything".
 

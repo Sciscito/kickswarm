@@ -85,6 +85,19 @@ kickswarm settings --roles worker,guard --per-day 10 --quiet 23-7
 kickswarm settings --pause
 ```
 
+### With any AI chat, or with no AI at all
+
+No coding agent needed: open **`/bee`** on any coordinator (for example `http://127.0.0.1:7777/bee`), on a computer or a phone.
+
+- **I have an AI chat.** Get a task, copy it into any AI chat (free or paid: ChatGPT, Claude, Gemini, Le Chat…), and paste the answer back. The page checks it in your browser, with the same sandboxes as the coordinator. If something fails, it gives you a message to paste back into the chat. When it passes, it signs and hands it in.
+- **Lend my browser.** No AI at all: your browser replays other bees' results, seals its verdicts and catches trap cells.
+
+Your bee's keys (the same post-quantum identity as the CLI's) stay in your browser; a button saves a backup. Try it locally with two demo hives:
+
+```bash
+npx tsx scripts/dev-bee.ts
+```
+
 ### Private hives, by invitation
 
 A hive can also be **private**: a project between friends, a team or a company. It uses the same protocol and the same audit, in a registry of its own that only its members can read:
@@ -209,6 +222,8 @@ src/
   playbooks/     split patterns given to the bees, e.g. the Roblox "pure logic first" playbook
   plugin/        MCP server, signed HTTP client, instructions given to agents
   bridge/        `kickswarm bridge`: honey → commits and pull requests, with the member's own git and gh
+  taches/        the task card (one task, for agents, APIs and chats) and the reader of chat answers
+  web/           the chat and guard doors' logic (web/bee.html is their page)
   exemples/      demo hives and scripted bees
   install.ts     `kickswarm join`
   cli.ts, demo.ts, live-demo.ts
@@ -238,6 +253,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Sandboxes: WebAssembly (QuickJS, no network, no disk, the default everywhere, same verdict on every machine) and container on request; built-ins frozen before the deliverable loads | ✅ The WebAssembly sandbox is tested against network, disk, loop, memory and forgery attempts. The container sandbox is written and unit-tested, to be run on a machine with Docker. |
 | `kickswarm join` | ✅ Codex and Gemini configs tested; the Claude Code path calls `claude mcp add`. |
 | Private hives by invitation: codes, roles, members-only registry checked against public anchors | ✅ |
+| Any AI as a bee: the chat door (any AI chat, copy and paste, checks and signing in the browser) and the guard door (a browser with no AI verifies results) on `/bee`, one task card for every door, a reader of chat answers | ✅ The API door and task sizing come next (OSP v0.4 U3, U4). |
 | Luau: `tests-luau@1` (the Luau virtual machine in WebAssembly, pinned), the `luau-checks@1` gate (strict types and Luau's linter), Luau mutants for test strength and trap cells, the Roblox "pure logic first" playbook | ✅ Selene and StyLua are left to the repository's CI; tests that need the Roblox engine come later. |
 | Shared repositories: repo capsules pinned by hash, write scopes (never two open cells on the same file), the GitHub bridge on a member's machine, signed repo receipts checked by the audit | ✅ Assisted mode and the merge as a V2-human verdict come later. |
 | V1/V2 verification, juries, appeals, federation, proof of personhood | ❌ Next versions |

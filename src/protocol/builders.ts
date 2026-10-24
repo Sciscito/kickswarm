@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { hashOf, sha256 } from './canonical.js';
-import { newNonce, signObject, type Identity } from './identity.js';
+import { newNonce, signBytes, signObject, type Identity } from './identity.js';
+import * as objets from './objets.js';
 import type {
   Adhesion,
   FusionDepot,
@@ -21,9 +22,15 @@ import type {
 } from './types.js';
 
 // Factories for signed OSP objects, shared by the plugin, the CLI, the demo and the tests.
+// The work objects (requests, results, verdicts) are built by objets.ts, the same code as in browsers.
 
-export function makeRequete(id: Identity, action: Requete['action'], extra: { ruche?: string; alveole?: Hash } = {}): Requete {
-  return signObject<Requete>({ type: 'osp.requete/0.1', action, contributeur: id.id, ...extra, ts: Date.now(), nonce: newNonce() }, id);
+/** A Node identity as a signer for objets.ts. */
+export function signataire(id: Identity): objets.Signataire {
+  return { id: id.id, signer: (donnees) => signBytes(Buffer.from(donnees), id) };
+}
+
+export function makeRequete(id: Identity, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Requete['castes'] } = {}): Requete {
+  return objets.requete(signataire(id), action, extra);
 }
 
 export function makeHive(
@@ -112,19 +119,7 @@ export function makeResult(
   livrable: Livrable,
   opts: { impasses?: string[]; agent?: Result['agent']; cout?: Result['cout'] } = {},
 ): Result {
-  return signObject<Result>(
-    {
-      type: 'osp.result/0.1',
-      alveole,
-      auteur: id.id,
-      caste,
-      livrable: hashOf(livrable),
-      impasses: opts.impasses ?? [],
-      agent: opts.agent ?? { famille: 'inconnue' },
-      cout: opts.cout ?? {},
-    },
-    id,
-  );
+  return objets.resultat(signataire(id), alveole, caste, livrable, opts);
 }
 
 export function makeDecomposition(id: Identity, alveole: Hash, enfants: CellSpec[]): Decomposition {
@@ -132,15 +127,12 @@ export function makeDecomposition(id: Identity, alveole: Hash, enfants: CellSpec
 }
 
 export function makeVerdict(id: Identity, resultat: Hash, decision: Verdict['decision'], motif: string, mise = 0.05): Verdict {
-  return signObject<Verdict>(
-    { type: 'osp.verdict/0.1', resultat, gardienne: id.id, decision, motif, mise_reputation: mise, piege: false, sel: randomBytes(32).toString('hex') },
-    id,
-  );
+  return objets.verdict(signataire(id), resultat, decision, motif, mise);
 }
 
 /** The commitment to a verdict: sent first, the verdict itself is only revealed afterwards. */
 export function makeEngagement(id: Identity, v: Verdict): EngagementVerdict {
-  return signObject<EngagementVerdict>({ type: 'osp.engagement/0.1', resultat: v.resultat, gardienne: id.id, engagement: hashOf(v) }, id);
+  return objets.engagement(signataire(id), v);
 }
 
 export function makeDecision(id: Identity, nature: DecisionNature, cible: string, motif: string, params?: Decision['params']): Decision {
