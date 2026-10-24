@@ -23,7 +23,7 @@ const trop_tot = (e: { status?: number }) => e.status === 425;
 
 /** Une ruche découpée, et un résultat juste de kenji qui attend ses deux gardiennes. */
 async function resultatEnAttente(extra: Partial<CoordinatorOptions> = {}) {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0 }, rng: seededRng(7), ...extra });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0 }, rng: seededRng(7), ...extra });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'pgcd, estPremier, fibonacci' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const s = c.claim(makeRequete(lea, 'claim'))!;
@@ -133,7 +133,7 @@ test('engagement : une gardienne qui révèle après coup est jugée quand même
 });
 
 test('engagement : un piège suit le même chemin qu’un vrai résultat', async () => {
-  const { c, resultat } = await resultatEnAttente({ params: { taux_pieges: 1 } });
+  const { c, resultat } = await resultatEnAttente({ params: { alpha_faux: 0.05, taux_pieges: 1 } });
   let p = c.claim(makeRequete(amara, 'claim'));
   for (let i = 0; i < 50 && !p?.a_verifier; i++) {
     if (p) c.release(makeRequete(amara, 'release', { alveole: p.alveole_id }));
@@ -148,7 +148,7 @@ test('engagement : un piège suit le même chemin qu’un vrai résultat', async
 });
 
 test('engagement : l’audit vérifie que chaque verdict révélé correspond à un engagement antérieur', async () => {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0.15 }, rng: seededRng(13) });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.15 }, rng: seededRng(13) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const abeilles = [kenji, amara, lea];

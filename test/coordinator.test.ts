@@ -18,7 +18,7 @@ const kenji = generateIdentity();
 const amara = generateIdentity();
 
 function nouvelleRuche(opts: ConstructorParameters<typeof Coordinator>[0]['params'] = {}, extra: Partial<ConstructorParameters<typeof Coordinator>[0]> = {}) {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0, ...opts }, rng: seededRng(7), ...extra });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0, ...opts }, rng: seededRng(7), ...extra });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Mini-bibliothèque mathématique', objectif: 'pgcd, estPremier, fibonacci' }), RACINE);
   return c;
 }
@@ -200,11 +200,11 @@ test('anti-rejeu, pause et orientation', async () => {
 test('persistance : le coordinateur reprend son état et son registre', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'osp-data-'));
   try {
-    const c1 = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { taux_pieges: 0 } });
+    const c1 = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { alpha_faux: 0.05, taux_pieges: 0 } });
     c1.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'test' }), RACINE);
     c1.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
     const n = c1.registry.entries.length;
-    const c2 = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { taux_pieges: 0 } });
+    const c2 = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { alpha_faux: 0.05, taux_pieges: 0 } });
     assert.equal(c2.hiveView('maths').statut, 'active');
     assert.equal(c2.registry.entries.length, n);
     assert.equal(c2.identite.id, c1.identite.id);

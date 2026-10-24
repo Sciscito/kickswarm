@@ -59,7 +59,7 @@ const bees = [generateIdentity(), generateIdentity(), generateIdentity()];
 
 async function rucheTiree() {
   const source = new BaliseLocale(25);
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0.1, balise_decalage: 2 }, balise: source });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.1, balise_decalage: 2 }, balise: source });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   for (let tour = 0; tour < 300 && c.hiveView('maths').statut !== 'terminee'; tour++) {
@@ -111,7 +111,7 @@ test('balise : tricher sur l’aléa, la balise ou son tour fait diverger le rej
 });
 
 test('balise : pas de tirage hors balise, ni avec une horloge trop éloignée', async () => {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0 }, balise: new BaliseLocale(25) });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0 }, balise: new BaliseLocale(25) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   assert.throws(() => c.claim(makeRequete(bees[0]!, 'claim')), /balise publique/);

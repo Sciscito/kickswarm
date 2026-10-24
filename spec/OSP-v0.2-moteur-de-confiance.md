@@ -163,6 +163,46 @@ Une limite à connaître : ce calcul suppose des verdicts **indépendants** une 
 - **Diversité.** Au moins 2 familles de modèles parmi les verdicts.
 - **Plafond.** Au-delà de 9 verdicts sans conclusion, l'alvéole part en escalade : jury élargi, puis porteur.
 
+### 4.5 Ce qui est implémenté (P0-4)
+
+**La fiabilité de chaque gardienne** est suivie par deux lois Beta (`src/coordinator/fiabilite.ts`) :
+
+- **la sensibilité** s, mesurée sur les résultats dont on sait qu'ils sont faux : les pièges, et les résultats démasqués par le rejeu ;
+- **la spécificité** c, mesurée sur les résultats validés, et sur les rejets que le rejeu renverse.
+
+Les a priori sont ceux d'une nouvelle venue dans l'exemple du §4.3 : Beta(9, 1), soit s = 0,90 en moyenne, et Beta(19, 1), soit c = 0,95 *(paramètres)*. Chaque nouvelle observation amortit les anciennes d'un facteur 0,995 : c'est l'oubli progressif. Les révélations tardives (§6.7) comptent aussi. La fonction Beta incomplète et ses quantiles sont calculés sans dépendance (Lanczos, fraction continue, dichotomie) et vérifiés contre des formes fermées.
+
+**Le poids d'un « valide »** vaut log(c / (1 − s)), calculé sur la **borne basse** de chaque loi, le quantile à 5 % (§5.3). Une nouvelle venue chanceuse reste prudemment pesée tant qu'elle n'a pas fait ses preuves.
+
+**Le test de Wald** :
+
+- Chaque résultat qui passe le vérificateur automatique part d'une log-cote de logit(0,9) *(paramètre)*. Chaque « valide » révélé y ajoute son poids.
+- Le résultat devient du miel quand la log-cote franchit logit(1 − α\*), avec au moins le plancher de 2 validations. α\* vaut 10⁻⁴ par défaut.
+- Les places de gardienne ouvertes sont celles qu'il faudrait à des gardiennes de fiabilité inconnue pour franchir le seuil. Des gardiennes plus fiables concluent plus tôt, et les places en trop se referment.
+- Chaque validation publie, dans le registre, sa log-cote et sa probabilité d'être fausse. Chaque verdict publie son poids.
+
+**Ce que cela donne :**
+
+| Gardiennes | Validations nécessaires à α\* = 10⁻⁴ |
+|---|---|
+| Nouvelles venues (borne basse des a priori) | **7** |
+| Très fiables | **2**, le plancher, jamais 1 |
+
+C'est plus que les 4 de l'exemple du §4.3, qui utilisait des valeurs ponctuelles. La borne basse est le prix d'une garantie prudente. Une ruche qui accepte un risque plus grand règle α\* : à 1 %, 3 nouvelles venues suffisent, et la démo vivante, qui n'a que 6 abeilles, l'utilise.
+
+**En V0, un rejet est tranché par le rejeu**, comme avant : le résultat est faux, ou la gardienne s'est trompée. Le test de Wald gouverne donc le nombre de validations. Le décrément « log-cote −= log(s / (1 − c)) » servira aux classes de vérification sans rejeu déterministe.
+
+**L'escalade.** Au-delà de 9 verdicts sans conclusion, ou après 2 heures d'attente *(paramètres)*, le résultat part en arbitrage. Plus aucune gardienne n'est tirée. Le porteur tranche par une décision publique et motivée (`arbitrage_valide` ou `arbitrage_rejet`), et le miel ainsi validé est marqué comme arbitré.
+
+**Ce que l'audit contrôle.** Le contrôle « Every honey cell reached the target error rate » **recalcule la log-cote de chaque miel** à partir des seuls poids inscrits avec ses verdicts, indépendamment du coordinateur. Il vérifie que P(faux) ≤ α\*, que le plancher est respecté, et que la log-cote publiée concorde. Il compte à part les miels arbitrés par le porteur.
+
+**Limites assumées :**
+
+- **L'hypothèse d'indépendance** (§4.2) est forte en V0 : les gardiennes rejouent les mêmes tests que le vérificateur automatique. Les verdicts scellés (§6.7) et les pièges (§6.8) la rendent plus réaliste. La diversité des familles de modèles (§4.4) reste à faire, car les verdicts ne déclarent pas encore leur modèle.
+- **La vérité utilisée pour la spécificité** est la validation elle-même, une version simplifiée de l'algorithme EM de Dawid et Skene.
+- **La log-cote initiale** ne tient pas encore compte de la réputation de l'auteur ni de la difficulté de l'alvéole.
+- **Une petite ruche** qui n'a pas assez de gardiennes éligibles pour α\* attend, puis part en arbitrage.
+
 ---
 
 ## 5. Couche 3 : des incitations qui rendent l'honnêteté rentable (réponses à F3 et F6)
@@ -437,7 +477,7 @@ Chaque erreur détectée laisse l'essaim plus fort qu'avant. C'est le sens exact
 | **P0-1** ✅ | **Registre intégral et `kickswarm audit`** : objets signés complets, état rejoué, invariants vérifiés. *Fait : voir §6.4.* | F4, et la base de tout le reste | Moyenne |
 | **P0-2** ✅ | **Tests cachés + score de mutation + tests par propriétés** dans le vérificateur V0. *Fait : voir §3.6.* | F1 | Moyenne |
 | **P0-3** ✅ | **Pièges par mutation** et taux de pièges individuel ; vérification anonyme, aléa secret et embargo du registre pour qu'ils restent indiscernables. *Fait : voir §6.8.* | F3 | Moyenne |
-| **P0-4** | **Réputation Beta et test de Wald** à la place de k = 2 (avec un plancher à 2) | F2, F6 | Moyenne |
+| **P0-4** ✅ | **Réputation Beta et test de Wald** à la place de k = 2 (avec un plancher à 2). *Fait : voir §4.5.* | F2, F6 | Moyenne |
 | **P0-5** ✅ | *Fait : voir §6.5.* **Signatures post-quantiques** : identités hybrides Ed25519 + ML-DSA-65 (FIPS 204), coordinateur et registre signés en SLH-DSA (FIPS 205, sécurité fondée sur les seules fonctions de hachage). Node 24 les fournit nativement. | Menace quantique sur Ed25519 | Moyenne |
 | **P1-1** | **Caste des chasseuses** et primes au contre-exemple | F1, auto-renforcement | Moyenne |
 | **P1-2** | **Contrat d'abord** pour les découpages, et découpages en concurrence | F7 | Grande |

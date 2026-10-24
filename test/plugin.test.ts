@@ -23,7 +23,7 @@ const texte = (r: unknown) => (r as Texte).content.map((c) => c.text).join('\n')
 
 test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche avance', async () => {
   const fondateur = generateIdentity();
-  const coord = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0 }, rng: seededRng(3) });
+  const coord = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0 }, rng: seededRng(3) });
   const http = createCoordinatorServer(coord);
   await new Promise<void>((r) => http.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
@@ -102,7 +102,7 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
 test('plugin gardienne : le verdict part scellé, reste sur disque, et se révèle tout seul quand l’autre gardienne s’est engagée', async () => {
   const fondateur = generateIdentity();
   const [lea, kenji, sami] = [generateIdentity(), generateIdentity(), generateIdentity()];
-  const coord = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0 }, rng: seededRng(3) });
+  const coord = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0 }, rng: seededRng(3) });
   coord.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   coord.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const s = coord.claim(makeRequete(lea, 'claim'))!;

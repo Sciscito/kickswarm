@@ -196,7 +196,10 @@ export type DecisionNature =
   | 'reprise'
   | 'orientation'
   | 'approbation_decoupage'
-  | 'refus_decoupage';
+  | 'refus_decoupage'
+  /** OSP v0.2 §4.4 : le porteur tranche un résultat parti en escalade (cible : l'identifiant du résultat). */
+  | 'arbitrage_valide'
+  | 'arbitrage_rejet';
 
 /** §14.6 */
 export interface Decision extends Signed {

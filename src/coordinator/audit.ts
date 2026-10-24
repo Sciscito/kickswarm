@@ -214,6 +214,38 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
       : 'no guard draw on a deliverable that could be mimicked yet',
   );
 
+  // P0-4 : chaque miel validé par les gardiennes a-t-il atteint le taux d'erreur cible α* ? La log-cote est
+  // recalculée ici à partir des seuls poids inscrits avec chaque verdict, indépendamment du coordinateur.
+  const somme = new Map<string, number>();
+  for (const e of entries) {
+    const d = e.donnees as { resultat?: string; decision?: string; poids?: number };
+    if (e.nature === 'verdict' && d.decision === 'valide' && typeof d.poids === 'number') somme.set(String(d.resultat), (somme.get(String(d.resultat)) ?? 0) + d.poids);
+  }
+  const alpha = L.params.alpha_faux;
+  const plancher = Math.max(1, L.params.gardiennes_v0 ?? 1);
+  const cote0 = Math.log(L.params.p_juste_initiale / (1 - L.params.p_juste_initiale));
+  const miels = entries.filter((e) => e.nature === 'alveole_miel').map((e) => ({ seq: e.seq, ...(e.donnees as { resultat: string; gardiennes: string[]; cote?: number; p_faux?: number; arbitrage?: boolean }) }));
+  const parGardiennes = miels.filter((m) => m.gardiennes?.length && !m.arbitrage);
+  const hors: string[] = [];
+  for (const m of parGardiennes) {
+    const cote = cote0 + (somme.get(m.resultat) ?? 0);
+    const pFaux = 1 / (1 + Math.exp(cote));
+    if (m.gardiennes.length < plancher || pFaux > alpha * (1 + 1e-6) || m.cote === undefined || Math.abs(m.cote - cote) > 1e-6) hors.push(`#${m.seq}`);
+  }
+  const arbitres = miels.filter((m) => m.arbitrage).length;
+  const nG = parGardiennes.map((m) => m.gardiennes.length);
+  const pire = parGardiennes.reduce((p, m) => Math.max(p, m.p_faux ?? 0), 0);
+  add(
+    'Every honey cell reached the target error rate (Wald sequential test)',
+    hors.length === 0,
+    hors.length
+      ? `${hors.length} validation(s) below the target or inconsistent with the recorded verdict weights: ${hors.slice(0, 5).join(', ')}`
+      : parGardiennes.length
+        ? `${parGardiennes.length} cell(s) validated by guards, each with P(false) ≤ α* = ${alpha} (worst ${pire.toPrecision(3)}), recomputed from the weights of their verdicts; ${Math.min(...nG)}–${Math.max(...nG)} guards per cell` +
+          `${arbitres ? `; ${arbitres} settled by the hive owner after escalation` : ''}`
+        : `no cell validated by guards yet${arbitres ? `; ${arbitres} settled by the hive owner after escalation` : ''}`,
+  );
+
   // Part des signatures de contributeurs qui résistent à un ordinateur quantique.
   const signataires: string[] = [];
   for (const e of entries) {

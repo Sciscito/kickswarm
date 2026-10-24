@@ -29,7 +29,7 @@ function rechain(entries: RegistryEntry[]): RegistryEntry[] {
 
 /** Une ruche complète : découpage, rejet, pièges, orientation, rappel, commandes refusées. */
 async function fullRun(extra: Partial<CoordinatorOptions> = {}): Promise<Coordinator> {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0.2 }, rng: seededRng(11), ...extra });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.2 }, rng: seededRng(11), ...extra });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'pgcd, estPremier, fibonacci' }), RACINE);
   assert.throws(() => c.decide(makeDecision(bees[0]!, 'approbation_ruche', 'maths', 'pas fondateur')));
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'Conforme à la charte'));
@@ -76,7 +76,7 @@ test('audit : la revérification confirme chaque rapport du vérificateur honnê
 });
 
 test('audit : une commande refusée ne laisse aucune trace, ni dans l’état ni dans le registre', () => {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0, abeilles_max: 1 }, rng: seededRng(3) });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0, abeilles_max: 1 }, rng: seededRng(3) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   assert.ok(c.claim(makeRequete(bees[0]!, 'claim')));
@@ -131,7 +131,7 @@ test('audit : supprimer une commande, ou tricher sur l’aléa, est détecté', 
 
 test('audit : un vérificateur menteur passe le rejeu, mais pas la revérification', async () => {
   const menteur = async () => ({ ok: true, motif: '3/3 tests passed', tests: [], duree_ms: 1, sandbox: 'none' });
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0, gardiennes_v0: 0 }, rng: seededRng(5), verifier: menteur });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0, gardiennes_v0: 0 }, rng: seededRng(5), verifier: menteur });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const a = c.claim(makeRequete(bees[0]!, 'claim'))!;
@@ -151,7 +151,7 @@ test('audit : un vérificateur menteur passe le rejeu, mais pas la revérificati
 test('audit : registre sur disque rejoué, état local trafiqué refusé au démarrage', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'osp-audit-'));
   try {
-    const c = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { taux_pieges: 0 }, rng: seededRng(9) });
+    const c = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { alpha_faux: 0.05, taux_pieges: 0 }, rng: seededRng(9) });
     c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
     c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
     c.claim(makeRequete(bees[0]!, 'claim'));

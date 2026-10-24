@@ -30,6 +30,7 @@ import { transition } from './lifecycle.js';
 import { DEFAULT_PARAMS, type Params } from './params.js';
 import { Registry } from './registry.js';
 import { graine, rngDepuis, tourA, verifierBalise, type Balise, type BaliseInfo, type SourceBalise } from './balise.js';
+import { logit, observer, poidsValide, VIERGE, type Fiabilite } from './fiabilite.js';
 import { brancheOf, chooseCandidate, type Rng } from './scheduler.js';
 import { PAR_RUCHE, type Trophee, type TropheeId } from './trophees.js';
 
@@ -61,6 +62,9 @@ export interface CellRecord {
   gardiennes: Bail[];
   /** Gardiennes qui ont déjà validé le résultat en attente. */
   verdicts: ContributorId[];
+  /** OSP v0.2 P0-4 : log-cote du résultat en attente (test de Wald), et nombre de verdicts révélés. */
+  cote?: number;
+  nb_verdicts?: number;
   rejets: number;
   /** §5 : après trop de rejets, l'alvéole repart en découpage. */
   redecouper: boolean;
@@ -99,6 +103,8 @@ interface ResultRecord {
   soumis_a: number;
   /** OSP v0.2 P0-3 : mutants de ce livrable que les contrôles des gardiennes rejettent, du plus subtil au moins subtil. */
   mutants: Array<{ livrable: Livrable; echecs: number }>;
+  /** OSP v0.2 P0-4 : sans conclusion (trop de verdicts, ou trop d'attente), le porteur arbitre. */
+  escalade?: boolean;
 }
 
 interface DecompRecord {
@@ -150,6 +156,8 @@ interface State {
   pieges: Record<string, Piege>;
   /** P1-3 : verdicts scellés, par résultat. */
   engagements: Record<string, Engagement[]>;
+  /** P0-4 : fiabilité de chaque gardienne (sensibilité et spécificité, lois Beta). */
+  fiabilite: Record<string, Fiabilite>;
   board: Record<string, BoardEntry[]>;
   accounts: Record<string, Account>;
   nonces: Record<string, number>;
@@ -388,6 +396,7 @@ export class Coordinator {
         decompositions: {},
         pieges: {},
         engagements: {},
+        fiabilite: {},
         board: {},
         accounts: {},
         nonces: {},
@@ -898,6 +907,18 @@ export class Coordinator {
         }
         break;
       }
+      case 'arbitrage_valide':
+      case 'arbitrage_rejet': {
+        // OSP v0.2 §4.4 : sans conclusion des gardiennes, le porteur tranche, publiquement et motivé.
+        const rr = this.state.results[d.cible];
+        if (!rr) throw new OspError('Résultat inconnu', 404);
+        const rec = this.cellOrThrow(rr.resultat.alveole);
+        this.requirePorteurOuFondateur(this.hiveOrThrow(rec.cell.ruche), d.auteur);
+        if (!rr.escalade || rec.state !== 'en_verification' || rec.en_attente !== d.cible) throw new OspError('Ce résultat n’attend pas d’arbitrage', 409);
+        if (d.nature === 'arbitrage_valide') this.validate(rec, d.cible, rec.verdicts.slice(), true);
+        else this.rejectResult(rec, d.cible, `Arbitrage du porteur : ${d.motif}`);
+        break;
+      }
       default:
         throw new OspError(`Nature de décision inconnue : ${String((d as Decision).nature)}`);
     }
@@ -924,8 +945,8 @@ export class Coordinator {
     const slugs = new Set(hives.map((h) => h.ruche.slug));
     const cells = Object.values(this.state.cells).filter((c) => slugs.has(c.cell.ruche));
 
-    // Verrous 1 et 2 (§9.2) : k gardiennes distinctes, tirées au sort, jamais l'auteur.
-    const k = Math.max(1, this.params.gardiennes_v0);
+    // Verrous 1 et 2 (§9.2) : des gardiennes distinctes, tirées au sort, jamais l'auteur ; autant que
+    // le test de Wald en demande (OSP v0.2 P0-4), jamais moins que le plancher.
     const aVerifier = cells.filter((c) => {
       if (c.state !== 'en_verification' || !c.en_attente) return false;
       const rr = this.state.results[c.en_attente];
@@ -933,7 +954,7 @@ export class Coordinator {
       const engages = this.engagesSur(c.en_attente);
       const pieges = this.piegesSur(c);
       if (c.gardiennes.some((g) => g.par === who) || c.verdicts.includes(who) || engages.some((e) => e.par === who) || pieges.some((p) => p.attribue_a === who)) return false;
-      return c.gardiennes.length + engages.length + c.verdicts.length + pieges.length < k;
+      return c.gardiennes.length + engages.length + pieges.length < this.placesRequises(c);
     });
     const libres = cells.filter((c) => c.state === 'libre');
 
@@ -1103,6 +1124,8 @@ export class Coordinator {
     }
     transition(rec, 'en_verification');
     rec.en_attente = id;
+    rec.cote = Math.round(logit(this.params.p_juste_initiale) * 1e9) / 1e9;
+    rec.nb_verdicts = 0;
     if (this.params.gardiennes_v0 <= 0) {
       this.validate(rec, id);
       return { statut: 'miel', resultat: id, rapport };
@@ -1224,10 +1247,48 @@ export class Coordinator {
     return { statut: 'engage', revelation: ouverte };
   }
 
-  /** Toutes les places de gardienne du résultat sont engagées (ou déjà tranchées) : on peut révéler. */
+  /** Toutes les places de gardienne ouvertes sur le résultat sont engagées : on peut révéler. */
   private revelationOuverte(rec: CellRecord, resultat: Hash): boolean {
-    const k = Math.max(1, this.params.gardiennes_v0);
-    return rec.gardiennes.length === 0 && this.engagesSur(resultat).length + rec.verdicts.length >= k;
+    const pieges = this.piegesSur(rec);
+    return rec.gardiennes.length === 0 && pieges.every((p) => p.engagement) && this.engagesSur(resultat).length + pieges.length >= this.placesRequises(rec);
+  }
+
+  // ---------------------------------------------------------------- P0-4 : test séquentiel de Wald
+
+  /** La log-cote au-delà de laquelle P(faux) ≤ α*. */
+  private seuilWald(): number {
+    return logit(1 - this.params.alpha_faux);
+  }
+
+  /** Le poids d'un « valide » de cette gardienne : log(c / (1 − s)) sur les bornes basses de sa fiabilité. */
+  poids(id: ContributorId): number {
+    return poidsValide(this.state.fiabilite[id] ?? VIERGE, this.params);
+  }
+
+  /** Une observation de plus sur la fiabilité d'une gardienne, quand la vérité est connue. */
+  private noter(id: ContributorId, quoi: 's' | 'c', ok: boolean): void {
+    observer((this.state.fiabilite[id] ??= { ...VIERGE }), quoi, ok, this.params.oubli_fiabilite);
+  }
+
+  /**
+   * Les places de gardienne à pourvoir sur le résultat en attente : de quoi franchir le seuil de Wald
+   * avec des gardiennes de fiabilité inconnue (les plus prudemment pesées), et jamais moins que le
+   * plancher. Des gardiennes plus fiables concluent plus tôt ; les places en trop se referment.
+   */
+  private placesRequises(rec: CellRecord): number {
+    const rr = rec.en_attente ? this.state.results[rec.en_attente] : undefined;
+    if (!rr || rr.escalade) return 0;
+    const plancher = Math.max(1, this.params.gardiennes_v0);
+    const manque = this.seuilWald() - (rec.cote ?? logit(this.params.p_juste_initiale));
+    const parPoids = manque > 0 ? Math.ceil(manque / poidsValide(VIERGE, this.params) - 1e-9) : 0;
+    const places = Math.max(plancher - rec.verdicts.length, parPoids);
+    return Math.max(0, Math.min(places, this.params.verdicts_max - (rec.nb_verdicts ?? 0)));
+  }
+
+  /** Sans conclusion possible par les gardiennes, le résultat part en arbitrage chez le porteur (§4.4). */
+  private escalader(rec: CellRecord, rr: ResultRecord, motif: string): void {
+    rr.escalade = true;
+    this.registry.append('escalade', { alveole: rec.id, chemin: rec.cell.chemin, resultat: rec.en_attente, motif });
   }
 
   private engagesSur(resultat: Hash | undefined): Engagement[] {
@@ -1271,11 +1332,14 @@ export class Coordinator {
         correct = true;
         this.ledger.award(v.gardienne, this.params.bonus_piege, 'piège déjoué', ruche);
         this.ledger.reputation(v.gardienne, 'confirme');
+        // Un piège est un résultat faux dont on connaît la vérité : il mesure la sensibilité.
+        this.noter(v.gardienne, 's', true);
         this.registry.append('piege_dejoue', { gardienne: v.gardienne, alveole: piege.alveole });
         this.grant(v.gardienne, 'trap_hunter', ruche);
       } else if (v.decision === 'valide') {
         correct = false;
         this.ledger.reputation(v.gardienne, 'piege_valide');
+        this.noter(v.gardienne, 's', false);
         this.registry.append('piege_valide', { gardienne: v.gardienne, alveole: piege.alveole });
       }
       return { statut: 'piege', piege: true, correct };
@@ -1301,7 +1365,9 @@ export class Coordinator {
     const reste = liste.filter((e) => e !== eng);
     if (reste.length) this.state.engagements[v.resultat] = reste;
     else delete this.state.engagements[v.resultat];
-    this.registry.append('verdict', { resultat: v.resultat, gardienne: v.gardienne, decision: v.decision, motif: v.motif, engagement: h });
+    // Le poids de ce « valide » dans le test de Wald, selon la fiabilité de la gardienne à cet instant.
+    const poids = enCours && v.decision === 'valide' ? this.poids(v.gardienne) : undefined;
+    this.registry.append('verdict', { resultat: v.resultat, gardienne: v.gardienne, decision: v.decision, motif: v.motif, engagement: h, ...(poids !== undefined ? { poids } : {}) });
 
     if (!enCours) {
       // Révélation tardive : le résultat a été tranché pendant que ce verdict était scellé.
@@ -1309,32 +1375,52 @@ export class Coordinator {
       if (v.decision === 'abstention') return { statut: rr.statut };
       const juste = (v.decision === 'rejete') === (rr.statut === 'rejete');
       this.ledger.reputation(v.gardienne, juste ? 'confirme' : 'renverse');
+      this.noter(v.gardienne, rr.statut === 'rejete' ? 's' : 'c', juste);
       return { statut: rr.statut, renverse: !juste };
     }
+    rec.nb_verdicts = (rec.nb_verdicts ?? 0) + 1;
 
     if (v.decision === 'valide') {
+      // Test de Wald (OSP v0.2 §4.2) : chaque « valide » ajoute log(c / (1 − s)) à la log-cote.
       rec.verdicts.push(v.gardienne);
-      if (rec.verdicts.length >= Math.max(1, this.params.gardiennes_v0)) {
+      rec.cote = Math.round(((rec.cote ?? logit(this.params.p_juste_initiale)) + poids!) * 1e9) / 1e9;
+      if (rec.verdicts.length >= Math.max(1, this.params.gardiennes_v0) && rec.cote >= this.seuilWald()) {
         this.validate(rec, v.resultat, rec.verdicts.slice());
         return { statut: 'miel', confirmations: rec.validee_par?.length };
       }
+      this.escaladerSiEpuise(rec, rr);
       return { statut: 'en_verification', confirmations: rec.verdicts.length };
     }
-    if (v.decision === 'abstention') return { statut: 'en_verification' };
+    if (v.decision === 'abstention') {
+      this.escaladerSiEpuise(rec, rr);
+      return { statut: 'en_verification' };
+    }
 
     // Rejet d'un résultat que le vérificateur automatique avait accepté : on rejoue (§9.5, version MVP).
+    // En V0, le rejeu tranche : le résultat est faux, ou la gardienne s'est trompée.
     if (!rejeu) throw new OspError('Rejeu manquant pour ce rejet', 500);
     if (!rejeu.ok) {
       this.ledger.award(v.gardienne, this.params.bonus_faux_reel, 'faux résultat démasqué', rec.cell.ruche);
       this.ledger.reputation(v.gardienne, 'confirme');
+      this.noter(v.gardienne, 's', true);
       // Celles qui avaient validé un résultat faux sont renversées.
-      for (const g of rec.verdicts) this.ledger.reputation(g, 'renverse');
+      for (const g of rec.verdicts) {
+        this.ledger.reputation(g, 'renverse');
+        this.noter(g, 's', false);
+      }
       this.rejectResult(rec, v.resultat, `Rejeté par une gardienne : ${v.motif}`);
       return { statut: 'rejete' };
     }
     this.ledger.reputation(v.gardienne, 'renverse');
+    this.noter(v.gardienne, 'c', false);
     this.registry.append('verdict_renverse', { resultat: v.resultat, gardienne: v.gardienne, rejeu: rejeu.motif });
+    this.escaladerSiEpuise(rec, rr);
     return { statut: 'en_verification', renverse: true };
+  }
+
+  /** Trop de verdicts sans conclusion : le porteur arbitre. */
+  private escaladerSiEpuise(rec: CellRecord, rr: ResultRecord): void {
+    if (!rr.escalade && (rec.nb_verdicts ?? 0) >= this.params.verdicts_max) this.escalader(rec, rr, `${rec.nb_verdicts} verdicts sans conclusion`);
   }
 
   // ---------------------------------------------------------------- interne
@@ -1402,6 +1488,8 @@ export class Coordinator {
     delete rec.en_attente;
     rec.gardiennes = [];
     rec.verdicts = [];
+    delete rec.cote;
+    delete rec.nb_verdicts;
     // Les pièges pas encore engagés disparaissent avec le résultat, comme les places des vraies gardiennes.
     for (const [pid, p] of Object.entries(this.state.pieges)) if (p.vraie === resultId && !p.engagement) delete this.state.pieges[pid];
     const hive = this.state.hives[rec.cell.ruche]!;
@@ -1422,7 +1510,7 @@ export class Coordinator {
     transition(rec, 'libre');
   }
 
-  private validate(rec: CellRecord, resultId: Hash, gardiennes: ContributorId[] = []): void {
+  private validate(rec: CellRecord, resultId: Hash, gardiennes: ContributorId[] = [], arbitrage = false): void {
     const rr = this.state.results[resultId]!;
     rr.statut = 'valide';
     transition(rec, 'miel');
@@ -1431,6 +1519,11 @@ export class Coordinator {
     delete rec.en_attente;
     rec.gardiennes = [];
     rec.verdicts = [];
+    // P0-4 : la probabilité que ce miel soit faux, d'après le test de Wald (publiée avec la validation).
+    const cote = rec.cote;
+    delete rec.cote;
+    delete rec.nb_verdicts;
+    const wald = cote !== undefined && gardiennes.length ? { cote, p_faux: Number((1 / (1 + Math.exp(cote))).toPrecision(6)) } : {};
     const hive = this.state.hives[rec.cell.ruche]!;
     const slug = hive.ruche.slug;
     this.branchStats(hive, rec).succes++;
@@ -1448,10 +1541,13 @@ export class Coordinator {
       this.ledger.award(gardienne, gg, `vérification ${rec.cell.chemin}`, slug);
       this.addContribution(hive, gardienne, gg);
       this.ledger.reputation(gardienne, 'confirme');
+      this.noter(gardienne, 'c', true);
       if (this.bump(gardienne, 'verifications') >= 10) this.grant(gardienne, 'guardian');
     }
     this.addBoard(slug, { nature: 'decouverte', chemin: rec.cell.chemin, texte: `Validée : ${rec.cell.objectif}`, auteur, source: resultId });
-    this.registry.append('alveole_miel', { alveole: rec.id, chemin: rec.cell.chemin, resultat: resultId, auteur, gardiennes, grammes: g });
+    this.registry.append('alveole_miel', {
+      alveole: rec.id, chemin: rec.cell.chemin, resultat: resultId, auteur, gardiennes, grammes: g, ...wald, ...(arbitrage ? { arbitrage: true } : {}),
+    });
     // Les secrets de l'alvéole deviennent publics : chacun peut désormais revérifier sa validation.
     const crit = rec.cell.critere_fini;
     if (crit.verificateur === 'tests-js@1' && (crit.tests_caches_hash || crit.reference_hash)) {
@@ -1601,6 +1697,11 @@ export class Coordinator {
         for (const g of rec.gardiennes) if (g.expire <= now) this.ledger.reputation(g.par, 'bail_expire');
         rec.gardiennes = rec.gardiennes.filter((g) => g.expire > now);
       }
+      // P0-4 : un résultat qui attend trop longtemps ses gardiennes (petite ruche, gardiennes absentes) part en arbitrage.
+      const rr = rec.state === 'en_verification' && rec.en_attente ? this.state.results[rec.en_attente] : undefined;
+      if (rr && rr.statut === 'en_verification' && !rr.escalade && now - rr.soumis_a > this.params.escalade_ms) {
+        this.escalader(rec, rr, 'attente trop longue des gardiennes');
+      }
     }
     // P1-3 : un verdict scellé qu'on ne révèle pas à temps coûte plus cher que le pire verdict révélé.
     // La fenêtre ne court que si la révélation est ouverte (ou si le résultat a été tranché entre-temps).
@@ -1708,6 +1809,7 @@ export class Coordinator {
     this.state.compteurs ??= {};
     this.state.contributeurs ??= [];
     this.state.engagements ??= {};
+    this.state.fiabilite ??= {};
     for (const rr of Object.values(this.state.results)) {
       rr.soumis_a ??= 0;
       rr.mutants ??= [];

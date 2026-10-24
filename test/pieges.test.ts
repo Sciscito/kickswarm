@@ -21,7 +21,7 @@ const amara = generateIdentity();
 const sami = generateIdentity();
 
 async function resultatEnAttente(params: CoordinatorOptions['params'] = {}, extra: Partial<CoordinatorOptions> = {}) {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 1, ...params }, rng: seededRng(5), ...extra });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 1, ...params }, rng: seededRng(5), ...extra });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'pgcd, estPremier, fibonacci' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const s = c.claim(makeRequete(lea, 'claim'))!;
@@ -100,7 +100,7 @@ test('piège : il occupe une place de gardienne, et sa titulaire ne reçoit pas 
 });
 
 test('taux individuel : élevé pour une nouvelle venue, plus bas pour une gardienne fiable, jamais sous le plancher', async () => {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0.2 }, rng: seededRng(9) });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.2 }, rng: seededRng(9) });
   assert.equal(c.tauxPieges(generateIdentity().id), 0.2, 'une nouvelle venue : le taux plein');
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
@@ -116,7 +116,7 @@ test('taux individuel : élevé pour une nouvelle venue, plus bas pour une gardi
   assert.ok(c.account(fiable.id).reputation > c.params.reputation_initiale);
   assert.ok(c.tauxPieges(fiable.id) < 0.2, `réputation ${c.account(fiable.id).reputation} → taux ${c.tauxPieges(fiable.id)}`);
   assert.ok(c.tauxPieges(fiable.id) >= c.params.taux_pieges_min);
-  const sans = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0 } });
+  const sans = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0 } });
   assert.equal(sans.tauxPieges(lea.id), 0, 'à taux nul, aucun piège, même pas le plancher');
 });
 
@@ -144,7 +144,7 @@ test('embargo : levé dès que le résultat est tranché, et au plus tard après
 });
 
 test('aléa secret : avec une balise publique, le tirage du piège n’en découle pas, et l’audit le rejoue', async () => {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 1, balise_decalage: 2 }, balise: new BaliseLocale(25) });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 1, balise_decalage: 2 }, balise: new BaliseLocale(25) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const abeilles = [kenji, amara, lea];
@@ -166,7 +166,7 @@ test('aléa secret : avec une balise publique, le tirage du piège n’en décou
 });
 
 test('audit : un rapport de mutant falsifié, ou un tirage secret retiré, est démasqué', async () => {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0.5 }, rng: seededRng(21) });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.5 }, rng: seededRng(21) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const abeilles = [kenji, amara, lea];

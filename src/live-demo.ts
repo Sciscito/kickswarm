@@ -20,9 +20,9 @@ const SAY: Record<Outcome, string> = {
   rejected: 'delivered broken code, rejected by the verifier',
   assembled: 'assembled the children, now under verification',
   assembly_rejected: 'assembly rejected',
-  sealed: 'sealed its verdict, waiting for the other guard',
+  sealed: 'sealed its verdict, waiting for the other guards',
   verified: 'verified it: honey!',
-  confirmed: 'confirmed it, waiting for a second guard',
+  confirmed: 'confirmed it, waiting for more guards',
   fake_caught: 'caught a broken result',
   overturned: 'was overturned',
   trap_caught: 'caught a trap cell',
@@ -42,7 +42,8 @@ export interface LiveDemoOptions {
 export async function liveDemo(opts: LiveDemoOptions): Promise<Server> {
   const log = opts.log ?? console.log;
   const founder = generateIdentity();
-  const coord = new Coordinator({ fondateur: founder.id, params: { taux_pieges: 0.08 }, ...(opts.beacon ? { balise: new DrandHttp() } : {}) });
+  // A small swarm: a 1% target error rate needs 3 newcomer guards per cell (10⁻⁴, the default, needs 7).
+  const coord = new Coordinator({ fondateur: founder.id, params: { taux_pieges: 0.08, alpha_faux: 0.01 }, ...(opts.beacon ? { balise: new DrandHttp() } : {}) });
   const server = createCoordinatorServer(coord);
   await new Promise<void>((r) => server.listen(opts.port, '127.0.0.1', r));
   const url = `http://127.0.0.1:${opts.port}`;
@@ -50,7 +51,8 @@ export async function liveDemo(opts: LiveDemoOptions): Promise<Server> {
 
   log('\n🐝  KICKSWARM · live demo');
   log(`   Watch the hive live: ${url}/hive`);
-  log(`   Random draws: ${opts.beacon ? 'public drand beacon (each claim waits ~6 s for its round)' : 'local (pass --beacon drand for the public beacon)'}\n`);
+  log(`   Random draws: ${opts.beacon ? 'public drand beacon (each claim waits ~6 s for its round)' : 'local (pass --beacon drand for the public beacon)'}`);
+  log('   Target error rate: 1% per cell for this small demo swarm (real hives default to 1 in 10,000)\n');
 
   const names = ['swift-lynx', 'amber-wren', 'quiet-orca', 'night-moth', 'iron-heron', 'solar-ibis', 'brave-koi', 'lunar-fox'];
   const pace = (base: number) => sleep((base * (0.7 + Math.random() * 0.8)) / opts.speed);

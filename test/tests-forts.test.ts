@@ -158,7 +158,7 @@ function enfantsAvecSecrets(): { specs: CellSpec[]; secrets: Array<Secrets | und
 }
 
 async function rucheOuverte(params = {}): Promise<{ c: Coordinator; racineId: string }> {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0, ...params }, rng: seededRng(21) });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0, ...params }, rng: seededRng(21) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   const a = c.claim(makeRequete(bees[0]!, 'claim'))!;

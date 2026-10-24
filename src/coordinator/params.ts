@@ -13,8 +13,23 @@ export interface Params {
   profondeur_max: number;
   /** §6.3 : les découpages jusqu'à ce niveau doivent être approuvés par le porteur. */
   niveau_approbation_porteur: number;
-  /** §9.1 : gardiennes requises pour une alvéole V0, en plus du vérificateur automatique. */
+  /** §9.1 et OSP v0.2 §4.4 : plancher de validations par alvéole V0 (0 : le vérificateur automatique suffit). */
   gardiennes_v0: number;
+  /** OSP v0.2 §2 : taux maximal de faux miel, α* (probabilité qu'une alvéole validée soit fausse). */
+  alpha_faux: number;
+  /** OSP v0.2 §4.2 : P(juste) d'un résultat qui a passé le vérificateur automatique, avant tout verdict. */
+  p_juste_initiale: number;
+  /** OSP v0.2 §5.3 : a priori Beta(a, b) de la sensibilité et de la spécificité d'une gardienne. */
+  prior_sensibilite: [number, number];
+  prior_specificite: [number, number];
+  /** OSP v0.2 §5.3 : on pèse chaque gardienne sur ce quantile de sa fiabilité (la borne basse). */
+  quantile_fiabilite: number;
+  /** OSP v0.2 §5.3 : oubli progressif, appliqué aux anciennes observations à chaque nouvelle. */
+  oubli_fiabilite: number;
+  /** OSP v0.2 §4.4 : au-delà de ce nombre de verdicts sans conclusion, le porteur arbitre. */
+  verdicts_max: number;
+  /** OSP v0.2 §4.4 : un résultat qui attend ses gardiennes plus longtemps part aussi en arbitrage. */
+  escalade_ms: number;
   /** §9.4 et OSP v0.2 P0-3 : taux de pièges d'une gardienne nouvelle venue ; il baisse avec sa réputation. */
   taux_pieges: number;
   /** OSP v0.2 P0-3 : plancher du taux de pièges, même pour les gardiennes les plus fiables. */
@@ -82,6 +97,14 @@ export const DEFAULT_PARAMS: Params = {
   profondeur_max: 8,
   niveau_approbation_porteur: 1,
   gardiennes_v0: 2,
+  alpha_faux: 1e-4,
+  p_juste_initiale: 0.9,
+  prior_sensibilite: [9, 1],
+  prior_specificite: [19, 1],
+  quantile_fiabilite: 0.05,
+  oubli_fiabilite: 0.995,
+  verdicts_max: 9,
+  escalade_ms: 2 * HEURE,
   taux_pieges: 0.1,
   taux_pieges_min: 0.01,
   pieges_essais: 8,

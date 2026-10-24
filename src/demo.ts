@@ -23,7 +23,8 @@ export async function demo(log: (s: string) => void = console.log): Promise<bool
   ];
   const noms = new Map<string, string>([[fondateur.id, 'toi (fondateur)'], ...abeilles.map(([n, id]) => [id.id, n] as [string, string])]);
 
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0.15 }, rng: seededRng(2026) });
+  // Quatre abeilles seulement : un taux d'erreur cible de 5 % (deux gardiennes suffisent) ; une vraie ruche vise 10⁻⁴.
+  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0.15, alpha_faux: 0.05 }, rng: seededRng(2026) });
   log('\n🐝  KICKSWARM · démo du noyau OSP v0.1\n');
 
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Mini-bibliothèque mathématique', objectif: RACINE.objectif }), RACINE);

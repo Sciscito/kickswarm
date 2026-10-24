@@ -69,7 +69,7 @@ test('substitution d’algorithme impossible : une clé faible ne peut pas se fa
 
 async function rucheTerminee(params = {}, abeilles = [generateIdentity(), generateIdentity(), generateIdentity()]) {
   const fondateur = generateIdentity();
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0.1, ...params }, rng: seededRng(31) });
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.1, ...params }, rng: seededRng(31) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   for (let tour = 0; tour < 300 && c.hiveView('maths').statut !== 'terminee'; tour++) {
