@@ -527,8 +527,8 @@ async function pool<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): P
 }
 
 /** Score de mutation d'une suite contre une implémentation : la part des mutants qu'elle détecte. */
-async function mutationScore(suite: Suite, implementation: Livrable, fichiers: string[] | undefined, opts: VerifOptions): Promise<MutationReport> {
-  const ms = mutants(implementation, { max: MAX_MUTANTS, fichiers });
+async function mutationScore(suite: Suite, implementation: Livrable, fichiers: string[] | undefined, opts: VerifOptions, version?: number): Promise<MutationReport> {
+  const ms = mutants(implementation, { max: MAX_MUTANTS, fichiers, version });
   if (!ms.length) return { tues: 0, total: 0, score: 1 };
   const short = { ...suite, timeout: Math.min(suite.timeout, MUTANT_TIMEOUT_MS) };
   const results = await pool(ms, POOL, (m) => runSuite(short, m.livrable, opts));
@@ -574,16 +574,27 @@ export async function verifierV0(critere: CritereFini, livrable: Livrable, opts:
 /**
  * Force des tests d'une alvéole (§3.2) : la référence doit passer tous les tests, et les tests
  * doivent détecter au moins `scoreMin` de ses mutants. Sinon, les tests sont trop faibles pour valider quoi que ce soit.
+ *
+ * Une référence où le moteur ne trouve rien à muter ne permet pas de mesurer : elle est acceptée sans
+ * mesure, comme une alvéole sans référence (que l'éclaireuse aurait pu fournir à la place), sauf si
+ * la mesure est exigée (`exigerMesure`, quand les références sont obligatoires).
  */
-export async function adequation(critere: CritereV0, caches: TestCase[], reference: Livrable, opts: VerifOptions & { scoreMin?: number } = {}): Promise<VerifReport> {
+export async function adequation(
+  critere: CritereV0,
+  caches: TestCase[],
+  reference: Livrable,
+  opts: VerifOptions & { scoreMin?: number; moteurMutation?: number; exigerMesure?: boolean } = {},
+): Promise<VerifReport> {
   const started = Date.now();
   const scoreMin = opts.scoreMin ?? DEFAULT_SCORE_MIN;
   const base = await verifierV0(critere, reference, { ...opts, caches });
   if (!base.ok) return { ...base, ok: false, motif: `The reference implementation fails its own tests: ${base.motif}` };
-  const mutation = await mutationScore(suiteOf(critere, caches), reference, undefined, opts);
-  const ok = mutation.total > 0 && mutation.score >= scoreMin;
+  const mutation = await mutationScore(suiteOf(critere, caches), reference, undefined, opts, opts.moteurMutation);
+  const ok = mutation.total > 0 ? mutation.score >= scoreMin : !opts.exigerMesure;
   const motif = mutation.total === 0
-    ? 'The reference has nothing to mutate: the strength of the tests cannot be measured'
+    ? ok
+      ? 'The reference has nothing to mutate: accepted without measuring the strength of the tests'
+      : 'The reference has nothing to mutate: the strength of the tests cannot be measured'
     : `Mutation score ${(mutation.score * 100).toFixed(0)}% (${mutation.tues}/${mutation.total} mutants caught, minimum ${(scoreMin * 100).toFixed(0)}%)${ok ? '' : `. Tests too weak: ${mutation.survivant}`}`;
   return { ok, motif, tests: base.tests, duree_ms: Date.now() - started, sandbox: base.sandbox, mutation };
 }

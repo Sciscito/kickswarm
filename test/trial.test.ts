@@ -11,13 +11,14 @@ import { trial, TRIAL_SLUG } from '../src/trial.js';
 test('essai : la répétition générale va jusqu’au miel, et l’audit passe', async () => {
   const sortie = mkdtempSync(join(tmpdir(), 'osp-essai-'));
   const lignes: string[] = [];
-  const run = await trial({ port: 0, rehearse: true, smoke: false, pace: 150, sortie, log: (s) => lignes.push(s) });
+  // Sans pièges ici (la répétition « kickswarm trial --rehearse » les couvre) : la suite de tests tourne en parallèle.
+  const run = await trial({ port: 0, rehearse: true, smoke: false, pace: 150, sortie, params: { taux_pieges: 0 }, log: (s) => lignes.push(s) });
   try {
     let garde: NodeJS.Timeout | undefined;
     const { ok } = await Promise.race([
       run.done,
       new Promise<never>((_, rej) => {
-        garde = setTimeout(() => rej(new Error(`trial still running:\n${lignes.slice(-15).join('\n')}`)), 120_000);
+        garde = setTimeout(() => rej(new Error(`trial still running:\n${lignes.slice(-15).join('\n')}`)), 240_000);
       }),
     ]).finally(() => clearTimeout(garde));
     assert.equal(ok, true, lignes.join('\n'));

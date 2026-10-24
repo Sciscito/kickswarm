@@ -350,6 +350,8 @@ export class Coordinator {
   constructor(private readonly options: CoordinatorOptions) {
     if (!isContributorId(options.fondateur)) throw new Error('Identifiant du fondateur invalide');
     this.params = { ...DEFAULT_PARAMS, ...options.params };
+    // Un registre qui n'annonce pas de version du moteur de mutation a été écrit avec la version 1.
+    if (options.replay && options.params?.moteur_mutation === undefined) this.params.moteur_mutation = 1;
     // Un aléa cryptographique : les tirages passés sont publics, ils ne doivent pas permettre de deviner les suivants.
     this.baseRng = options.rng ?? aleaCrypto;
     this.baseRngSecret = options.rng ?? aleaCrypto;
@@ -406,7 +408,9 @@ export class Coordinator {
       };
       const balise = this.baliseAnnoncee();
       this.registry.append('lancement', {
-        fondateur: options.fondateur, coordinateur: this.identite.id, pieges: this.identitePieges.id, params: this.params, ...(balise ? { balise } : {}),
+        // En rejeu, les paramètres tels que le registre les annonce : un paramètre ajouté depuis ne change pas l'entrée.
+        fondateur: options.fondateur, coordinateur: this.identite.id, pieges: this.identitePieges.id,
+        params: options.replay && options.params ? options.params : this.params, ...(balise ? { balise } : {}),
       });
       this.clock = null;
       if (!options.replay) this.sceller();
@@ -1058,7 +1062,7 @@ export class Coordinator {
       if (!rapport.ok || this.params.taux_pieges <= 0 || this.params.gardiennes_v0 <= 0 || crit.verificateur !== 'tests-js@1') return [rapport];
       const reports = [rapport];
       let tues = 0;
-      for (const m of mutants(livrable, { max: this.params.pieges_essais })) {
+      for (const m of mutants(livrable, { max: this.params.pieges_essais, version: this.params.moteur_mutation })) {
         const r = await this.verifier(crit, m.livrable, { sansCaches: true });
         reports.push(r);
         if (!r.ok && ++tues >= 3) break;
@@ -1097,7 +1101,7 @@ export class Coordinator {
     if (rec.state === 'reservee') transition(rec, 'en_cours');
     const id = hashOf(res);
     // Les mutants sont recalculés à l'identique (le moteur est déterministe) ; seuls les rapports viennent de l'exécution.
-    const candidats = essais.length ? mutants(livrable, { max: this.params.pieges_essais }) : [];
+    const candidats = essais.length ? mutants(livrable, { max: this.params.pieges_essais, version: this.params.moteur_mutation }) : [];
     if (essais.length > candidats.length) throw new ReplayDivergence('Plus de rapports de mutants que de mutants');
     // Un bon piège se charge et passe une partie des tests : seule une vraie vérification le démasque.
     const pieges = essais
@@ -1157,7 +1161,11 @@ export class Coordinator {
         if (this.params.reference_obligatoire) throw new OspError(`${label} : une implémentation de référence est exigée pour mesurer la force des tests`);
         continue;
       }
-      const r = await adequation(c, secrets[i]?.tests_caches ?? [], secrets[i]!.reference!, { scoreMin: this.params.score_mutation_min });
+      const r = await adequation(c, secrets[i]?.tests_caches ?? [], secrets[i]!.reference!, {
+        scoreMin: this.params.score_mutation_min,
+        moteurMutation: this.params.moteur_mutation,
+        exigerMesure: this.params.reference_obligatoire,
+      });
       if (!r.ok) throw new OspError(`${label} : ${r.motif}`);
       reports.push(r);
     }
@@ -1190,7 +1198,12 @@ export class Coordinator {
     const avecRef = d.enfants.filter((e) => e.critere_fini.verificateur === 'tests-js@1' && e.critere_fini.reference_hash).length;
     if (verifs.length !== avecRef || verifs.some((r) => !r.ok || !r.mutation)) throw new OspError('Mesure de la force des tests manquante ou insuffisante');
     let k = 0;
-    const force_tests = d.enfants.map((e) => (e.critere_fini.verificateur === 'tests-js@1' && e.critere_fini.reference_hash ? verifs[k++]!.mutation!.score : null));
+    // Une référence sans rien à muter n'a pas de mesure : comme un enfant sans référence.
+    const force_tests = d.enfants.map((e) => {
+      if (e.critere_fini.verificateur !== 'tests-js@1' || !e.critere_fini.reference_hash) return null;
+      const m = verifs[k++]!.mutation!;
+      return m.total > 0 ? m.score : null;
+    });
     if (rec.state === 'reservee') transition(rec, 'en_cours');
 
     this.state.decompositions[id] = { decomposition: d, statut: 'en_attente', force_tests };

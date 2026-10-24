@@ -36,6 +36,8 @@ export interface Params {
   taux_pieges_min: number;
   /** OSP v0.2 P0-3 : mutants essayés par livraison pour fabriquer des pièges. */
   pieges_essais: number;
+  /** Version du moteur de mutation (il fait partie du rejeu). Un registre qui ne l'annonce pas utilise la version 1. */
+  moteur_mutation: number;
   /** OSP v0.2 P0-3 : délai maximal avant publication d'une entrée du registre, même si une vérification reste ouverte. */
   embargo_max_ms: number;
   /** OSP v0.2 §3.2 : part minimale des mutants que les tests d'un enfant doivent détecter. */
@@ -108,6 +110,7 @@ export const DEFAULT_PARAMS: Params = {
   taux_pieges: 0.1,
   taux_pieges_min: 0.01,
   pieges_essais: 8,
+  moteur_mutation: 2,
   embargo_max_ms: 2 * HEURE,
   score_mutation_min: 0.8,
   reference_obligatoire: false,

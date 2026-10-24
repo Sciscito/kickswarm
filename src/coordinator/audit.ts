@@ -117,7 +117,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     if (e.nature !== 'commande') continue;
     commandes++;
     const c = e.donnees as CommandeDonnees;
-    if (opts.reverifier) await reverify(coord, c, e.seq, reverif, reveles, nonReveles, L.params.pieges_essais);
+    if (opts.reverifier) await reverify(coord, c, e.seq, reverif, reveles, nonReveles, L.params.pieges_essais, L.params.moteur_mutation ?? 1);
     try {
       await coord.replayCommande(c);
     } catch (err) {
@@ -331,6 +331,7 @@ async function reverify(
   reveles: Map<string, TestCase[]>,
   nonReveles: { n: number; sandbox?: string },
   piegesEssais = 8,
+  moteur = 1,
 ): Promise<void> {
   const recorded = c.verifs?.[0];
   if (!recorded) return;
@@ -341,7 +342,7 @@ async function reverify(
     if (critere) cible = { critere, livrable: e.livrable };
     // P0-3 : les mutants préparés comme pièges, rejoués avec les seuls contrôles des gardiennes.
     if (critere && c.verifs.length > 1) {
-      const ms = mutants(e.livrable, { max: piegesEssais });
+      const ms = mutants(e.livrable, { max: piegesEssais, version: moteur });
       for (const [i, rapport] of c.verifs.slice(1).entries()) {
         const m = ms[i];
         const again = m ? await verifierV0(critere, m.livrable, { sansCaches: true }) : undefined;

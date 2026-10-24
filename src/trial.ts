@@ -8,6 +8,7 @@ import { auditRegistry } from './coordinator/audit.js';
 import { DrandHttp } from './coordinator/balise.js';
 import { Coordinator } from './coordinator/coordinator.js';
 import { createCoordinatorServer } from './coordinator/http.js';
+import type { Params } from './coordinator/params.js';
 import type { RegistryEntry } from './coordinator/registry.js';
 import { helperGuard, httpAccess, scriptedBee, type HiveAccess } from './exemples/scripted-bee.js';
 import { TEXT_ROOT, TEXT_SCRIPT } from './exemples/texte.js';
@@ -39,6 +40,8 @@ export interface TrialOptions {
   pace?: number;
   /** In a rehearsal, also start the plugin exactly as the bee folder configures it (needs dist). */
   smoke?: boolean;
+  /** Coordinator parameters on top of the trial's own (tests use them to go faster). */
+  params?: Partial<Params>;
   log?: (s: string) => void;
 }
 
@@ -128,7 +131,7 @@ export async function trial(opts: TrialOptions): Promise<TrialRun> {
   const coord = new Coordinator({
     fondateur: founder.id,
     dataDir: join(dossier, 'data'),
-    params: { alpha_faux: 0.01, taux_pieges: 0.1 },
+    params: { alpha_faux: 0.01, taux_pieges: 0.1, ...opts.params },
     ...(opts.beacon ? { balise: new DrandHttp() } : {}),
   });
   const server = createCoordinatorServer(coord);

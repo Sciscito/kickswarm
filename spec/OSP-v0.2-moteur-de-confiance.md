@@ -89,8 +89,20 @@ Pour du code, la vraie défense n'est pas de multiplier les relectures. Elle est
   - En cas d'échec, on donne un contre-exemple concret.
 - **Moteur de mutation.**
   - Il inverse les opérateurs, décale les comparaisons, échange `&&` et `||`, change les booléens et les constantes.
-  - Il ne touche jamais aux chaînes, aux gabarits, aux commentaires ni aux expressions régulières.
+  - Il ne touche jamais aux chaînes, aux gabarits ni aux commentaires.
+  - **Version 2**, née du premier essai avec une vraie IA. Il mute aussi l'intérieur des expressions régulières :
+    - `+` devient `{2,}`, c'est-à-dire « au moins deux » au lieu d'« au moins un », l'erreur de borne des quantificateurs ;
+    - `*` devient `+`, un `?` quantificateur est retiré ;
+    - les ancres `^` et `$` sont retirées ;
+    - une classe et son contraire s'échangent (`[a-z]` ↔ `[^a-z]`), de même que `\d` ↔ `\D` (et `\s`, `\w`) ;
+    - les drapeaux `g`, `i`, `m` et `s` sont retirés.
+    
+    Il échange aussi les méthodes qui ont un contraire : `toLowerCase` ↔ `toUpperCase`, `startsWith` ↔ `endsWith`, `indexOf` ↔ `lastIndexOf`, `some` ↔ `every`, `min` ↔ `max`, `floor` ↔ `ceil`, `trimStart` ↔ `trimEnd`, `push` ↔ `unshift`…
+  - **Pourquoi la version 2.** Pendant l'essai, l'IA éclaireuse avait écrit une référence de `slugify` propre, faite uniquement d'expressions régulières. Le moteur n'y trouvait « rien à muter », et le découpage était refusé alors que le travail était bon. L'IA s'en est sortie en réécrivant ses références avec des boucles ; d'autres auraient pu bloquer.
+  - **`+` → `*` est écarté exprès.** Dans un remplacement par une chaîne vide, un motif qui accepte le vide ne change rien : `/^-*|-*$/g` se comporte comme `/^-+|-+$/g`. Ce mutant serait équivalent, impossible à démasquer, et plafonnait le score de cette référence à 78 %.
+  - **Le moteur fait partie du rejeu**, car les pièges en dépendent. Le lancement annonce sa version (`moteur_mutation`), et un registre qui ne l'annonce pas se rejoue avec la version 1. En rejeu, l'entrée de lancement reprend aussi les paramètres exactement tels qu'ils ont été annoncés. Sans cela, chaque paramètre ajouté depuis rendait les anciens registres impossibles à auditer dès leur première entrée.
 - **Force des tests à l'entrée.** Quand une éclaireuse fournit une référence secrète (`reference_hash`), le découpage n'est accepté que si la référence passe ses propres tests et que ces tests détectent au moins **80 %** de ses mutants. Le score est inscrit au registre, puis porté par chaque alvéole (`force_tests`). Le paramètre `reference_obligatoire` permet de l'exiger partout.
+  - **Une référence où le moteur ne trouve vraiment rien à muter** (`(x) => x`) est acceptée sans mesure, comme une alvéole sans référence : l'éclaireuse aurait pu fournir celle-ci à la place. Quand `reference_obligatoire` est actif, la mesure reste exigée.
 - **Le vérificateur `tests-de-tests@1`.** Pour les tâches qui consistent à *écrire des tests* (la ruche « Bouclier open source »), le livrable est une suite de tests. Elle doit passer sur la vraie cible et tuer au moins 80 % de ses mutants. C'est un critère objectif et vérifiable par n'importe qui.
 - **Une faille corrigée au passage.** Dans le MVP, le code testé pouvait imprimer une fausse ligne « tous les tests passent ». Désormais :
   - les tests arrivent par l'entrée standard, consommée avant le chargement du module ;

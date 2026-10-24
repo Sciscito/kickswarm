@@ -2,8 +2,46 @@ import type { Livrable } from '../protocol/types.js';
 
 // Moteur de mutation (OSP v0.2, §3.2) : il injecte un petit bug à la fois dans du JavaScript
 // (opérateur inversé, comparaison décalée, booléen ou constante modifiés) sans jamais toucher
-// aux chaînes, aux gabarits, aux commentaires ni aux expressions régulières.
+// aux chaînes, aux gabarits ni aux commentaires.
 // Une bonne suite de tests doit « tuer » ces mutants : c'est le score de mutation.
+//
+// Version 2 : il mute aussi l'intérieur des expressions régulières (quantificateurs, ancres,
+// négation des classes, \d \s \w, drapeaux) et les méthodes qui ont un contraire (toLowerCase ↔
+// toUpperCase, startsWith ↔ endsWith, some ↔ every, min ↔ max…). Le premier essai avec une vraie
+// IA l'a montré : une référence écrite proprement avec des regex n'offrait sinon « rien à muter ».
+// Le moteur fait partie du rejeu (les pièges en dépendent) : un registre annonce sa version.
+
+/** La version du moteur que les nouveaux registres annoncent. */
+export const MOTEUR_MUTATION = 2;
+
+/** Méthodes qui ont un contraire, ou presque : appeler l'une pour l'autre est un bug plausible. */
+const METHODES: Record<string, string> = {
+  toLowerCase: 'toUpperCase',
+  toUpperCase: 'toLowerCase',
+  toLocaleLowerCase: 'toLocaleUpperCase',
+  toLocaleUpperCase: 'toLocaleLowerCase',
+  startsWith: 'endsWith',
+  endsWith: 'startsWith',
+  indexOf: 'lastIndexOf',
+  lastIndexOf: 'indexOf',
+  some: 'every',
+  every: 'some',
+  min: 'max',
+  max: 'min',
+  floor: 'ceil',
+  ceil: 'floor',
+  trim: 'trimStart',
+  trimStart: 'trimEnd',
+  trimEnd: 'trimStart',
+  padStart: 'padEnd',
+  padEnd: 'padStart',
+  push: 'unshift',
+  unshift: 'push',
+  pop: 'shift',
+  shift: 'pop',
+  reduce: 'reduceRight',
+  reduceRight: 'reduce',
+};
 
 export interface Mutant {
   fichier: string;
@@ -45,8 +83,8 @@ interface Site {
   apres: string;
 }
 
-/** Repère les sites de mutation dans le code, hors chaînes, commentaires et expressions régulières. */
-export function mutationSites(src: string): Site[] {
+/** Repère les sites de mutation dans le code, hors chaînes et commentaires (et hors regex en version 1). */
+export function mutationSites(src: string, version = MOTEUR_MUTATION): Site[] {
   const sites: Site[] = [];
   let i = 0;
   let lastSignificant = '';
@@ -65,19 +103,54 @@ export function mutationSites(src: string): Site[] {
       lastSignificant = 'a';
       continue;
     }
-    // Expressions régulières.
+    // Expressions régulières : ignorées en version 1, mutées de l'intérieur en version 2.
     if (ch === '/' && REGEX_BEFORE.has(lastSignificant) && !/[\w)\]]/.test(lastSignificant)) {
+      const regex: Site[] = [];
       i++;
       let inClass = false;
       while (i < src.length && (src[i] !== '/' || inClass)) {
-        if (src[i] === '\\') i++;
-        else if (src[i] === '[') inClass = true;
-        else if (src[i] === ']') inClass = false;
-        else if (src[i] === '\n') break;
+        const c = src[i]!;
+        if (c === '\n') break;
+        if (c === '\\') {
+          const e = src[i + 1] ?? '';
+          // \d ↔ \D, \s ↔ \S, \w ↔ \W.
+          if ('dDsSwW'.includes(e) && e) regex.push({ index: i + 1, avant: e, apres: e === e.toLowerCase() ? e.toUpperCase() : e.toLowerCase() });
+          i += 2;
+          continue;
+        }
+        if (inClass) {
+          if (c === ']') inClass = false;
+          i++;
+          continue;
+        }
+        if (c === '[') {
+          inClass = true;
+          // Une classe et son contraire : [a-z] ↔ [^a-z].
+          if (src[i + 1] === '^') {
+            regex.push({ index: i + 1, avant: '^', apres: '' });
+            i += 2;
+          } else {
+            regex.push({ index: i + 1, avant: '', apres: '^' });
+            i++;
+          }
+          continue;
+        }
+        // « au moins un » → « au moins deux » : l'erreur de borne des quantificateurs. (+ → * donnerait souvent
+        // un mutant équivalent : dans un remplacement par '', un motif qui accepte le vide ne change rien.)
+        if (c === '+') regex.push({ index: i, avant: '+', apres: '{2,}' });
+        else if (c === '*') regex.push({ index: i, avant: '*', apres: '+' });
+        // Un « ? » quantificateur (pas celui de (?: …), ni celui d'un quantificateur paresseux).
+        else if (c === '?' && !'(+*?}'.includes(src[i - 1] ?? '')) regex.push({ index: i, avant: '?', apres: '' });
+        else if (c === '^' || c === '$') regex.push({ index: i, avant: c, apres: '' });
         i++;
       }
+      const ferme = src[i] === '/';
       i++;
-      while (i < src.length && /[a-z]/i.test(src[i]!)) i++;
+      while (i < src.length && /[a-z]/i.test(src[i]!)) {
+        if ('gims'.includes(src[i]!)) regex.push({ index: i, avant: src[i]!, apres: '' });
+        i++;
+      }
+      if (version >= 2 && ferme) sites.push(...regex);
       lastSignificant = 'a';
       continue;
     }
@@ -88,6 +161,8 @@ export function mutationSites(src: string): Site[] {
       const word = src.slice(i, j);
       if (word === 'true') sites.push({ index: i, avant: 'true', apres: 'false' });
       else if (word === 'false') sites.push({ index: i, avant: 'false', apres: 'true' });
+      // Une méthode appelée pour son contraire : s.toLowerCase() → s.toUpperCase().
+      else if (version >= 2 && src[i - 1] === '.' && src[i - 2] !== '.' && Object.hasOwn(METHODES, word)) sites.push({ index: i, avant: word, apres: METHODES[word]! });
       else if (/^\d+$/.test(word) && src[j] !== '.' && src[i - 1] !== '.') {
         const n = Number(word);
         sites.push({ index: i, avant: word, apres: String(n === 0 ? 1 : n === 1 ? 0 : n + 1) });
@@ -116,12 +191,12 @@ export function mutationSites(src: string): Site[] {
 }
 
 /** Génère au plus `max` mutants du livrable, répartis régulièrement sur tous les sites. */
-export function mutants(livrable: Livrable, opts: { max?: number; fichiers?: string[] } = {}): Mutant[] {
+export function mutants(livrable: Livrable, opts: { max?: number; fichiers?: string[]; version?: number } = {}): Mutant[] {
   const max = opts.max ?? 40;
   const all: Mutant[] = [];
   for (const [fichier, src] of Object.entries(livrable.fichiers)) {
     if (!/\.(mjs|js)$/.test(fichier) || (opts.fichiers && !opts.fichiers.includes(fichier))) continue;
-    for (const s of mutationSites(src)) {
+    for (const s of mutationSites(src, opts.version)) {
       const ligne = src.slice(0, s.index).split('\n').length;
       const muted = src.slice(0, s.index) + s.apres + src.slice(s.index + s.avant.length);
       all.push({ fichier, ligne, avant: s.avant, apres: s.apres, livrable: { fichiers: { ...livrable.fichiers, [fichier]: muted } } });

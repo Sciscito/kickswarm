@@ -84,14 +84,64 @@ test('anti-triche : le code testé ne peut ni forger le résultat ni fausser la 
 
 // ---------------------------------------------------------------- mutation
 
-test('mutation : les opérateurs sont mutés, jamais les chaînes, les commentaires ni les regex', () => {
+test('mutation : les opérateurs sont mutés, jamais les chaînes ni les commentaires', () => {
   const src = 'const s = "a+b<c"; // x < y && z\nconst r = /a-b+/g;\nexport const f = (a, b) => a + b > 0 && r.test(s) ? true : 1;\n';
-  const sites = mutationSites(src).map((x) => x.avant);
-  assert.deepEqual(sites, ['+', '>', '0', '&&', 'true', '1']);
+  // Version 1 : les regex restent intactes (les registres anciens se rejouent ainsi).
+  assert.deepEqual(mutationSites(src, 1).map((x) => x.avant), ['+', '>', '0', '&&', 'true', '1']);
+  // Version 2 : l'intérieur de la regex aussi, mais toujours ni la chaîne ni le commentaire.
+  assert.deepEqual(mutationSites(src).map((x) => x.avant), ['+', 'g', '+', '>', '0', '&&', 'true', '1']);
   const ms = mutants({ fichiers: { 'f.mjs': src } });
-  assert.equal(ms.length, 6);
+  assert.equal(ms.length, 8);
   assert.ok(ms.every((m) => m.livrable.fichiers['f.mjs'] !== src));
+  assert.ok(ms.every((m) => m.livrable.fichiers['f.mjs']!.includes('"a+b<c"; // x < y && z')));
   assert.ok(ms.find((m) => m.avant === '&&')!.livrable.fichiers['f.mjs']!.includes('a + b > 0 || r.test(s)'));
+  assert.ok(ms.some((m) => m.livrable.fichiers['f.mjs']!.includes('/a-b{2,}/g')));
+});
+
+test('mutation (v2) : regex et méthodes qui ont un contraire', () => {
+  const src = "export const f = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').startsWith('\\\\d');\n";
+  const sites = mutationSites(src).map((x) => `${x.avant}→${x.apres}`);
+  for (const attendu of ['trim→trimStart', 'toLowerCase→toUpperCase', '^→', '+→{2,}', 'g→', '$→', 'startsWith→endsWith']) assert.ok(sites.includes(attendu), `${attendu} dans ${sites.join(' ')}`);
+  // Chaque mutant reste un module valide.
+  for (const m of mutants({ fichiers: { 'f.mjs': src } }, )) assert.doesNotThrow(() => new Function(m.livrable.fichiers['f.mjs']!.replace('export ', '')), m.livrable.fichiers['f.mjs']);
+  const classes = mutationSites('const r = /\\d+[a-z]?\\s*(?:x)/i;').map((x) => `${x.avant}→${x.apres}`);
+  assert.deepEqual(classes, ['d→D', '+→{2,}', '→^', '?→', 's→S', '*→+', 'i→'], 'le « ? » de (?: n’est pas un quantificateur');
+  // Une propriété d'objet nommée comme une méthode n'est mutée que si on y accède par un point.
+  assert.deepEqual(mutationSites('const o = { min: 1 }; o.min;').map((x) => x.avant), ['1', 'min']);
+});
+
+test('adéquation : la référence de l’essai réel (que des regex) se mesure désormais', async () => {
+  // La référence de slugify qu'a écrite une vraie IA pendant le premier essai, refusée alors faute de mutants.
+  const ref: Livrable = { fichiers: { 'slugify.mjs': "export function slugify(s) {\n  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');\n}\n" } };
+  const c: CritereV0 = {
+    classe: 'V0',
+    verificateur: 'tests-js@1',
+    module: 'slugify.mjs',
+    tests: [
+      { fn: 'slugify', args: ['Hello, World!'], attendu: 'hello-world' },
+      { fn: 'slugify', args: ['  --Kick  Swarm--  '], attendu: 'kick-swarm' },
+      { fn: 'slugify', args: ['a1 b2'], attendu: 'a1-b2' },
+    ],
+  };
+  const v1 = await adequation(c, [], ref, { moteurMutation: 1, exigerMesure: true });
+  assert.equal(v1.ok, false, 'avant : rien à muter');
+  assert.equal(v1.mutation?.total, 0);
+  const v2 = await adequation(c, [], ref);
+  assert.ok(v2.mutation!.total >= 6, `${v2.mutation!.total} mutants`);
+  assert.equal(v2.ok, true, v2.motif);
+  // Des tests faibles sur la même référence sont, eux, démasqués.
+  const faible = await adequation({ ...c, tests: [c.tests[0]!] }, [], ref);
+  assert.ok(faible.mutation!.score < v2.mutation!.score);
+});
+
+test('adéquation : une référence sans rien à muter est acceptée sans mesure, sauf si la mesure est exigée', async () => {
+  const ref: Livrable = { fichiers: { 'id.mjs': 'export const id = (x) => x;\n' } };
+  const c: CritereV0 = { classe: 'V0', verificateur: 'tests-js@1', module: 'id.mjs', tests: [{ fn: 'id', args: ['a'], attendu: 'a' }] };
+  const souple = await adequation(c, [], ref);
+  assert.equal(souple.ok, true, souple.motif);
+  assert.match(souple.motif, /accepted without measuring/);
+  const stricte = await adequation(c, [], ref, { exigerMesure: true });
+  assert.equal(stricte.ok, false);
 });
 
 test('adéquation : des tests faibles sont refusés, des tests forts sont acceptés', async () => {
@@ -200,7 +250,8 @@ test('coordinateur : engagement public, coffre privé, solution taillée rejeté
   const taille = liv(TAILLE.replace(/12 && b === 18\) return 6; if \(a === 17 && b === 5\) return 1; return 1/, '12 && b === 18) return 6; if (a === 17 && b === 5) return 1; if (a === 0) return b; return 1'));
   const r = await c.submitResult(makeResult(bees[1]!, a.alveole_id, 'ouvriere', taille), taille);
   assert.equal(r.statut, 'rejete');
-  assert.ok(!JSON.stringify(r).includes('100'), 'aucun détail des tests cachés ne revient à l’ouvrière');
+  // (La durée mesurée est exclue : elle peut valoir 100x ms par hasard.)
+  assert.ok(!JSON.stringify({ ...r, rapport: { ...r.rapport, duree_ms: 0 } }).includes('100'), 'aucun détail des tests cachés ne revient à l’ouvrière');
 
   // L'essaim termine la ruche avec les vraies solutions.
   for (let tour = 0; tour < 300 && c.hiveView('maths').statut !== 'terminee'; tour++) await abeilleScriptee(c, bees[tour % 3]!);
