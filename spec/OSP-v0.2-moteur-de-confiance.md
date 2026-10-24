@@ -169,6 +169,8 @@ Une limite à connaître : ce calcul suppose des verdicts **indépendants** une 
 
 ### 5.1 Des pièges indiscernables, fabriqués par mutation
 
+*§5.1 et §5.2 sont implémentés : voir §6.8.*
+
 - Les pièges ne sont plus des faux grossiers. Ce sont des **mutants de vraies solutions validées** : même style, même longueur, un seul bug subtil.
 - Chaque alvéole validée devient ainsi une **source inépuisable de pièges réalistes**.
 - Une gardienne ne peut pas distinguer un piège d'un vrai résultat, sauf en vérifiant vraiment.
@@ -290,7 +292,7 @@ Tous les tirages du coordinateur (la caste d'une abeille, l'alvéole qu'elle re�
 
 **Limites assumées :**
 
-- **Le coordinateur peut encore écarter une demande.** Il voit l'aléa avant de répondre : il pourrait refuser une demande dont le tirage lui déplaît, et le contributeur en signerait une autre. Cette censure ne laisse aucune trace dans le registre. Elle en laisse une dans le journal local du contributeur, qui note chaque demande et chaque refus. Les auditeurs multiples (§6.8), puis la fédération, la rendront visible.
+- **Le coordinateur peut encore écarter une demande.** Il voit l'aléa avant de répondre : il pourrait refuser une demande dont le tirage lui déplaît, et le contributeur en signerait une autre. Cette censure ne laisse aucune trace dans le registre. Elle en laisse une dans le journal local du contributeur, qui note chaque demande et chaque refus. Les auditeurs multiples (§6.9), puis la fédération, la rendront visible.
 - **Chaque demande de travail attend son tour**, de 6 à 9 secondes. C'est négligeable devant le temps de travail d'une IA sur une alvéole.
 - **Si drand est injoignable**, le coordinateur répond 503 au lieu de tirer lui-même. Le travail s'arrête plutôt que de perdre sa garantie.
 ### 6.7 Des verdicts scellés : engagement puis révélation (P1-3, implémenté)
@@ -317,7 +319,42 @@ Avant, chaque verdict entrait dans le registre public dès son envoi. La seconde
 - **Le coordinateur voit les engagements, pas les verdicts**, mais il connaît le résultat du vérificateur automatique. L'engagement protège les gardiennes les unes des autres, pas d'un coordinateur qui leur soufflerait la réponse.
 - **Après une abstention**, la gardienne tirée en remplacement voit les verdicts déjà révélés pour ce résultat. Cela n'arrive que si une gardienne s'abstient, et chaque abstention est inscrite au registre.
 
-### 6.8 Plusieurs auditeurs, puis plusieurs coordinateurs
+### 6.8 Des pièges indiscernables (P0-3, implémenté)
+
+**Le constat.** Le MVP fabriquait des pièges grossiers, et le registre public en a ajouté d'autres moyens de les reconnaître. Une gardienne pouvait repérer un piège de cinq façons, sans rien vérifier :
+
+1. le livrable renvoyait `'__piege__'` ;
+2. le résultat était signé par l'identité « pièges », annoncée au lancement ;
+3. la vue en direct affichait un champ `piege` ;
+4. le piège visait souvent une alvéole qui n'attendait aucune vérification ;
+5. surtout, le registre étant public et rejouable en temps réel, il suffisait de le rejouer, ou de recalculer son propre tirage drand, pour voir le piège avant de s'engager.
+
+**Ce qui est fait :**
+
+- **Un piège est un mutant de la vraie livraison en attente.** Quand un livrable passe le vérificateur automatique, le coordinateur essaie jusqu'à 8 de ses mutants *(paramètre)* avec les seuls contrôles que rejouent les gardiennes : tests visibles et tests par propriétés, sans les tests cachés. Il garde ceux qu'elles rejettent et qui passent pourtant une partie des tests, du plus subtil au moins subtil. Un piège a donc le style, la longueur et les noms du vrai code, avec un seul bug. Rien de grossier : seule une vraie vérification le démasque.
+- **Il prend la place du vrai, sur la même alvéole.** Quand une gardienne est tirée pour vérifier un résultat, elle reçoit, avec une probabilité qui lui est propre, un mutant de ce résultat à la place. Le piège occupe une place de gardienne, avec le même bail, et la gardienne figure dans la vue publique comme les autres. Tant que son piège est ouvert, elle ne reçoit pas le vrai livrable.
+- **La vérification est anonyme.** Une gardienne reçoit l'alvéole, le livrable et un identifiant opaque à citer dans son verdict. Ni l'auteur, ni le résultat signé. C'est aussi plus juste : on juge le travail, pas la personne.
+- **Le taux est individuel** (§5.2). Il vaut `taux_pieges` (10 %) pour une nouvelle venue et baisse avec la réputation, sans descendre sous 1 % *(paramètres)*.
+- **Le tirage du piège vient d'un aléa secret.** Il ne découle pas de la balise drand, qu'une gardienne peut recalculer. Il vient d'un générateur cryptographique et est inscrit à part (`alea_secret`) dans la commande. Les autres tirages par défaut sont désormais cryptographiques eux aussi : publiés après coup, ils ne doivent pas permettre de deviner les suivants.
+- **Le contenu du registre est publié avec un embargo.** Tant qu'un résultat attend ses gardiennes, sa soumission et tout ce qui suit restent sous embargo. Sinon une gardienne comparerait le livrable reçu au livrable publié. L'embargo tombe dès que le résultat est tranché, et au plus tard après 2 heures *(paramètre)*. Au-delà de ce délai, le résultat ne sert plus de modèle à des pièges.
+- **La tête du registre, elle, reste publique en temps réel.** `GET /v0/state-hash` donne le rang et le hash de la dernière entrée, avec le dernier sceau SLH-DSA, à côté de l'horizon publié et de l'état qui en découle. Comme la tête enchaîne tout ce qui la précède, un observateur qui la note verrait toute réécriture de ce qui est encore sous embargo.
+- **Le tableau noir public ne cite plus le résultat source** d'une impasse, pour la même raison.
+
+**Ce que l'audit contrôle :**
+
+- Le rejeu recalcule chaque piège : les mutants sont reproduits à l'identique (le moteur est déterministe), le taux suit la réputation du moment, et le choix vient des tirages secrets inscrits. Retirer un tirage secret, ou falsifier le rapport d'un mutant, fait échouer l'audit, et c'est testé.
+- Un nouveau contrôle, « Trap cells drawn at each guard's announced rate », compare le nombre de pièges à son espérance (somme des taux annoncés). Il échoue au-delà de 4 écarts-types : un coordinateur qui abuserait des pièges, ou en épargnerait une gardienne amie, se verrait.
+- `--reverify` rejoue aussi chaque mutant préparé comme piège avec les contrôles des gardiennes.
+- `kickswarm audit --url` audite jusqu'à l'horizon publié et indique combien d'entrées restent sous embargo.
+
+**Limites assumées :**
+
+- **L'embargo retarde la transparence**, typiquement de la durée d'une vérification. Le rejeu complet d'une entrée attend la fin de son embargo. Ce qui est sous embargo reste engagé par la tête publique et par les sceaux.
+- **Le coordinateur choisit encore l'aléa secret.** Il pourrait viser ou épargner une gardienne, mais le contrôle statistique le démasque dès que l'écart devient notable. Des graines engagées à l'avance, révélées ensuite, supprimeraient même cette marge.
+- **Un piège n'existe que si les tests visibles tuent au moins un mutant.** C'est le cas dès que les tests sont assez forts (P0-2). Sinon, ce résultat ne reçoit pas de piège.
+- **Deux gardiennes qui se concertent** peuvent comparer leurs livrables. C'est de la collusion, traitée par la preuve de personne unique (P3).
+
+### 6.9 Plusieurs auditeurs, puis plusieurs coordinateurs
 
 - **Étape 1 :** des auditeurs indépendants (communautés, universités, la fondation) rejouent le registre en continu et publient leur hash d'état.
 - **Étape 2 :** la fédération. Plusieurs coordinateurs partagent le registre et se vérifient mutuellement. Il n'y a plus de point de confiance unique.
@@ -399,7 +436,7 @@ Chaque erreur détectée laisse l'essaim plus fort qu'avant. C'est le sens exact
 |---|---|---|---|
 | **P0-1** ✅ | **Registre intégral et `kickswarm audit`** : objets signés complets, état rejoué, invariants vérifiés. *Fait : voir §6.4.* | F4, et la base de tout le reste | Moyenne |
 | **P0-2** ✅ | **Tests cachés + score de mutation + tests par propriétés** dans le vérificateur V0. *Fait : voir §3.6.* | F1 | Moyenne |
-| **P0-3** | **Pièges par mutation** et taux de pièges individuel | F3 | Petite |
+| **P0-3** ✅ | **Pièges par mutation** et taux de pièges individuel ; vérification anonyme, aléa secret et embargo du registre pour qu'ils restent indiscernables. *Fait : voir §6.8.* | F3 | Moyenne |
 | **P0-4** | **Réputation Beta et test de Wald** à la place de k = 2 (avec un plancher à 2) | F2, F6 | Moyenne |
 | **P0-5** ✅ | *Fait : voir §6.5.* **Signatures post-quantiques** : identités hybrides Ed25519 + ML-DSA-65 (FIPS 204), coordinateur et registre signés en SLH-DSA (FIPS 205, sécurité fondée sur les seules fonctions de hachage). Node 24 les fournit nativement. | Menace quantique sur Ed25519 | Moyenne |
 | **P1-1** | **Caste des chasseuses** et primes au contre-exemple | F1, auto-renforcement | Moyenne |

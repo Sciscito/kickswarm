@@ -1,6 +1,7 @@
 import { commitment, hashOf } from '../protocol/canonical.js';
 import { algoOf, isPostQuantum, verifyObject } from '../protocol/identity.js';
 import type { ContributorId, EngagementVerdict, Hash, Livrable, Result, TestCase, Verdict } from '../protocol/types.js';
+import { mutants } from '../verifier/mutation.js';
 import { verifierV0 } from '../verifier/v0.js';
 import { QUICKNET } from './balise.js';
 import { Coordinator, type BaliseAnnoncee, type CommandeDonnees } from './coordinator.js';
@@ -116,7 +117,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     if (e.nature !== 'commande') continue;
     commandes++;
     const c = e.donnees as CommandeDonnees;
-    if (opts.reverifier) await reverify(coord, c, e.seq, reverif, reveles, nonReveles);
+    if (opts.reverifier) await reverify(coord, c, e.seq, reverif, reveles, nonReveles, L.params.pieges_essais);
     try {
       await coord.replayCommande(c);
     } catch (err) {
@@ -197,6 +198,22 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
         : 'no verdict yet',
   );
 
+  // P0-3 : les pièges sont-ils tirés au taux annoncé pour chaque gardienne ? Le rejeu a recalculé chaque
+  // tirage (taux selon la réputation du moment, mutant choisi parmi ceux du vrai livrable) ; on compare le
+  // nombre de pièges à son espérance, pour démasquer un coordinateur qui en abuserait ou en épargnerait.
+  const tirages = coord.journalPieges;
+  const attendu = tirages.reduce((s, t) => s + t.taux, 0);
+  const variance = tirages.reduce((s, t) => s + t.taux * (1 - t.taux), 0);
+  const observes = tirages.filter((t) => t.piege).length;
+  const z = variance > 0 ? (observes - attendu) / Math.sqrt(variance) : 0;
+  add(
+    'Trap cells drawn at each guard’s announced rate',
+    Math.abs(z) <= 4,
+    tirages.length
+      ? `${observes} trap(s) in ${tirages.length} guard draw(s), ${attendu.toFixed(1)} expected (z = ${z.toFixed(2)}); each one a single-bug mutant of the real deliverable awaiting verification, rejected by the guards’ own checks`
+      : 'no guard draw on a deliverable that could be mimicked yet',
+  );
+
   // Part des signatures de contributeurs qui résistent à un ordinateur quantique.
   const signataires: string[] = [];
   for (const e of entries) {
@@ -271,7 +288,15 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
 }
 
 /** Relance le vérificateur V0 sur le livrable d'une commande, avant de la rejouer. */
-async function reverify(coord: Coordinator, c: CommandeDonnees, seq: number, issues: string[], reveles: Map<string, TestCase[]>, nonReveles: { n: number }): Promise<void> {
+async function reverify(
+  coord: Coordinator,
+  c: CommandeDonnees,
+  seq: number,
+  issues: string[],
+  reveles: Map<string, TestCase[]>,
+  nonReveles: { n: number },
+  piegesEssais = 8,
+): Promise<void> {
   const recorded = c.verifs?.[0];
   if (!recorded) return;
   let cible: { critere: NonNullable<ReturnType<Coordinator['critereOf']>>; livrable: Livrable } | undefined;
@@ -279,6 +304,15 @@ async function reverify(coord: Coordinator, c: CommandeDonnees, seq: number, iss
     const e = c.entree as { resultat: Result; livrable: Livrable };
     const critere = coord.critereOf(e.resultat.alveole);
     if (critere) cible = { critere, livrable: e.livrable };
+    // P0-3 : les mutants préparés comme pièges, rejoués avec les seuls contrôles des gardiennes.
+    if (critere && c.verifs.length > 1) {
+      const ms = mutants(e.livrable, { max: piegesEssais });
+      for (const [i, rapport] of c.verifs.slice(1).entries()) {
+        const m = ms[i];
+        const again = m ? await verifierV0(critere, m.livrable, { sansCaches: true }) : undefined;
+        if (!again || again.ok !== rapport.ok) issues.push(`#${seq}: trap mutant ${i + 1} is recorded as ${rapport.ok ? 'passing' : 'failing'} the guards’ checks, a fresh run disagrees`);
+      }
+    }
   } else if (c.type === 'submitVerdict') {
     cible = coord.resultForReverify((c.entree as { verdict: Verdict }).verdict.resultat);
   }

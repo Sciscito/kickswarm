@@ -133,17 +133,14 @@ test('engagement : une gardienne qui révèle après coup est jugée quand même
 });
 
 test('engagement : un piège suit le même chemin qu’un vrai résultat', async () => {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 1 }, rng: seededRng(3) });
-  c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
-  c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
-  const s = c.claim(makeRequete(lea, 'claim'))!;
-  if (s.caste !== 'gardienne') {
-    const d = await c.submitDecomposition(makeDecomposition(lea, s.alveole_id, ENFANTS));
-    c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'ok'));
+  const { c, resultat } = await resultatEnAttente({ params: { taux_pieges: 1 } });
+  let p = c.claim(makeRequete(amara, 'claim'));
+  for (let i = 0; i < 50 && !p?.a_verifier; i++) {
+    if (p) c.release(makeRequete(amara, 'release', { alveole: p.alveole_id }));
+    p = c.claim(makeRequete(amara, 'claim'));
   }
-  const p = c.claim(makeRequete(amara, 'claim'))!;
-  assert.equal(p.caste, 'gardienne');
-  const v = makeVerdict(amara, p.a_verifier!.id, 'rejete', 'les tests échouent');
+  assert.notEqual(p!.a_verifier!.id, resultat, 'à taux 1, la nouvelle venue reçoit un piège');
+  const v = makeVerdict(amara, p!.a_verifier!.id, 'rejete', 'les tests échouent');
   await assert.rejects(c.submitVerdict(v), /Engage-toi d’abord/, 'un piège exige aussi un engagement');
   assert.equal(c.engagerVerdict(makeEngagement(amara, v)).statut, 'engage');
   const r = await c.submitVerdict(v);

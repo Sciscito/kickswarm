@@ -138,17 +138,31 @@ test('une gardienne qui rejette à tort un résultat juste perd de la réputatio
 test('alvéoles-pièges : la gardienne attentive gagne, la complaisante perd la moitié', async () => {
   const c = nouvelleRuche({ taux_pieges: 1 });
   await decouper(c);
-  const p1 = c.claim(makeRequete(amara, 'claim'))!;
-  assert.equal(p1.caste, 'gardienne');
+  const a = c.claim(makeRequete(kenji, 'claim'))!;
+  const mod = a.alveole.critere_fini.module!;
+  const { SOLUTIONS } = await import('../src/exemples/maths.js');
+  const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
+  const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
+  // Tirée sur ce résultat, une nouvelle venue reçoit à coup sûr (taux 1) un mutant du vrai livrable.
+  const gardienne = (bee: Identity) => {
+    for (let i = 0; i < 50; i++) {
+      const g = c.claim(makeRequete(bee, 'claim'));
+      if (g?.a_verifier) return g;
+      if (g) c.release(makeRequete(bee, 'release', { alveole: g.alveole_id }));
+    }
+    throw new Error('jamais tirée gardienne');
+  };
+  const p1 = gardienne(amara);
+  assert.notEqual(p1.a_verifier!.id, r.resultat);
   const r1 = await juger(c, amara, p1.a_verifier!.id, 'rejete', 'les tests échouent');
   assert.deepEqual([r1.piege, r1.correct], [true, true]);
   assert.equal(c.account(amara.id).miel_gagne, 12);
 
-  const p2 = c.claim(makeRequete(kenji, 'claim'))!;
-  const avant = c.account(kenji.id).reputation;
-  const r2 = await juger(c, kenji, p2.a_verifier!.id, 'valide', 'ça a l’air bien');
+  const p2 = gardienne(lea);
+  const avant = c.account(lea.id).reputation;
+  const r2 = await juger(c, lea, p2.a_verifier!.id, 'valide', 'ça a l’air bien');
   assert.deepEqual([r2.piege, r2.correct], [true, false]);
-  assert.equal(c.account(kenji.id).reputation, Math.round(avant * 0.5 * 10_000) / 10_000);
+  assert.equal(c.account(lea.id).reputation, Math.round(avant * 0.5 * 10_000) / 10_000);
 });
 
 test('bail expiré : l’alvéole revient dans l’essaim', async () => {
@@ -161,7 +175,7 @@ test('bail expiré : l’alvéole revient dans l’essaim', async () => {
   assert.throws(() => c.claim(makeRequete(amara, 'claim')), /expirée/, 'une requête hors de la fenêtre anti-rejeu est refusée');
   c.claim(signObject<Requete>({ type: 'osp.requete/0.1', action: 'claim', contributeur: amara.id, ts: maintenant, nonce: newNonce() }, amara));
   assert.ok(c.account(kenji.id).reputation < avant, 'un bail expiré coûte un peu de réputation');
-  assert.notEqual(c.hiveView('maths').alveoles.find((x) => x.id === a.alveole_id)!.etat, 'reservee');
+  assert.notEqual(c.liveView('maths').alveoles.find((x) => x.id === a.alveole_id)!.abeille?.par, kenji.id, 'kenji a perdu son bail');
 });
 
 test('anti-rejeu, pause et orientation', async () => {

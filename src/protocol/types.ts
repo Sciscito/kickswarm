@@ -229,8 +229,11 @@ export interface Assignment {
   capsule: string;
   profondeur: number;
   bail_expire: number;
-  /** Pour une gardienne : le résultat à vérifier. */
-  a_verifier?: { id: Hash; resultat: Result; livrable: Livrable };
+  /**
+   * Pour une gardienne : le livrable à vérifier, et l'identifiant à citer dans son verdict.
+   * La vérification est anonyme (OSP v0.2 P0-3) : ni l'auteur, ni rien qui distingue un piège.
+   */
+  a_verifier?: { id: Hash; livrable: Livrable };
   /** Pour une bâtisseuse : les livrables validés des enfants. */
   enfants_valides?: Array<{ chemin: string; objectif: string; module: string; livrable: Livrable }>;
 }

@@ -15,8 +15,14 @@ export interface Params {
   niveau_approbation_porteur: number;
   /** §9.1 : gardiennes requises pour une alvéole V0, en plus du vérificateur automatique. */
   gardiennes_v0: number;
-  /** §9.4 */
+  /** §9.4 et OSP v0.2 P0-3 : taux de pièges d'une gardienne nouvelle venue ; il baisse avec sa réputation. */
   taux_pieges: number;
+  /** OSP v0.2 P0-3 : plancher du taux de pièges, même pour les gardiennes les plus fiables. */
+  taux_pieges_min: number;
+  /** OSP v0.2 P0-3 : mutants essayés par livraison pour fabriquer des pièges. */
+  pieges_essais: number;
+  /** OSP v0.2 P0-3 : délai maximal avant publication d'une entrée du registre, même si une vérification reste ouverte. */
+  embargo_max_ms: number;
   /** OSP v0.2 §3.2 : part minimale des mutants que les tests d'un enfant doivent détecter. */
   score_mutation_min: number;
   /** OSP v0.2 §3.2 : exiger une référence pour chaque enfant, afin de mesurer la force de ses tests. */
@@ -76,7 +82,10 @@ export const DEFAULT_PARAMS: Params = {
   profondeur_max: 8,
   niveau_approbation_porteur: 1,
   gardiennes_v0: 2,
-  taux_pieges: 0.04,
+  taux_pieges: 0.1,
+  taux_pieges_min: 0.01,
+  pieges_essais: 8,
+  embargo_max_ms: 2 * HEURE,
   score_mutation_min: 0.8,
   reference_obligatoire: false,
   miel_base: 6,

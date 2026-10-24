@@ -147,10 +147,12 @@ test('plugin gardienne : le verdict part scellé, reste sur disque, et se révè
     assert.equal(new Scelles(fichier).tous.length, 1, 'le verdict scellé, sel compris, est gardé sur disque');
 
     const seconde = texte(await B.mcp.callTool({ name: 'swarm_next', arguments: {} }));
-    assert.match(seconde, /Verdict recorded: en_verification/, 'la seconde gardienne ouvre la révélation et révèle aussitôt');
+    // B ouvre la révélation et révèle aussitôt ; le plugin de A peut avoir révélé juste avant lui.
+    assert.match(seconde, /Verdict recorded: (en_verification|miel)/, 'la seconde gardienne ouvre la révélation et révèle aussitôt');
 
     // Le plugin de A révèle en tâche de fond, sans attendre que son IA rappelle un outil.
-    for (let i = 0; i < 100 && coord.hiveView('maths').progression.miel === 0; i++) await new Promise((r) => setTimeout(r, 30));
+    const fini = () => coord.hiveView('maths').progression.miel === 1 && new Scelles(fichier).tous.length === 0;
+    for (let i = 0; i < 100 && !fini(); i++) await new Promise((r) => setTimeout(r, 30));
     assert.equal(coord.hiveView('maths').progression.miel, 1, 'les deux verdicts révélés : l’alvéole devient du miel');
     assert.equal(new Scelles(fichier).tous.length, 0);
     const natures = A.journal.dernieres(50).map((e) => e.nature);

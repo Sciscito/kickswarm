@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonicalize, commitment, hashOf, sha256 } from '../protocol/canonical.js';
@@ -22,6 +23,7 @@ import type {
   TestCase,
   Verdict,
 } from '../protocol/types.js';
+import { mutants } from '../verifier/mutation.js';
 import { adequation, validateCritere, validateLivrable, validateTests, verifierV0, type VerifOptions, type VerifReport } from '../verifier/v0.js';
 import { COMMUN, Ledger, type Account } from './ledger.js';
 import { transition } from './lifecycle.js';
@@ -94,6 +96,9 @@ interface ResultRecord {
   livrable: Livrable;
   rapport: VerifReport;
   statut: 'en_verification' | 'valide' | 'rejete';
+  soumis_a: number;
+  /** OSP v0.2 P0-3 : mutants de ce livrable que les contrôles des gardiennes rejettent, du plus subtil au moins subtil. */
+  mutants: Array<{ livrable: Livrable; echecs: number }>;
 }
 
 interface DecompRecord {
@@ -103,10 +108,15 @@ interface DecompRecord {
   force_tests: Array<number | null>;
 }
 
+/**
+ * OSP v0.2 P0-3 : un piège est un mutant de la vraie livraison en attente sur l'alvéole,
+ * confié à la place de celle-ci. Il occupe une place de gardienne, comme un vrai résultat.
+ */
 interface Piege {
-  resultat: Result;
   livrable: Livrable;
   alveole: Hash;
+  /** Le vrai résultat dont il est le mutant. */
+  vraie: Hash;
   attribue_a: ContributorId;
   expire: number;
   /** P1-3 : l'engagement de la gardienne, comme pour un vrai résultat. */
@@ -169,6 +179,8 @@ export interface CommandeDonnees {
   secrets?: Record<string, unknown>;
   /** P1-3 : la balise d'aléa public dont découlent les tirages de cette commande. */
   balise?: Balise;
+  /** P0-3 : tirages secrets (les pièges), hors balise publique ; publiés avec la commande, après l'embargo. */
+  alea_secret?: number[];
   etat: Hash;
 }
 
@@ -178,6 +190,7 @@ export type BaliseAnnoncee = BaliseInfo & { decalage: number };
 interface ReplayStep {
   at: number;
   alea: number[];
+  alea_secret: number[];
   signatures: string[];
   verifs: VerifReport[];
   secrets: Record<string, unknown>;
@@ -237,7 +250,6 @@ export interface LiveView {
     rejets: number;
     abeille?: { par: ContributorId; caste: Caste };
     gardiennes: ContributorId[];
-    piege?: ContributorId;
     auteur?: ContributorId;
     validee_par?: ContributorId[];
   }>;
@@ -248,6 +260,12 @@ export interface LiveView {
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,39}$/;
 const DEFAULT_BUDGET = { tokens_max: 200_000, duree_max_s: 1800 };
 const MAX_IMPASSES = 20;
+
+/** Un flottant uniforme sur [0, 1), 53 bits tirés du générateur cryptographique. */
+function aleaCrypto(): number {
+  const b = randomBytes(7);
+  return (b.readUIntBE(0, 6) * 32 + (b[6]! >>> 3)) / 2 ** 53;
+}
 
 function cheminCompare(a: string, b: string): number {
   const pa = a.split('.').map(Number);
@@ -272,8 +290,13 @@ export class Coordinator {
   private readonly occupees = new Set<Hash>();
   /** Pendant une commande : l'heure figée, et ce qu'il faut inscrire pour pouvoir la rejouer. */
   private clock: number | null = null;
-  private recording: { alea: number[]; signatures: string[]; secrets: Record<string, unknown> } | null = null;
-  private replayCtx: { alea: number[]; signatures: string[]; secrets: Record<string, unknown> } | null = null;
+  private recording: { alea: number[]; alea_secret: number[]; signatures: string[]; secrets: Record<string, unknown> } | null = null;
+  private replayCtx: { alea: number[]; alea_secret: number[]; signatures: string[]; secrets: Record<string, unknown> } | null = null;
+  /** P0-3 : l'aléa secret des pièges (cryptographique, jamais tiré de la balise publique). */
+  private readonly baseRngSecret: Rng;
+  /** P0-3 : chaque tirage de piège, avec le taux annoncé : de quoi vérifier statistiquement les taux. */
+  readonly journalPieges: Array<{ taux: number; piege: boolean }> = [];
+  private readonly rangsSoumission = new Map<string, number>();
   /** Le coffre : tests cachés et références, par engagement. Privé, hors de l'état et du registre. */
   private coffre: Record<string, unknown> = {};
   private replayNext: ReplayStep | null = null;
@@ -300,10 +323,28 @@ export class Coordinator {
     return v;
   };
 
+  /**
+   * P0-3 : l'aléa des pièges. Une gardienne peut recalculer ses tirages drand ; si le piège en
+   * découlait, elle saurait d'avance qu'elle en reçoit un. Il vient donc d'un aléa secret,
+   * inscrit avec la commande et publié seulement après l'embargo.
+   */
+  private readonly rngSecret: Rng = () => {
+    if (this.replayCtx) {
+      const v = this.replayCtx.alea_secret.shift();
+      if (v === undefined) throw new ReplayDivergence('Tirage secret absent du registre');
+      return v;
+    }
+    const v = this.baseRngSecret();
+    this.recording?.alea_secret.push(v);
+    return v;
+  };
+
   constructor(private readonly options: CoordinatorOptions) {
     if (!isContributorId(options.fondateur)) throw new Error('Identifiant du fondateur invalide');
     this.params = { ...DEFAULT_PARAMS, ...options.params };
-    this.baseRng = options.rng ?? Math.random;
+    // Un aléa cryptographique : les tirages passés sont publics, ils ne doivent pas permettre de deviner les suivants.
+    this.baseRng = options.rng ?? aleaCrypto;
+    this.baseRngSecret = options.rng ?? aleaCrypto;
     this.baseNow = options.now ?? Date.now;
     this.verifier = options.verifier ?? verifierV0;
     if (options.replay && options.dataDir) throw new Error('Le mode audit travaille en mémoire, sans dossier de données');
@@ -417,6 +458,25 @@ export class Coordinator {
     return undefined;
   }
 
+  /**
+   * Ce que le coordinateur publie en temps réel (P0-3) : le contenu du registre jusqu'à l'horizon,
+   * avec l'état qui en découle, et la tête réelle du registre, avec son dernier sceau. La tête engage
+   * tout ce qui est encore sous embargo : un observateur qui la note voit toute réécriture ultérieure.
+   */
+  etatPublie(): { seq: number; etat: Hash | null; tete: { seq: number; hash: Hash } | null; sceau: { seq: number; sceau: unknown } | null } {
+    const seq = this.horizon();
+    let etat: Hash | null = null;
+    for (let i = seq; i >= 0; i--) {
+      const e = this.registry.entries[i]!;
+      if (e.nature === 'commande') {
+        etat = (e.donnees as CommandeDonnees).etat;
+        break;
+      }
+    }
+    const t = this.registry.entries[this.registry.entries.length - 1];
+    return { seq, etat, tete: t ? { seq: t.seq, hash: t.hash } : null, sceau: this.dernierSceauInscrit() ?? null };
+  }
+
   /** Empreinte de l'état complet : ce que les auditeurs comparent. */
   stateHash(): Hash {
     return sha256(canonicalize(this.state));
@@ -440,7 +500,9 @@ export class Coordinator {
    */
   async replayCommande(c: CommandeDonnees): Promise<void> {
     if (!this.options.replay) throw new Error('Rejeu réservé à un coordinateur créé en mode audit');
-    this.replayNext = { at: c.at, alea: [...(c.alea ?? [])], signatures: [...(c.signatures ?? [])], verifs: c.verifs ?? [], secrets: c.secrets ?? {} };
+    this.replayNext = {
+      at: c.at, alea: [...(c.alea ?? [])], alea_secret: [...(c.alea_secret ?? [])], signatures: [...(c.signatures ?? [])], verifs: c.verifs ?? [], secrets: c.secrets ?? {},
+    };
     const e = c.entree as {
       ruche: Hive; racine: CellSpec; decision: Decision; requete: Requete; resultat: Result; livrable: Livrable; decomposition: Decomposition;
       engagement: EngagementVerdict; verdict: Verdict;
@@ -473,22 +535,24 @@ export class Coordinator {
     if (this.options.replay && !replay) throw new Error('Coordinateur en mode audit : il ne fait que rejouer le registre');
     const at = replay ? replay.at : this.baseNow();
     this.clock = at;
-    this.replayCtx = replay ? { alea: [...replay.alea], signatures: [...replay.signatures], secrets: replay.secrets } : null;
-    this.recording = replay ? null : { alea: [], signatures: [], secrets: {} };
+    this.replayCtx = replay ? { alea: [...replay.alea], alea_secret: [...replay.alea_secret], signatures: [...replay.signatures], secrets: replay.secrets } : null;
+    this.recording = replay ? null : { alea: [], alea_secret: [], signatures: [], secrets: {} };
+    const pieges = this.journalPieges.length;
     const snapshot = structuredClone(this.state);
     this.registry.begin();
     try {
       const out = fn();
       // Tirés avec la balise, les aléas sont recalculés et non repris : on ne contrôle que les signatures.
-      if (this.replayCtx && ((!this.tirageBalise && this.replayCtx.alea.length) || this.replayCtx.signatures.length)) {
+      if (this.replayCtx && ((!this.tirageBalise && this.replayCtx.alea.length) || this.replayCtx.alea_secret.length || this.replayCtx.signatures.length)) {
         throw new ReplayDivergence('Le rejeu a consommé moins de tirages ou de signatures que l’original');
       }
       const alea = this.tirageBalise ? this.tirageBalise.tirages : replay ? replay.alea : this.recording!.alea;
+      const alea_secret = replay ? replay.alea_secret : this.recording!.alea_secret;
       const signatures = replay ? replay.signatures : this.recording!.signatures;
       const secrets = replay ? replay.secrets : this.recording!.secrets;
       this.registry.append('commande', {
         type, entree, at, alea, signatures, verifs, ...(Object.keys(secrets).length ? { secrets } : {}),
-        ...(this.tirageBalise ? { balise: this.tirageBalise.balise } : {}), etat: this.stateHash(),
+        ...(this.tirageBalise ? { balise: this.tirageBalise.balise } : {}), ...(alea_secret.length ? { alea_secret } : {}), etat: this.stateHash(),
       } satisfies CommandeDonnees);
       this.registry.commit();
       this.save();
@@ -498,6 +562,7 @@ export class Coordinator {
       this.state = snapshot;
       this.ledger.accounts = this.state.accounts;
       this.registry.rollback();
+      this.journalPieges.length = pieges;
       throw e;
     } finally {
       this.clock = null;
@@ -699,7 +764,6 @@ export class Coordinator {
     const cells = this.cellsOf(slug).sort((a, b) => cheminCompare(a.cell.chemin, b.cell.chemin));
     const ids = new Set<string>(cells.map((c) => c.id));
     const actif = (b?: Bail) => (b && b.expire > now ? { par: b.par, caste: b.caste } : undefined);
-    const pieges = Object.values(this.state.pieges).filter((p) => ids.has(p.alveole) && p.expire > now);
 
     const classement = Object.entries(hive.contributions)
       .map(([id, g]) => ({
@@ -711,7 +775,9 @@ export class Coordinator {
       .sort((a, b) => b.grammes - a.grammes)
       .slice(0, 20);
 
+    // Le journal public s'arrête à l'horizon de l'embargo (P0-3).
     const journal = this.registry.entries
+      .slice(0, this.horizon() + 1)
       .filter((e) => {
         const d = (e.donnees ?? {}) as Record<string, unknown>;
         return d.ruche === slug || d.slug === slug || ids.has(String(d.alveole)) || (e.nature === 'decision' && String(d.cible ?? '').startsWith(slug));
@@ -734,8 +800,12 @@ export class Coordinator {
         profondeur: c.profondeur,
         rejets: c.rejets,
         abeille: actif(c.bail),
-        gardiennes: [...c.gardiennes.filter((g) => g.expire > now).map((g) => g.par), ...this.engagesSur(c.en_attente).map((e) => e.par)],
-        piege: pieges.find((p) => p.alveole === c.id)?.attribue_a,
+        // Une gardienne qui a reçu un piège apparaît comme les autres : la vue publique ne trahit rien.
+        gardiennes: [
+          ...c.gardiennes.filter((g) => g.expire > now).map((g) => g.par),
+          ...this.engagesSur(c.en_attente).map((e) => e.par),
+          ...this.piegesSur(c).filter((p) => p.expire > now).map((p) => p.attribue_a),
+        ],
         auteur: c.resultat_valide ? this.state.results[c.resultat_valide]?.resultat.auteur : undefined,
         validee_par: c.validee_par,
       })),
@@ -744,9 +814,10 @@ export class Coordinator {
     };
   }
 
-  board(slug: string): BoardEntry[] {
+  /** Le tableau noir public, sans l'identifiant du résultat source : une gardienne le comparerait à son ticket (P0-3). */
+  board(slug: string): Array<Omit<BoardEntry, 'source'>> {
     this.hiveOrThrow(slug);
-    return this.state.board[slug] ?? [];
+    return (this.state.board[slug] ?? []).map(({ source: _source, ...e }) => e);
   }
 
   account(id: ContributorId | typeof COMMUN): Account & { id: string; trophees: Trophee[] } {
@@ -853,12 +924,6 @@ export class Coordinator {
     const slugs = new Set(hives.map((h) => h.ruche.slug));
     const cells = Object.values(this.state.cells).filter((c) => slugs.has(c.cell.ruche));
 
-    // Verrou 4 (§9.4) : une part des tâches de vérification sont des pièges.
-    if (cells.length && this.rng() < this.params.taux_pieges) {
-      const piege = this.makeTrap(who, cells);
-      if (piege) return piege;
-    }
-
     // Verrous 1 et 2 (§9.2) : k gardiennes distinctes, tirées au sort, jamais l'auteur.
     const k = Math.max(1, this.params.gardiennes_v0);
     const aVerifier = cells.filter((c) => {
@@ -866,17 +931,26 @@ export class Coordinator {
       const rr = this.state.results[c.en_attente];
       if (!rr || rr.resultat.auteur === who) return false;
       const engages = this.engagesSur(c.en_attente);
-      if (c.gardiennes.some((g) => g.par === who) || c.verdicts.includes(who) || engages.some((e) => e.par === who)) return false;
-      return c.gardiennes.length + engages.length + c.verdicts.length < k;
+      const pieges = this.piegesSur(c);
+      if (c.gardiennes.some((g) => g.par === who) || c.verdicts.includes(who) || engages.some((e) => e.par === who) || pieges.some((p) => p.attribue_a === who)) return false;
+      return c.gardiennes.length + engages.length + c.verdicts.length + pieges.length < k;
     });
     const libres = cells.filter((c) => c.state === 'libre');
 
     if (aVerifier.length && (libres.length === 0 || this.rng() < 0.5)) {
       const rec = aVerifier[Math.floor(this.rng() * aVerifier.length)]!;
-      const bail: Bail = { par: who, caste: 'gardienne', expire: this.leaseEnd(rec) };
-      rec.gardiennes.push(bail);
       const rr = this.state.results[rec.en_attente!]!;
-      return { ...this.assignment(rec, 'gardienne', bail.expire), a_verifier: { id: rec.en_attente!, resultat: rr.resultat, livrable: rr.livrable } };
+      const expire = this.leaseEnd(rec);
+      // Verrou 4 (§9.4, OSP v0.2 P0-3) : à la place du vrai résultat, un mutant de celui-ci, avec un
+      // taux propre à chaque gardienne. Même alvéole, même place, même bail : rien ne le distingue.
+      if (this.piegeable(rr)) {
+        const taux = this.tauxPieges(who);
+        const piege = this.rngSecret() < taux;
+        this.journalPieges.push({ taux, piege });
+        if (piege) return this.makeTrap(who, rec, rr, expire);
+      }
+      rec.gardiennes.push({ par: who, caste: 'gardienne', expire });
+      return { ...this.assignment(rec, 'gardienne', expire), a_verifier: { id: rec.en_attente!, livrable: rr.livrable } };
     }
     if (!libres.length) return null;
 
@@ -942,18 +1016,33 @@ export class Coordinator {
 
   async submitResult(res: Result, livrable: Livrable): Promise<{ statut: 'rejete' | 'en_verification' | 'miel'; resultat: Hash; rapport: VerifReport }> {
     const replay = this.replayNext;
-    const rapport = replay ? replay.verifs[0] : await this.verifyResult(res, livrable);
+    const verifs = replay ? replay.verifs : await this.verifyResult(res, livrable);
+    const [rapport, ...mutants] = verifs;
     if (!rapport) throw new ReplayDivergence('Rapport de vérification absent du registre');
-    return this.run('submitResult', { resultat: res, livrable }, [rapport], () => this.doSubmitResult(res, livrable, rapport));
+    return this.run('submitResult', { resultat: res, livrable }, verifs, () => this.doSubmitResult(res, livrable, rapport, mutants));
   }
 
-  /** Contrôles sans effet, puis vérification automatique, hors de la transaction. */
-  private async verifyResult(res: Result, livrable: Livrable): Promise<VerifReport> {
+  /**
+   * Contrôles sans effet, puis vérification automatique, hors de la transaction. Si le livrable
+   * passe, on prépare de quoi fabriquer des pièges (P0-3) : ses mutants, passés aux seuls contrôles
+   * que rejouent les gardiennes. Ceux qu'elles rejettent pourront leur être confiés à la place du vrai.
+   */
+  private async verifyResult(res: Result, livrable: Livrable): Promise<VerifReport[]> {
     const rec = this.checkResult(res, livrable);
     if (this.occupees.has(rec.id)) throw new OspError('Une vérification est déjà en cours pour cette alvéole', 409);
     this.occupees.add(rec.id);
     try {
-      return await this.verifier(rec.cell.critere_fini, livrable, { caches: this.cachesFor(rec) });
+      const rapport = await this.verifier(rec.cell.critere_fini, livrable, { caches: this.cachesFor(rec) });
+      const crit = rec.cell.critere_fini;
+      if (!rapport.ok || this.params.taux_pieges <= 0 || this.params.gardiennes_v0 <= 0 || crit.verificateur !== 'tests-js@1') return [rapport];
+      const reports = [rapport];
+      let tues = 0;
+      for (const m of mutants(livrable, { max: this.params.pieges_essais })) {
+        const r = await this.verifier(crit, m.livrable, { sansCaches: true });
+        reports.push(r);
+        if (!r.ok && ++tues >= 3) break;
+      }
+      return reports;
     } finally {
       this.occupees.delete(rec.id);
     }
@@ -976,12 +1065,25 @@ export class Coordinator {
     return rec;
   }
 
-  private doSubmitResult(res: Result, livrable: Livrable, rapport: VerifReport): { statut: 'rejete' | 'en_verification' | 'miel'; resultat: Hash; rapport: VerifReport } {
+  private doSubmitResult(
+    res: Result,
+    livrable: Livrable,
+    rapport: VerifReport,
+    essais: VerifReport[],
+  ): { statut: 'rejete' | 'en_verification' | 'miel'; resultat: Hash; rapport: VerifReport } {
     // L'état a pu changer pendant la vérification : on recontrôle, dans la transaction.
     const rec = this.checkResult(res, livrable);
     if (rec.state === 'reservee') transition(rec, 'en_cours');
     const id = hashOf(res);
-    this.state.results[id] = { resultat: res, livrable, rapport, statut: 'en_verification' };
+    // Les mutants sont recalculés à l'identique (le moteur est déterministe) ; seuls les rapports viennent de l'exécution.
+    const candidats = essais.length ? mutants(livrable, { max: this.params.pieges_essais }) : [];
+    if (essais.length > candidats.length) throw new ReplayDivergence('Plus de rapports de mutants que de mutants');
+    // Un bon piège se charge et passe une partie des tests : seule une vraie vérification le démasque.
+    const pieges = essais
+      .map((r, i) => ({ livrable: candidats[i]!.livrable, echecs: r.ok ? 0 : r.tests.filter((t) => !t.ok).length }))
+      .filter((m) => m.echecs > 0)
+      .sort((a, b) => a.echecs - b.echecs);
+    this.state.results[id] = { resultat: res, livrable, rapport, statut: 'en_verification', soumis_a: this.now(), mutants: pieges };
     delete rec.bail;
     this.registry.append('resultat_soumis', {
       id,
@@ -1300,6 +1402,8 @@ export class Coordinator {
     delete rec.en_attente;
     rec.gardiennes = [];
     rec.verdicts = [];
+    // Les pièges pas encore engagés disparaissent avec le résultat, comme les places des vraies gardiennes.
+    for (const [pid, p] of Object.entries(this.state.pieges)) if (p.vraie === resultId && !p.engagement) delete this.state.pieges[pid];
     const hive = this.state.hives[rec.cell.ruche]!;
     this.branchStats(hive, rec).echecs++;
     this.ledger.reputation(rr.resultat.auteur, 'resultat_rejete');
@@ -1385,33 +1489,68 @@ export class Coordinator {
     this.registry.append('ruche_terminee', { slug, miel_total: Math.round(total * 1000) / 1000 });
   }
 
-  private makeTrap(who: ContributorId, cells: CellRecord[]): Assignment | null {
-    const bases = cells.filter((c) => c.cell.atomique && c.enfants.length === 0 && c.state !== 'bloquee' && c.cell.critere_fini.verificateur === 'tests-js@1');
-    if (!bases.length) return null;
-    const rec = bases[Math.floor(this.rng() * bases.length)]!;
-    const critere = rec.cell.critere_fini;
-    if (critere.verificateur !== 'tests-js@1') return null;
-    const fns = [...new Set([...critere.tests.map((t) => t.fn), ...(critere.proprietes ?? []).map((p) => p.fn)])];
-    const livrable: Livrable = {
-      fichiers: { [critere.module ?? 'solution.mjs']: fns.map((f) => `export function ${f}() { return '__piege__'; }`).join('\n') + '\n' },
-    };
-    const resultat = this.sign<Result>(
-      {
-        type: 'osp.result/0.1',
-        alveole: rec.id,
-        auteur: this.identitePieges.id,
-        caste: 'ouvriere',
-        livrable: hashOf(livrable),
-        impasses: [],
-        agent: { famille: 'inconnue' },
-        cout: { tokens: Math.floor(this.rng() * 1e9) },
-      },
-      this.identitePieges,
-    );
-    const id = hashOf(resultat);
-    const expire = this.leaseEnd(rec);
-    this.state.pieges[id] = { resultat, livrable, alveole: rec.id, attribue_a: who, expire };
-    return { ...this.assignment(rec, 'gardienne', expire), a_verifier: { id, resultat, livrable } };
+  /**
+   * P0-3 : un piège, c'est le vrai livrable en attente avec un seul bug subtil, que les contrôles des
+   * gardiennes démasquent. Il prend une place de gardienne sur l'alvéole, comme le vrai résultat.
+   */
+  private makeTrap(who: ContributorId, rec: CellRecord, rr: ResultRecord, expire: number): Assignment {
+    const m = rr.mutants[Math.floor(this.rngSecret() * rr.mutants.length)]!;
+    // Un identifiant aussi opaque que celui d'un vrai résultat.
+    const id = sha256(canonicalize({ type: 'osp.piege/0.2', vraie: rec.en_attente, gardienne: who, sel: [this.rngSecret(), this.rngSecret()] }));
+    this.state.pieges[id] = { livrable: m.livrable, alveole: rec.id, vraie: rec.en_attente!, attribue_a: who, expire };
+    return { ...this.assignment(rec, 'gardienne', expire), a_verifier: { id, livrable: m.livrable } };
+  }
+
+  /** Un résultat peut servir de modèle à des pièges tant qu'il a des mutants et que sa soumission est sous embargo. */
+  private piegeable(rr: ResultRecord): boolean {
+    return rr.mutants.length > 0 && this.now() - rr.soumis_a < this.params.embargo_max_ms;
+  }
+
+  /**
+   * P0-3 : le taux de pièges d'une gardienne. Élevé pour une nouvelle venue, il baisse avec sa
+   * réputation sans descendre sous le plancher : c'est le moyen le moins cher de mesurer chacune.
+   */
+  tauxPieges(who: ContributorId): number {
+    const t = this.params.taux_pieges;
+    if (t <= 0) return 0;
+    const rep = this.ledger.peek(who).reputation;
+    const p = Math.round(((t * (1 - rep)) / (1 - this.params.reputation_initiale)) * 1e6) / 1e6;
+    return Math.min(1, Math.max(Math.min(t, this.params.taux_pieges_min), p));
+  }
+
+  /** Les pièges encore ouverts sur le résultat en attente d'une alvéole : chacun y occupe une place. */
+  private piegesSur(rec: CellRecord): Piege[] {
+    return rec.en_attente ? Object.values(this.state.pieges).filter((p) => p.alveole === rec.id && p.vraie === rec.en_attente) : [];
+  }
+
+  /**
+   * OSP v0.2 P0-3 : la dernière entrée publiable du registre. Tant qu'un résultat attend ses
+   * gardiennes, sa soumission et tout ce qui suit restent sous embargo : sinon une gardienne
+   * comparerait le livrable reçu au livrable publié, et reconnaîtrait un piège. La tête du
+   * registre (son hash, ses sceaux) reste publique : rien de ce qui est sous embargo ne peut changer.
+   */
+  horizon(): number {
+    const entries = this.registry.entries;
+    let h = entries.length - 1;
+    const limite = this.baseNow() - this.params.embargo_max_ms;
+    for (const [id, rr] of Object.entries(this.state.results)) {
+      if (rr.statut === 'en_verification' && rr.soumis_a >= limite) h = Math.min(h, this.debutSoumission(id) - 1);
+    }
+    return h;
+  }
+
+  /** Rang de la première entrée d'une soumission (`resultat_soumis`), retrouvé dans le registre puis gardé en mémoire. */
+  private debutSoumission(id: string): number {
+    const connu = this.rangsSoumission.get(id);
+    if (connu !== undefined && this.registry.entries[connu]?.nature === 'resultat_soumis') return connu;
+    for (let i = this.registry.entries.length - 1; i >= 0; i--) {
+      const e = this.registry.entries[i]!;
+      if (e.nature === 'resultat_soumis' && (e.donnees as { id: string }).id === id) {
+        this.rangsSoumission.set(id, i);
+        return i;
+      }
+    }
+    return 0;
   }
 
   private assignment(rec: CellRecord, caste: Caste, bail_expire: number): Assignment {
@@ -1479,10 +1618,11 @@ export class Coordinator {
     }
     for (const [id, p] of Object.entries(this.state.pieges)) {
       if (p.expire > now) continue;
+      // Exactement comme pour un vrai résultat : bail expiré, ou verdict scellé jamais révélé.
       if (p.engagement) {
         this.ledger.reputation(p.attribue_a, 'non_revele');
         this.registry.append('engagement_expire', { resultat: id, gardienne: p.attribue_a });
-      }
+      } else this.ledger.reputation(p.attribue_a, 'bail_expire');
       delete this.state.pieges[id];
     }
     for (const hive of Object.values(this.state.hives)) hive.orientations = hive.orientations.filter((o) => o.expire > now);
@@ -1568,6 +1708,10 @@ export class Coordinator {
     this.state.compteurs ??= {};
     this.state.contributeurs ??= [];
     this.state.engagements ??= {};
+    for (const rr of Object.values(this.state.results)) {
+      rr.soumis_a ??= 0;
+      rr.mutants ??= [];
+    }
     for (const c of Object.values(this.state.cells)) {
       const ancien = c as CellRecord & { gardienne?: Bail; validee_par?: unknown };
       c.gardiennes ??= ancien.gardienne ? [ancien.gardienne] : [];

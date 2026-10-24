@@ -142,22 +142,27 @@ async function main(): Promise<void> {
       let entries: RegistryEntry[];
       let announced: string | undefined;
       let source: string;
+      let embargo = 0;
       const file = opts.file ?? (opts.url === undefined ? join(resolve(opts.data ?? 'data'), 'registre.jsonl') : undefined);
       if (file && existsSync(file)) {
         source = file;
         entries = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l) as RegistryEntry);
       } else {
         // State hash first, then the registry cut at the same entry: the live hive keeps moving.
-        const head = (await (await fetch(new URL('/v0/state-hash', url))).json()) as { seq: number; etat: string };
+        // Entries still under embargo (open verifications) come later; the head hash already commits to them.
+        const head = (await (await fetch(new URL('/v0/state-hash', url))).json()) as { seq: number; etat: string | null; tete?: { seq: number } | null };
         const all = (await (await fetch(new URL('/v0/registry', url))).json()) as RegistryEntry[];
         entries = all.slice(0, head.seq + 1);
-        announced = head.etat;
+        announced = head.etat ?? undefined;
         source = url;
+        if (head.tete && head.tete.seq > head.seq) embargo = head.tete.seq - head.seq;
       }
       console.log(`\nAuditing ${entries.length} registry entries from ${source}${opts.reverify !== undefined ? ', re-running every verification' : ''}…\n`);
       const report = await auditRegistry(entries, { reverifier: opts.reverify !== undefined, etatAnnonce: announced as `sha256:${string}` | undefined });
       for (const c of report.controles) console.log(`  ${c.ok ? '✓' : '✗'} ${c.nom}${c.detail ? `\n      ${c.detail}` : ''}`);
-      console.log(`\n${report.ok ? 'AUDIT PASSED' : 'AUDIT FAILED'}: ${report.commandes} commands replayed${report.etat ? `, state ${report.etat}` : ''}\n`);
+      console.log(`\n${report.ok ? 'AUDIT PASSED' : 'AUDIT FAILED'}: ${report.commandes} commands replayed${report.etat ? `, state ${report.etat}` : ''}`);
+      if (embargo) console.log(`${embargo} newer entr${embargo > 1 ? 'ies are' : 'y is'} still under embargo while verifications are open; audit again later to cover them.`);
+      console.log('');
       process.exitCode = report.ok ? 0 : 1;
       return;
     }

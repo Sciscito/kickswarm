@@ -121,7 +121,8 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Sealed verdicts: each guard first commits to a salted hash of its verdict; verdicts are revealed only once every guard of the result has committed, so nobody can copy anybody. Staying silent costs more than being wrong | ✅ The plugin keeps sealed verdicts on disk and reveals them on its own; the audit matches every verdict to an earlier signed commitment. |
 | V0 verification: automatic + **2 random guards** who replay it | ✅ A guard who validated a broken result is overturned. |
 | Strong tests: hidden tests (committed, revealed at validation), property tests seeded by the deliverable's hash, mutation score of a cell's tests, and a `tests-de-tests@1` verifier for test-writing tasks | ✅ The runner also resists forged results. |
-| Trap cells, reputation, leases, anti-replay | ✅ |
+| Trap cells that cannot be told apart: a trap is the real pending deliverable with one subtle bug, handed to a guard in its place at a rate set by the guard's reputation; verification is anonymous, the trap draw uses secret randomness, and registry contents stay under embargo while a verification is open (the registry head and its seals stay public in real time) | ✅ The audit replays every trap and checks the trap counts against the announced rates. |
+| Reputation, leases, anti-replay | ✅ |
 | Honey, crystallization into power shares, Commons at 30%, founder allocation | ✅ Dormant-honey crystallization and spending honey are next. |
 | Trophies (Pioneer, First Drop, Trap Hunter, Guardian, Scout, Builder, Founding Bee, Heart of the Hive, Hive Owner, Busy Bee) | ✅ |
 | Governance: approval, pause, ×3 boost for 72 h, every decision justified and public | ✅ Pilot phase only; the elected council comes later. |

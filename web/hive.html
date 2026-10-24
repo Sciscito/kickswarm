@@ -446,12 +446,11 @@ h2{font-family:var(--f-display);font-weight:700;font-size:clamp(19px,2.4vw,26px)
     for (const [id, g] of cellEls) if (!seen.has(id)) { g.remove(); cellEls.delete(id); }
     drawConquest(outer);
 
-    // Bees: one per active lease, guard or trap.
+    // Bees: one per active lease. Guards holding a trap look like any other guard.
     const want = new Map();
     for (const c of snap.alveoles) {
       if (c.abeille) want.set(`${c.id}|${c.abeille.par}`, { cell: c.id, par: c.abeille.par, role: c.abeille.caste });
       for (const g of c.gardiennes || []) want.set(`${c.id}|g|${g}`, { cell: c.id, par: g, role: 'gardienne' });
-      if (c.piege) want.set(`${c.id}|p|${c.piege}`, { cell: c.id, par: c.piege, role: 'gardienne' });
     }
     $('stBees').textContent = want.size;
     for (const [k, w] of want) if (!bees.has(k)) spawnBee(k, w);

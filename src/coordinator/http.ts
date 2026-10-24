@@ -107,10 +107,11 @@ export function createCoordinatorServer(coord: Coordinator): Server {
         case route.startsWith('GET /v0/board/') && parts.length === 3:
           return send(res, 200, coord.board(parts[2]!));
         case route === 'GET /v0/state-hash':
-          return send(res, 200, { seq: coord.registry.entries.length - 1, etat: coord.stateHash(), sceau: coord.dernierSceauInscrit() ?? null });
+          return send(res, 200, coord.etatPublie());
         case route === 'GET /v0/registry': {
+          // Le contenu est publié jusqu'à l'horizon de l'embargo (OSP v0.2 P0-3).
           const since = Number(url.searchParams.get('since') ?? 0);
-          return send(res, 200, coord.registry.since(Number.isFinite(since) ? since : 0));
+          return send(res, 200, coord.registry.entries.slice(Number.isFinite(since) ? Math.max(0, since) : 0, coord.horizon() + 1));
         }
         case route.startsWith('GET /v0/contributors/') && parts.length === 3: {
           const id = parts[2]!;
