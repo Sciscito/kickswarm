@@ -6,7 +6,7 @@ Ce dont le réseau a besoin, et où le mettre sans payer, ou presque.
 
 | Pièce | Besoins |
 |---|---|
-| **Le coordinateur** | Node 22+, un disque persistant (`etat.json`, `registre.jsonl`), des connexions longues pour le flux temps réel (SSE). Docker est facultatif : sans lui, les tests tournent dans le bac à sable WebAssembly, réseau et disque coupés. |
+| **Le coordinateur** | Node 22+, un disque persistant (`etat.json`, `registre.jsonl`), des connexions longues pour le flux temps réel (SSE). Docker est inutile : les tests tournent dans le bac à sable WebAssembly, réseau et disque coupés, comme chez les gardiennes. |
 | **La ruche en direct** | Servie par le coordinateur lui-même, sur `/hive` |
 | **Le site, le white paper, la spec** | Des pages statiques |
 | **Un nom de domaine et le HTTPS** | Le seul vrai coût : environ 10 à 15 € par an pour le domaine |
@@ -28,10 +28,10 @@ Les offres gratuites changent souvent. **Vérifie les conditions du jour avant d
 
 ## La pile recommandée
 
-1. **Coordinateur** : une VM Oracle Cloud Always Free (Ubuntu, ARM) avec Docker.
+1. **Coordinateur** : une VM Oracle Cloud Always Free (Ubuntu, ARM).
 
    ```bash
-   kickswarm coordinator --host 0.0.0.0 --sandbox container --data /srv/kickswarm
+   kickswarm coordinator --host 0.0.0.0 --data /srv/kickswarm
    ```
 
    Devant lui, **Caddy** (HTTPS automatique) ou **Cloudflare Tunnel** (aucun port ouvert).

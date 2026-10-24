@@ -437,7 +437,7 @@ Ainsi, un découpage qui ne peut pas réussir est rejeté avant d'avoir coûté 
 
 | Domaine | Mesure |
 |---|---|
-| **Exécution** | Une échelle de sandbox : processus → WebAssembly (fait, par défaut sans Docker) et conteneur (fait) → gVisor ou micro-VM Firecracker pour le coordinateur public. Profils seccomp, aucun réseau, quotas. *Voir §8.1.* |
+| **Exécution** | Une échelle de sandbox : processus → WebAssembly (fait, par défaut partout) et conteneur (fait, sur demande) → gVisor ou micro-VM Firecracker pour le coordinateur public. Profils seccomp, aucun réseau, quotas. *Voir §8.1.* |
 | **Chaîne d'approvisionnement** | Lockfiles figées, versions signées (Sigstore), provenance des builds (SLSA), audit des dépendances à chaque publication. |
 | **Le code de l'essaim lui-même** | Une **ruche de sécurité permanente**, où l'essaim relit, teste et fuzz son propre code. Fuzzing continu du vérificateur et de l'API. Prime aux bugs publique. |
 | **Comportements anormaux** | Détection sur le registre : pics de débit, paires de gardiennes qui concordent toujours, en particulier sur les pièges ratés (signe de collusion), réputations qui montent trop vite. Quarantaine automatique et revue humaine. |
@@ -449,7 +449,7 @@ Ainsi, un découpage qui ne peut pas réussir est rejeté avant d'avoir coûté 
 
 **Le problème.** Les gardiennes exécutent sur leur propre machine du code écrit par des inconnus. Sans Docker, ce qui est le cas de la plupart des gens, le vérificateur utilisait un processus Node avec le modèle de permissions : la lecture du disque était limitée, mais **le réseau restait ouvert**.
 
-**La solution.** Par défaut, quand Docker manque, les tests tournent dans **QuickJS compilé en WebAssembly** (`quickjs-emscripten`, version figée) :
+**La solution.** Par défaut, les tests tournent dans **QuickJS compilé en WebAssembly** (`quickjs-emscripten`, version figée) :
 
 - **Un moteur neuf à chaque exécution**, dans un thread jetable, qui s'arrête en emportant toute sa mémoire.
 - **Ce que le code testé trouve** : le langage JavaScript, et les fichiers du livrable comme modules. Rien d'autre : pas de réseau, pas de disque, pas de processus, aucune API de Node ni du navigateur. Ce n'est pas une interdiction qu'on pourrait contourner : ces fonctions n'existent pas dans le moteur.
@@ -467,11 +467,12 @@ Ainsi, un découpage qui ne peut pas réussir est rejeté avant d'avoir coûté 
 - le code ordinaire fonctionne toujours : classes d'erreur, `toString` personnalisés, `console.log`, modules sur plusieurs fichiers, fonctions asynchrones ;
 - un même livrable donne le même rapport, au détail près.
 
-**Le choix du bac à sable.** `auto` prend le conteneur s'il existe, sinon WebAssembly. Le mode processus n'est plus utilisé que sur demande explicite (`--sandbox process`), et un coordinateur refuse de s'ouvrir au-delà de `localhost` dans ce mode.
+**Un seul moteur pour tout le monde.** WebAssembly est le bac à sable par défaut **partout**, que Docker soit installé ou non. Le coordinateur, les gardiennes et les auditeurs exécutent la même version figée de QuickJS, donc un livrable reçoit le même verdict sur chaque machine. Avant, une machine avec Docker exécutait V8, une autre QuickJS, et elles pouvaient diverger sur un cas limite : une gardienne honnête aurait alors été sanctionnée à tort. Le conteneur (V8) reste disponible sur demande (`--sandbox container`) pour du calcul lourd. Le mode processus ne s'utilise que sur demande, et un coordinateur refuse de s'ouvrir au-delà de `localhost` dans ce mode. Un démarrage de QuickJS prend quelques millisecondes, contre environ une seconde pour un conteneur : les nombreuses petites exécutions (mutants, pièges) y gagnent.
 
 **Limites assumées :**
 
-- **QuickJS n'est pas V8.** Pour du code ordinaire, sans dépendance, les résultats sont les mêmes. Mais QuickJS est plus lent (c'est un interpréteur) et n'a pas `Intl`. Une machine avec Docker (V8) et une machine sans Docker (QuickJS) peuvent donc diverger sur du code qui en dépend. Le rapport indique le bac à sable utilisé. Faire du même moteur la règle partout rendrait les verdicts reproductibles d'une machine à l'autre.
+- **QuickJS calcule moins vite que V8** sur du code lourd, parce que c'est un interpréteur. Une tâche gourmande peut dépasser le temps imparti : sa ruche demandera alors le conteneur. QuickJS n'a pas `Intl` (formatage selon la langue), et un livrable qui en dépend échoue.
+- **QuickJS ne fait que du JavaScript.** Les futures classes de vérification dans d'autres langages auront besoin de conteneurs.
 - **Pas de minuterie** (`setTimeout`) ni d'entrée-sortie dans le bac à sable. Le code qui en dépend échoue, ce qui est voulu pour un livrable V0.
 - **L'import d'un JSON** est accepté tel quel par QuickJS, alors que Node exige `with { type: 'json' }`.
 

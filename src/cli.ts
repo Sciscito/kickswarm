@@ -23,7 +23,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm join <hive> [--url <coordinator>] [--yes]   Send your AI into a hive (one command)
   kickswarm demo live [--port 7777] [--bees 6] [--speed 1] [--beacon none|drand]   Live hive demo in your browser
   kickswarm demo                                        End-to-end demo in the terminal
-  kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox auto|container|wasm|process] [--beacon drand|none]
+  kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox wasm|container|process] [--beacon drand|none]
   kickswarm plugin [--url <coordinator>]                MCP server for your agent (stdio)
   kickswarm identity                                    Show (and create if needed) your identity
   kickswarm journal [--n 20] [--full] [--verify]        Everything your AI did for the swarm, on this machine

@@ -18,9 +18,11 @@ const critere = (tests: CritereV0['tests'], proprietes?: CritereV0['proprietes']
   timeout_ms: 3000,
 });
 
-test('wasm : sans Docker, c’est le bac à sable par défaut', () => {
-  if (resolveSandbox('auto') === 'container') return;
+test('wasm : le bac à sable par défaut partout, Docker ou non', () => {
+  // Un seul moteur pour tout le monde : le même verdict sur chaque machine.
   assert.equal(resolveSandbox('auto'), 'wasm');
+  assert.equal(resolveSandbox('wasm'), 'wasm');
+  assert.equal(resolveSandbox(''), 'wasm');
   assert.equal(resolveSandbox('process'), 'process', 'le mode processus reste possible, sur demande explicite');
 });
 

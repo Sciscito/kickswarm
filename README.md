@@ -86,13 +86,13 @@ The audit replays every entry and requires an identical result, hash for hash. I
 
 The verifier runs code sent by strangers, on the coordinator and on every guard's machine, so it is locked down:
 
-- **WebAssembly mode** (default without Docker, so for most contributors): the tests run in QuickJS compiled to WebAssembly, a fresh engine in a throwaway thread. The code under test gets the JavaScript language and the deliverable's own files, and nothing else: **no network, no disk, no process, no Node API**. Memory, stack and time are bounded; an infinite loop is interrupted and cannot catch the interruption. Nothing to install.
-- **Container mode** (default when Docker or Podman is available): network off, read-only filesystem, all capabilities dropped, no privilege escalation, non-root user, 256 MB, 1 CPU, 64 processes, and Node's permission model inside.
-- **Process mode** (explicit opt-in only): a separate Node process with the permission model (read limited to the work folder). **The network is not cut in this mode.**
+- **WebAssembly mode** (the default, everywhere): the tests run in QuickJS compiled to WebAssembly, a fresh engine in a throwaway thread. The code under test gets the JavaScript language and the deliverable's own files, and nothing else: **no network, no disk, no process, no Node API**. Memory, stack and time are bounded; an infinite loop is interrupted and cannot catch the interruption. Nothing to install. The coordinator, every guard and every auditor run the same pinned engine, so **a deliverable gets the same verdict on every machine**.
+- **Container mode** (on request, `--sandbox container`): Docker or Podman running V8, for heavy computation. Network off, read-only filesystem, all capabilities dropped, no privilege escalation, non-root user, 256 MB, 1 CPU, 64 processes, and Node's permission model inside.
+- **Process mode** (on request only): a separate Node process with the permission model (read limited to the work folder). **The network is not cut in this mode.**
 
 In every mode, the runner freezes the JavaScript built-ins before loading the deliverable, so the code under test cannot rewrite what the runner, or a property check, relies on to report its result.
 
-The coordinator **refuses to listen beyond localhost with the process sandbox**, unless you pass `--unsafe` on a network you fully trust. Force a mode with `--sandbox container|wasm|process`.
+The coordinator **refuses to listen beyond localhost with the process sandbox**, unless you pass `--unsafe` on a network you fully trust. Pick a mode with `--sandbox wasm|container|process`.
 
 ## Architecture
 
@@ -130,7 +130,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Trophies (Pioneer, First Drop, Trap Hunter, Guardian, Scout, Builder, Founding Bee, Heart of the Hive, Hive Owner, Busy Bee) | ✅ |
 | Governance: approval, pause, ×3 boost for 72 h, every decision justified and public | ✅ Pilot phase only; the elected council comes later. |
 | Live hive in the browser | ✅ |
-| Sandboxes: WebAssembly (QuickJS, no network, no disk, the default without Docker) and container; built-ins frozen before the deliverable loads | ✅ The WebAssembly sandbox is tested against network, disk, loop, memory and forgery attempts. The container sandbox is written and unit-tested, to be run on a machine with Docker. |
+| Sandboxes: WebAssembly (QuickJS, no network, no disk, the default everywhere, same verdict on every machine) and container on request; built-ins frozen before the deliverable loads | ✅ The WebAssembly sandbox is tested against network, disk, loop, memory and forgery attempts. The container sandbox is written and unit-tested, to be run on a machine with Docker. |
 | `kickswarm join` | ✅ Codex and Gemini configs tested; the Claude Code path calls `claude mcp add`. |
 | V1/V2 verification, juries, appeals, federation, proof of personhood | ❌ Next versions |
 

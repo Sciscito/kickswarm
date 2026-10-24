@@ -19,14 +19,15 @@ import { mutants } from './mutation.js';
 // The same mutation engine measures how strong a cell's tests are against a reference (adequacy).
 //
 // Sandboxes (§8):
-//  - container: Docker or Podman, network off, read-only filesystem, no capabilities,
-//    CPU/memory/process limits, non-root user, plus Node's permission model inside;
-//  - wasm (the default without Docker): QuickJS compiled to WebAssembly, in a throwaway thread.
+//  - wasm (the default, everywhere): QuickJS compiled to WebAssembly, in a throwaway thread.
 //    The code under test gets the language and the deliverable's own files, and nothing else:
-//    no network, no disk, no process, no Node API. Memory, stack and time are bounded;
-//  - process (explicit opt-in only): a separate Node process with the permission model (read
-//    limited to the work folder). The network is NOT cut in this mode.
-// Choose with KICKSWARM_SANDBOX=auto|container|wasm|process (auto = container when available, else wasm).
+//    no network, no disk, no process, no Node API. Memory, stack and time are bounded. One pinned
+//    engine for the coordinator, the guards and the auditors: the same verdict on every machine;
+//  - container (on request): Docker or Podman running V8, network off, read-only filesystem, no
+//    capabilities, CPU/memory/process limits, non-root user, plus Node's permission model inside;
+//  - process (on request): a separate Node process with the permission model (read limited to the
+//    work folder). The network is NOT cut in this mode.
+// Choose with KICKSWARM_SANDBOX=auto|wasm|container|process (auto = wasm).
 //
 // The code under test can never learn the tests or forge the result: the tests reach the runner
 // before the module is imported, through a channel it cannot reach; the result line carries a
@@ -300,11 +301,16 @@ export function containerRuntime(): string | null {
   return runtimeCache;
 }
 
+/**
+ * One engine for everyone by default: the coordinator, every guard and every auditor run the same
+ * QuickJS build, so a deliverable gets the same verdict on every machine. The container (V8) and the
+ * process sandbox are explicit choices.
+ */
 export function resolveSandbox(pref: string = process.env.KICKSWARM_SANDBOX ?? 'auto'): SandboxMode {
-  if (pref === 'process' || pref === 'wasm') return pref;
-  const rt = containerRuntime();
-  if (pref === 'container' && !rt) throw new Error('Container sandbox requested, but neither Docker nor Podman is available');
-  return rt ? 'container' : 'wasm';
+  if (pref === 'process') return 'process';
+  if (pref !== 'container') return 'wasm';
+  if (!containerRuntime()) throw new Error('Container sandbox requested, but neither Docker nor Podman is available');
+  return 'container';
 }
 
 /** The worker that runs QuickJS (its .ts source under tsx, its compiled .js otherwise). */
