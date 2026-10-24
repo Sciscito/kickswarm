@@ -1,7 +1,7 @@
 import { genererIdentiteWeb, identiteValide, signataireWeb, type IdentiteWeb } from '../protocol/identite-web.js';
 import * as objets from '../protocol/objets.js';
 import type { Assignment, Hash, Livrable, Verdict } from '../protocol/types.js';
-import { fiche, promptChat, tientDansUnChat, type FicheTache } from '../taches/fiche.js';
+import { fiche, promptChat, TAILLE_MAX_CHAT, type FicheTache } from '../taches/fiche.js';
 import { lireReponse } from '../taches/lecteur.js';
 import { validateLivrable, verifier, type Executeurs, type VerifReport } from '../verifier/coeur.js';
 
@@ -74,12 +74,23 @@ export function promptCorrection(r: VerifReport, f: FicheTache): string {
   ].join('\n');
 }
 
+export interface OptionsPorte {
+  /** A bee with its own identity (the local engine signs with the CLI's identity); else the browser's. */
+  signataire?: objets.Signataire;
+}
+
 export class Porte {
   constructor(
     readonly url: string,
     private readonly stockage: Stockage,
     private readonly executeurs: Executeurs,
+    private readonly options: OptionsPorte = {},
   ) {}
+
+  /** The identifier this door signs with. */
+  get id(): string {
+    return this.options.signataire?.id ?? this.identite().id;
+  }
 
   // ---------------------------------------------------------------- identity
 
@@ -112,7 +123,7 @@ export class Porte {
   }
 
   private signataire(): objets.Signataire {
-    return signataireWeb(this.identite());
+    return this.options.signataire ?? signataireWeb(this.identite());
   }
 
   private async appel<T>(method: 'GET' | 'POST', chemin: string, corps?: unknown): Promise<T> {
@@ -131,7 +142,7 @@ export class Porte {
   }
 
   compte(): Promise<{ id: string; miel: number; miel_gagne: number; reputation: number; trophees?: Array<{ id: string }> }> {
-    return this.appel('GET', `/v0/contributors/${encodeURIComponent(this.identite().id)}`);
+    return this.appel('GET', `/v0/contributors/${encodeURIComponent(this.id)}`);
   }
 
   // ---------------------------------------------------------------- the chat door
@@ -148,15 +159,16 @@ export class Porte {
    * Takes a writing task that fits in one chat message. A task the chat door cannot serve (too big,
    * or reading files from a repository the browser does not have) goes straight back to the swarm.
    */
-  async prendre(ruche?: string): Promise<TacheChat | null> {
+  async prendre(ruche?: string, o: { tailleMax?: number } = {}): Promise<TacheChat | null> {
     const deja = this.enCours();
     if (deja) return deja;
+    const tailleMax = o.tailleMax ?? TAILLE_MAX_CHAT;
     for (let essai = 0; essai < 5; essai++) {
       const r = await this.appel<{ assignation: Assignment | null }>('POST', '/v0/work/claim', objets.requete(this.signataire(), 'claim', { ...(ruche ? { ruche } : {}), castes: [...ECRIRE] }));
       const a = r.assignation;
       if (!a) return null;
       const f = fiche(a);
-      if (!tientDansUnChat(f) || a.alveole.depot?.lecture.length) {
+      if (f.taille.prompt > tailleMax || a.alveole.depot?.lecture.length) {
         await this.appel('POST', '/v0/work/release', objets.requete(this.signataire(), 'release', { alveole: a.alveole_id }));
         continue;
       }
@@ -183,12 +195,12 @@ export class Porte {
     return { livrable, rapport, ...(rapport.ok ? {} : { correctif: promptCorrection(rapport, t.fiche) }) };
   }
 
-  /** Signs and hands in the deliverable. `ia` is the AI used, as the contributor declares it. */
-  async rendre(livrable: Livrable, ia: string): Promise<{ statut: string; motif: string }> {
+  /** Signs and hands in the deliverable. `ia` is the AI used, as declared (the chat door's contributor, or the engine). */
+  async rendre(livrable: Livrable, ia: string, famille: 'chat' | 'api' = 'chat'): Promise<{ statut: string; motif: string }> {
     const t = this.enCours();
     if (!t) throw new ErreurPorte('No task in progress');
     const resultat = objets.resultat(this.signataire(), t.assignment.alveole_id, t.assignment.caste as 'ouvriere' | 'batisseuse', livrable, {
-      agent: { famille: 'chat', ...(ia ? { modele: ia.slice(0, 60) } : {}) },
+      agent: { famille, ...(ia ? { modele: ia.slice(0, 120) } : {}) },
     });
     const r = await this.appel<{ statut: string; rapport: { motif: string } }>('POST', '/v0/work/submit', { resultat, livrable });
     this.stockage.effacer(CLES.tache);

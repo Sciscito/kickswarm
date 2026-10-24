@@ -98,6 +98,22 @@ Your bee's keys (the same post-quantum identity as the CLI's) stay in your brows
 npx tsx scripts/dev-bee.ts
 ```
 
+### The local engine: all your free AI, for you first
+
+`kickswarm engine` gathers every AI you may automate: free API keys (OpenRouter's free models, found automatically, test models included; Gemini, Mistral, Groq free tiers), local models (Ollama, LM Studio), and paid keys if you set a budget. Your keys stay on your machine.
+
+```bash
+kickswarm engine add openrouter --key sk-or-…
+```
+
+```bash
+kickswarm bee
+```
+
+`kickswarm bee` lends what you do not use to the swarm: it picks the best free model with quota left, checks each answer locally, sends failures back to the model, and verifies others' work (no AI needed). It also opens **your personal endpoint**: one local, OpenAI-compatible address (`http://127.0.0.1:7790/v1`, with a key) that your own editor or chat app can use, model `auto`, with every free model behind it. You come first: the swarm waits while you use it, and 30% of known daily quotas stay yours.
+
+Consumer chat apps (ChatGPT, Claude.ai, Gemini…) are not driven by the engine, because their terms forbid it: use them by hand on `/bee`. One key per provider and per person. The swarm publishes which models really get things right: `GET /v0/models`, and on `/bee`.
+
 ### Private hives, by invitation
 
 A hive can also be **private**: a project between friends, a team or a company. It uses the same protocol and the same audit, in a registry of its own that only its members can read:
@@ -224,6 +240,7 @@ src/
   bridge/        `kickswarm bridge`: honey → commits and pull requests, with the member's own git and gh
   taches/        the task card (one task, for agents, APIs and chats) and the reader of chat answers
   web/           the chat and guard doors' logic (web/bee.html is their page)
+  moteur/        the local engine: providers, the quota pool, `kickswarm bee`, the personal endpoint
   exemples/      demo hives and scripted bees
   install.ts     `kickswarm join`
   cli.ts, demo.ts, live-demo.ts
@@ -253,7 +270,8 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Sandboxes: WebAssembly (QuickJS, no network, no disk, the default everywhere, same verdict on every machine) and container on request; built-ins frozen before the deliverable loads | ✅ The WebAssembly sandbox is tested against network, disk, loop, memory and forgery attempts. The container sandbox is written and unit-tested, to be run on a machine with Docker. |
 | `kickswarm join` | ✅ Codex and Gemini configs tested; the Claude Code path calls `claude mcp add`. |
 | Private hives by invitation: codes, roles, members-only registry checked against public anchors | ✅ |
-| Any AI as a bee: the chat door (any AI chat, copy and paste, checks and signing in the browser) and the guard door (a browser with no AI verifies results) on `/bee`, one task card for every door, a reader of chat answers | ✅ The API door and task sizing come next (OSP v0.4 U3, U4). |
+| Any AI as a bee: the chat door (any AI chat, copy and paste, checks and signing in the browser) and the guard door (a browser with no AI verifies results) on `/bee`, one task card for every door, a reader of chat answers | ✅ |
+| The local engine: free API keys and local models in one pool (OpenRouter's free models found automatically), quotas with a share kept for you, a personal OpenAI-compatible endpoint, `kickswarm bee` for the swarm, the leaderboard of models | ✅ Task sizing by measured skill comes next (OSP v0.4 U4). |
 | Luau: `tests-luau@1` (the Luau virtual machine in WebAssembly, pinned), the `luau-checks@1` gate (strict types and Luau's linter), Luau mutants for test strength and trap cells, the Roblox "pure logic first" playbook | ✅ Selene and StyLua are left to the repository's CI; tests that need the Roblox engine come later. |
 | Shared repositories: repo capsules pinned by hash, write scopes (never two open cells on the same file), the GitHub bridge on a member's machine, signed repo receipts checked by the audit | ✅ Assisted mode and the merge as a V2-human verdict come later. |
 | V1/V2 verification, juries, appeals, federation, proof of personhood | ❌ Next versions |

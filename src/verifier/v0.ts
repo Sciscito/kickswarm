@@ -233,7 +233,7 @@ async function execute(livrable: Livrable, input: string, timeoutMs: number, mod
 
 
 /** Node's executors: the sandbox chosen by `opts.sandbox` for JavaScript, a throwaway thread for Luau. */
-function executeursNode(opts: VerifOptions): Executeurs {
+export function executeursNode(opts: VerifOptions = {}): Executeurs {
   return {
     verifierMode: () => void resolveSandbox(opts.sandbox),
     js: (livrable, input, timeoutMs) => execute(livrable, input, timeoutMs, resolveSandbox(opts.sandbox)),

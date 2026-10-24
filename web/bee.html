@@ -68,6 +68,8 @@ h2{font-family:var(--f-display);font-weight:700;font-size:19px;margin:0}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:0 14px 34px -22px var(--shadow);padding:18px;display:grid;gap:14px;margin-top:18px;min-width:0}
 .me{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font:600 13px/1.4 var(--f-mono);color:var(--muted)}
 .me b{color:var(--fg)}
+.me .hive-pick{display:flex;align-items:center;gap:6px;flex:1 1 220px;min-width:0}
+.me .hive-pick select{flex:1;min-width:0;width:100%}
 .honey{color:var(--honey-ink);background:var(--honey-2);border-radius:999px;padding:4px 10px}
 .tabs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:22px}
 .tab{text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:16px;padding:14px;cursor:pointer;display:grid;gap:4px}
@@ -99,6 +101,11 @@ textarea[readonly]{background:var(--surface-2)}
 .log div{font:13px/1.45 var(--f-mono);padding:8px 10px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
 details summary{cursor:pointer;color:var(--muted);font-size:14px}
 [hidden]{display:none !important}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 11.5px/1.2 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+td.n{font-family:var(--f-mono);text-align:right;white-space:nowrap}
+td.m{word-break:break-word}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
 .toast.on{opacity:1}
 </style>
@@ -120,7 +127,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:14px}
     <div class="me">
       <span>Your bee: <b id="me-id">…</b></span>
       <span class="honey" id="me-honey">0 g of honey</span>
-      <span>Hive:
+      <span class="hive-pick">Hive:
         <select id="hive" aria-label="Hive"></select>
       </span>
     </div>
@@ -180,6 +187,15 @@ details summary{cursor:pointer;color:var(--muted);font-size:14px}
       <div class="row"><button class="btn primary" id="guard-toggle">Start verifying</button><span class="small" id="guard-msg"></span></div>
       <div class="log" id="guard-log" aria-live="polite"></div>
     </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-models">
+    <h2 id="h-models">AI models, measured by the swarm</h2>
+    <p class="small">Every result says which AI produced it, and every result is verified. So this is how each model really does here, free ones included. Run <code>kickswarm bee</code> to lend your free API keys and local models.</p>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Model</th><th>Validated</th><th>Refused</th><th>Score</th></tr></thead>
+      <tbody id="models"><tr><td colspan="4" class="small">No result yet.</td></tr></tbody>
+    </table></div>
   </section>
 </div>
 <div class="toast" id="toast" role="status"></div>
@@ -329,7 +345,23 @@ $('import').onchange = async (ev) => {
   try { porte.importerIdentite(await f.text()); toast('Bee restored'); rafraichir(); } catch (e) { toast(message(e)); }
 };
 
-await Promise.all([rafraichir(), ruches()]);
+async function classement() {
+  try {
+    const { modeles } = await (await fetch('/v0/models')).json();
+    if (!modeles.length) return;
+    const tb = $('models');
+    tb.innerHTML = '';
+    for (const m of modeles.slice(0, 30)) {
+      const tr = document.createElement('tr');
+      for (const [v, c] of [[m.modele, 'm'], [m.valides, 'n'], [m.rejetes, 'n'], [`${Math.round(m.score * 100)}%`, 'n']]) {
+        const td = document.createElement('td'); td.className = c; td.textContent = String(v); tr.append(td);
+      }
+      tb.append(tr);
+    }
+  } catch {}
+}
+
+await Promise.all([rafraichir(), ruches(), classement()]);
 const enCours = porte.enCours();
 if (enCours) montrerTache(enCours);
 if (new URLSearchParams(location.search).get('mode') === 'guard') $('tab-guard').click();

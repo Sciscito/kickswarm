@@ -1165,6 +1165,28 @@ export class Coordinator {
     return this.state.trophees[id] ?? [];
   }
 
+  /**
+   * OSP v0.4 §2.6: how each AI model really does, from the registry alone. Every result declares its
+   * model (agent.modele, or its family), and every result is verified: handed in, validated, refused.
+   * Ranked by validated over judged, with a prior, so a model judged twice does not top the list.
+   */
+  classementModeles(): { modeles: Array<{ modele: string; famille: string; soumis: number; valides: number; rejetes: number; en_cours: number; score: number }> } {
+    const parModele = new Map<string, { modele: string; famille: string; soumis: number; valides: number; rejetes: number; en_cours: number }>();
+    for (const rr of Object.values(this.state.results)) {
+      const a = rr.resultat.agent ?? { famille: 'inconnue' };
+      const cle = (a.modele ?? a.famille ?? 'inconnue').slice(0, 120);
+      const m = parModele.get(cle) ?? { modele: cle, famille: String(a.famille ?? 'inconnue').slice(0, 40), soumis: 0, valides: 0, rejetes: 0, en_cours: 0 };
+      m.soumis++;
+      if (rr.statut === 'valide') m.valides++;
+      else if (rr.statut === 'rejete') m.rejetes++;
+      else m.en_cours++;
+      parModele.set(cle, m);
+    }
+    const modeles = [...parModele.values()].map((m) => ({ ...m, score: Math.round(((m.valides + 1) / (m.valides + m.rejetes + 2)) * 1000) / 1000 }));
+    modeles.sort((a, z) => z.score - a.score || z.valides - a.valides || a.modele.localeCompare(z.modele));
+    return { modeles };
+  }
+
   livrableValide(cellId: Hash): Livrable | undefined {
     const rec = this.state.cells[cellId];
     return rec?.resultat_valide ? this.state.results[rec.resultat_valide]?.livrable : undefined;

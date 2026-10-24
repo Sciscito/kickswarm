@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pontUneFois, suivrePont, type PontRapport } from './bridge/pont.js';
+import { AIDE_MOTEUR, commandeAbeille, commandeMoteur } from './moteur/cli.js';
 import { verifierCommit } from './bridge/verifier.js';
 import { auditRegistry } from './coordinator/audit.js';
 import { DrandHttp, QUICKNET, tourA, type SourceBalise } from './coordinator/balise.js';
@@ -43,6 +44,8 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm private members <id>  ·  private role <id> <member> member|observer <reason> [--no-guard]
   kickswarm private remove <id> <member> <reason>  ·  private revoke <id> <invitation> <reason>  ·  private leave <id>
   kickswarm join --invite <code>                       Join a private hive with an invitation code
+  kickswarm engine [add|remove|set|serve] …            The local engine: your free AI keys and local models, for you first (see kickswarm engine --help)
+  kickswarm bee [--hive <slug>]                         Put the local engine to work for the swarm, with your personal endpoint
   kickswarm bridge <hive> --clone <path> [--remote origin] [--base main] [--per-cell] [--no-pr] [--once]
                                                         Turn honey into commits and pull requests, with your own git and gh
   kickswarm github <your GitHub name> [--hive <id>]     Link your GitHub name, to be credited as co-author
@@ -187,6 +190,13 @@ async function main(): Promise<void> {
     case 'private':
     case 'privee':
       return commandePrivee(pos.slice(1), opts, client());
+    case 'engine':
+    case 'moteur':
+      if (opts.help !== undefined) return void console.log(AIDE_MOTEUR);
+      return commandeMoteur(kickswarmHome(), pos.slice(1), opts);
+    case 'bee':
+    case 'abeille':
+      return commandeAbeille(kickswarmHome(), url, opts);
     case 'bridge':
     case 'pont': {
       // OSP v0.3 §3.3: runs here, with this member's own git and gh. The coordinator never sees a token.

@@ -165,6 +165,8 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
           return ok(200, cible.liveView(parts[2]!));
         case route.startsWith('GET /v0/board/') && parts.length === 3:
           return ok(200, cible.board(parts[2]!));
+        case route === 'GET /v0/models':
+          return ok(200, cible.classementModeles());
         case route === 'GET /v0/state-hash':
           return ok(200, cible.etatPublie());
         case route === 'GET /v0/registry': {
