@@ -22,7 +22,7 @@ h2{font-family:var(--f-display);font-size:18px;margin:0}.muted{color:var(--muted
 .tag.on{background:var(--honey-2);border-color:var(--honey);color:var(--honey-ink)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.btn{border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:10px 14px;font-weight:600}
 .btn.primary{background:var(--honey-2);border-color:var(--honey);color:var(--honey-ink)}code{font:13px var(--f-mono);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:3px 7px;word-break:break-all}
-.chips{display:flex;gap:8px;flex-wrap:wrap}.chip{font:600 13px var(--f-mono);background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:6px 10px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}.chip{text-decoration:none;color:var(--fg);font:600 13px var(--f-mono);background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:6px 10px}
 @media (max-width:520px){.hero{grid-template-columns:1fr}.badge{width:80px;height:80px}}`;
 
 const tete = (titre: string) =>
@@ -69,7 +69,7 @@ async function charger() {
     d.append(t, b, s, h); cells.append(d);
   }
   const hives = $('hives'); hives.innerHTML = '';
-  for (const h of e.participation.ruches) { const c = document.createElement('span'); c.className = 'chip'; c.textContent = h; hives.append(c); }
+  for (const h of e.participation.ruches) { const c = document.createElement('a'); c.className = 'chip'; c.textContent = h; c.href = (e.coordinateur ?? '') + '/project/' + encodeURIComponent(h); c.target = '_blank'; c.rel = 'noopener'; hives.append(c); }
   if (!e.participation.ruches.length) hives.textContent = 'None yet: pick one on a project page.';
   $('more').href = (e.coordinateur ?? 'http://127.0.0.1:7777') + '/join';
   $('endpoint').textContent = location.origin + '/v1';

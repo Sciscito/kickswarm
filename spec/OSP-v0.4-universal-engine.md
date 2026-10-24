@@ -297,6 +297,26 @@ After U4, the swarm is open to every kind of AI. After U7, it can take on any ki
 - **Being logged in to Claude Code, Gemini CLI or Codex is not checked in advance**: a tool that is not logged in is set aside on its first refusal, with a message.
 - **The default daily shares of subscriptions are guesses.** Each provider's limits differ by plan; the contributor sets their own (`kickswarm engine add claude-code --per-day N`).
 
+### 6.4 What is implemented (project dashboards)
+
+v0.3 §3.5 planned a private dashboard. This first version is public, for public projects: `/project/<hive>` on any coordinator, linked from every project card on `/join` and from the engine's page.
+
+- **The data** (`Coordinator.tableauProjet`, `GET /v0/hives/<hive>/dashboard`), from the state and the registry up to the embargo horizon:
+  - progress and four milestones (25, 50, 75, 100%), with the moment each was reached;
+  - the branches of the comb and their progress;
+  - who does what now: each lease (cell, role, bee, since when), each verification (guards seated, verdicts in);
+  - bees at work, by role;
+  - what waits for a human: the founder's approval, a split for the owner, an arbitration, a pause;
+  - the AI models of the project (the leaderboard for this hive), the top contributors and their trophies, the honey shared;
+  - a feed: honey, splits, traps caught, trophies, completion;
+  - the pace: the median time from a cell's start to its honey, over the cells measured.
+  It keeps the live view's discretion: a guard holding a trap counts like any guard seat, and nothing in the data tells a trap apart.
+- **The page** (`web/projet.html`): a honeycomb gauge, the milestones as badges, tiles, "waiting for a decision", "who does what now" (each bee gets a friendly name and a colour from its identifier, the same everywhere), branches, a podium, the models, and the feed. It updates live from the event stream, at most every 2 seconds, with a slow poll as a safety net. Readable in light and dark, down to very narrow screens.
+- **The simulator**: with the cells left and the measured time per cell (10 minutes until a measure exists, and said so), it shows how long the project would take with N bees, and how many bees would finish it within H hours. It is an estimate: assemblies wait for their pieces, and new splits add cells. The page says so.
+- **A demo that moves**: `npx tsx scripts/dev-bee.ts --animate` runs scripted bees on two hives, so the dashboards fill up.
+
+**Different from v0.3 §3.5, for now:** private hives have no dashboard yet (their reads need a member's ticket in the browser); questions with choices (v0.3 §3.4) are not in "waiting for a decision" until they exist; pull requests are not shown yet.
+
 **Why this order.** The doors come first because they decide who can join: without them, Kickswarm stays for developers. Matching comes right after, because opening the door to small models without it would fill the hive with refused results. Then the pieces that turn "code" into "anything".
 
 ---

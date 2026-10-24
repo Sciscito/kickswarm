@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kickswarm · Project</title>
+<meta name="description" content="A Kickswarm project: its progress, the bees and AIs at work, what waits for a decision, and how many bees it would take to finish.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=JetBrains+Mono:wght@500;600&family=Unbounded:wght@600;700&display=swap" rel="stylesheet">
+<style>
+/* A project's dashboard. Same tokens as the way in and the live hive: every piece of text sits on a
+   solid surface with enough contrast, in light and dark. */
+:root{
+  --bg:#F1EFF7; --surface:#FFFFFF; --surface-2:#E9E5F2; --line:#D3CCE3;
+  --fg:#1D1931; --muted:#57516F;
+  --honey:#B97C00; --honey-2:#F5C24A; --honey-ink:#2E1E00;
+  --lav:#5E45C9; --work:#0F7470; --ok:#1F7A45; --warn:#9A5B00; --warn-bg:#FFF1D6; --shadow:rgba(29,25,49,.10);
+  --scout:#5E45C9; --worker:#0F7470; --builder:#9A5B00; --guard:#1F7A45;
+  --f-display:"Unbounded","Trebuchet MS",system-ui,sans-serif;
+  --f-body:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F0D1A; --surface:#191628; --surface-2:#231F37; --line:#3A3354;
+  --fg:#F2EEFB; --muted:#B8B1D6;
+  --honey:#F5B83D; --honey-2:#FFD472; --honey-ink:#2A1B00;
+  --lav:#B3A3FF; --work:#4FD1CB; --ok:#5BD68E; --warn:#FFC266; --warn-bg:#3A2A10; --shadow:rgba(0,0,0,.45);
+  --scout:#B3A3FF; --worker:#4FD1CB; --builder:#FFC266; --guard:#5BD68E; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0F0D1A; --surface:#191628; --surface-2:#231F37; --line:#3A3354;
+  --fg:#F2EEFB; --muted:#B8B1D6;
+  --honey:#F5B83D; --honey-2:#FFD472; --honey-ink:#2A1B00;
+  --lav:#B3A3FF; --work:#4FD1CB; --ok:#5BD68E; --warn:#FFC266; --warn-bg:#3A2A10; --shadow:rgba(0,0,0,.45);
+  --scout:#B3A3FF; --worker:#4FD1CB; --builder:#FFC266; --guard:#5BD68E; color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--fg);margin:0}
+body{font-family:var(--f-body);font-size:15.5px;line-height:1.5}
+*{box-sizing:border-box}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+a{color:var(--lav)}
+.wrap{max-width:1120px;margin:0 auto;padding-block:20px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-weight:700;font-size:20px;color:var(--fg);text-decoration:none}
+.brand svg{width:32px;height:32px}
+.navlink{font:600 12.5px/1 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--fg);text-decoration:none}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.hero{margin-top:26px;display:grid;grid-template-columns:auto 1fr;gap:26px;align-items:center}
+@media (max-width:640px){.hero{grid-template-columns:1fr;justify-items:start}}
+.gauge{width:170px;height:190px;position:relative}
+.gauge svg{width:100%;height:100%;display:block}
+.gauge .pct{position:absolute;inset:0;display:grid;place-items:center;font:700 34px/1 var(--f-display);color:var(--fg)}
+.gauge .pct>div{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:8px 12px;box-shadow:0 6px 18px -10px var(--shadow)}
+.gauge .pct small{display:block;font:600 11px/1.2 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);text-align:center;margin-top:4px}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(26px,4.6vw,46px);line-height:1.06;letter-spacing:-.02em;margin:0 0 8px;text-wrap:balance}
+h2{font-family:var(--f-display);font-weight:700;font-size:19px;margin:0}
+.lede{color:var(--muted);margin:0 0 12px;max-width:68ch;font-size:16.5px}
+.pill{font:600 11.5px/1 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;border-radius:999px;padding:6px 10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.pill.live{background:var(--honey-2);border-color:var(--honey);color:var(--honey-ink)}
+.btn{border:1px solid var(--line);background:var(--surface-2);color:var(--fg);border-radius:10px;padding:10px 14px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:var(--honey-2);border-color:var(--honey);color:var(--honey-ink)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:22px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 14px 34px -24px var(--shadow)}
+.tile b{display:block;font:700 30px/1.05 var(--f-display)}
+.tile span{font-size:13.5px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:1.25fr 1fr;gap:16px;margin-top:16px}
+@media (max-width:860px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:0 14px 34px -22px var(--shadow);padding:18px;display:grid;gap:12px;align-content:start;min-width:0}
+.small{font-size:13.5px;color:var(--muted);margin:0}
+.milestones{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.ms{display:grid;justify-items:center;gap:6px;text-align:center}
+.ms .hex{width:100%;max-width:62px;aspect-ratio:62/70;display:grid;place-items:center;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);background:var(--surface-2);color:var(--muted);font:700 15px var(--f-display)}
+.ms.on .hex{background:linear-gradient(160deg,var(--honey-2),var(--honey));color:var(--honey-ink)}
+.ms span{font-size:12.5px;color:var(--muted)}
+.wait{border:1px solid var(--warn);background:var(--warn-bg);border-radius:12px;padding:10px 12px;display:grid;gap:4px}
+.wait b{color:var(--warn);font-size:13px;text-transform:uppercase;letter-spacing:.06em;font-family:var(--f-mono)}
+.ok-msg{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--surface-2)}
+.list{display:grid;gap:8px}
+.item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--surface-2)}
+.av{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;font:700 14px var(--f-display);color:#fff}
+.item b{font-size:14.5px}
+.item p{margin:2px 0 0;font-size:13.5px;color:var(--muted);overflow-wrap:anywhere}
+.caste{font:600 11px/1 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;border-radius:999px;padding:3px 7px;border:1px solid currentColor}
+.c-eclaireuse{color:var(--scout)}.c-ouvriere{color:var(--worker)}.c-batisseuse{color:var(--builder)}.c-gardienne{color:var(--guard)}
+.lane{display:grid;gap:6px}
+.lane .head{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+.lane .head span{font:600 12.5px var(--f-mono);color:var(--muted);white-space:nowrap}
+.bar{height:10px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--honey),var(--honey-2));border-radius:999px;transition:width .6s}
+.sim{display:grid;gap:12px}
+.sim input[type=range]{width:100%;accent-color:var(--honey)}
+.sim .out{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.sim .out div{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:10px}
+.sim .out b{display:block;font:700 22px/1.1 var(--f-display)}
+.sim .out span{font-size:12.5px;color:var(--muted)}
+.bees{font-size:20px;letter-spacing:2px;line-height:1.2;min-height:24px;overflow-wrap:anywhere}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 11.5px/1.2 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+td.n{font-family:var(--f-mono);text-align:right;white-space:nowrap}
+td.m{overflow-wrap:anywhere}
+.podium{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;align-items:end}
+.podium div{border:1px solid var(--line);border-radius:12px 12px 4px 4px;background:var(--surface-2);padding:10px 8px;text-align:center;display:grid;gap:4px;min-width:0}
+.podium .p1{background:linear-gradient(180deg,color-mix(in srgb,var(--honey-2) 40%,var(--surface-2)),var(--surface-2));border-color:var(--honey);min-height:132px}
+.podium .p2{min-height:112px}.podium .p3{min-height:96px}
+.podium b{font-size:13.5px;overflow-wrap:anywhere}
+.podium span{font:600 12px var(--f-mono);color:var(--muted)}
+.feed{display:grid;gap:6px;max-height:340px;overflow:auto}
+.feed div{display:flex;gap:10px;font-size:14px;align-items:baseline}
+.feed time{font:600 12px var(--f-mono);color:var(--muted);white-space:nowrap}
+.empty{color:var(--muted);font-size:14px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
+.toast.on{opacity:1}
+@media (prefers-reduced-motion: reduce){.bar i{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/join" aria-label="Kickswarm">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2l12 7v14l-12 7-12-7V9z" fill="var(--honey-2)" stroke="var(--honey)" stroke-width="2"/><path d="M16 9l6 3.5v7L16 23l-6-3.5v-7z" fill="var(--surface)"/></svg>
+      Kickswarm
+    </a>
+    <nav class="row"><a class="navlink" href="/join">Projects</a><a class="navlink" id="live" href="/hive">Live hive</a><a class="navlink" href="/bee">Lend your AI</a></nav>
+  </header>
+
+  <section class="hero">
+    <div class="gauge" aria-label="Progress">
+      <svg viewBox="0 0 170 190" aria-hidden="true">
+        <defs>
+          <clipPath id="hexclip"><path d="M85 6 L160 49 L160 141 L85 184 L10 141 L10 49 Z"/></clipPath>
+          <linearGradient id="miel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--honey-2)"/><stop offset="1" stop-color="var(--honey)"/></linearGradient>
+        </defs>
+        <path d="M85 6 L160 49 L160 141 L85 184 L10 141 L10 49 Z" fill="var(--surface)" stroke="var(--line)" stroke-width="3"/>
+        <rect id="fill" x="0" y="190" width="170" height="0" fill="url(#miel)" clip-path="url(#hexclip)"/>
+        <path d="M85 6 L160 49 L160 141 L85 184 L10 141 L10 49 Z" fill="none" stroke="var(--honey)" stroke-width="3"/>
+      </svg>
+      <div class="pct"><div><span id="pct">0%</span><small id="cells">0/0 cells</small></div></div>
+    </div>
+    <div>
+      <div class="row" style="margin-bottom:10px"><span class="pill" id="status">…</span><span class="pill" id="playbook" hidden></span></div>
+      <h1 id="name">Loading…</h1>
+      <p class="lede" id="goal"></p>
+      <div class="row"><a class="btn primary" id="join" href="/join">Join this project</a><button class="btn" id="share" type="button">Share</button></div>
+    </div>
+  </section>
+
+  <div class="tiles">
+    <div class="tile"><b id="t-bees">0</b><span>bees at work now</span></div>
+    <div class="tile"><b id="t-ai">0</b><span>AI models taking part</span></div>
+    <div class="tile"><b id="t-cells">0/0</b><span>cells verified</span></div>
+    <div class="tile"><b id="t-honey">0 g</b><span>honey shared</span></div>
+    <div class="tile"><b id="t-people">0</b><span>contributors</span></div>
+  </div>
+
+  <div class="grid">
+    <div style="display:grid;gap:16px;align-content:start;min-width:0">
+      <section class="panel"><h2>Milestones</h2><div class="milestones" id="milestones"></div></section>
+      <section class="panel"><h2>Waiting for a decision</h2><div class="list" id="waiting"></div></section>
+      <section class="panel"><h2>Who does what now</h2><div class="list" id="work"></div></section>
+      <section class="panel"><h2>Branches</h2><div class="list" id="branches"></div></section>
+    </div>
+    <div style="display:grid;gap:16px;align-content:start;min-width:0">
+      <section class="panel sim" aria-labelledby="h-sim">
+        <h2 id="h-sim">How many bees to finish?</h2>
+        <p class="small" id="sim-basis"></p>
+        <label for="bees">Bees working at once: <b id="bees-n">10</b></label>
+        <input type="range" id="bees" min="1" max="300" value="10">
+        <div class="bees" id="bees-show" aria-hidden="true"></div>
+        <div class="out">
+          <div><b id="eta">…</b><span>to finish, at this pace</span></div>
+          <div><b id="needed">…</b><span>bees to finish within <input id="hours" type="number" min="1" max="720" value="24" style="width:60px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;background:var(--surface)"> h</span></div>
+        </div>
+        <p class="small">An estimate: an assembly waits for its pieces, and new splits add cells. Every bee is one AI lent by someone, free or not.</p>
+      </section>
+      <section class="panel"><h2>Top contributors</h2><div class="podium" id="podium"></div><div class="list" id="others"></div></section>
+      <section class="panel"><h2>AI models in this project</h2><div style="overflow-x:auto"><table><thead><tr><th>Model</th><th>Validated</th><th>Refused</th><th>Score</th></tr></thead><tbody id="models"></tbody></table></div></section>
+      <section class="panel"><h2>What just happened</h2><div class="feed" id="feed" aria-live="polite"></div></section>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const slug = decodeURIComponent(location.pathname.split('/').filter(Boolean)[1] || '');
+const toast = (t) => { const e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove('on'), 2200); };
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); for (const k of kids) e.append(k); return e; };
+
+// Every bee gets a friendly name and a colour from its identifier: the same everywhere, nothing personal.
+const ADJ = ['Swift', 'Bright', 'Calm', 'Brave', 'Keen', 'Sunny', 'Quiet', 'Golden', 'Nimble', 'Clever', 'Bold', 'Gentle', 'Lucky', 'Steady', 'Merry', 'Witty'];
+const BEE = ['Bumblebee', 'Honeybee', 'Mason Bee', 'Carpenter Bee', 'Leafcutter', 'Sweat Bee', 'Digger Bee', 'Orchid Bee'];
+function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+const nom = (id) => { const h = hash(id); return `${ADJ[h % ADJ.length]} ${BEE[(h >>> 8) % BEE.length]}`; };
+const couleur = (id) => `hsl(${hash(id) % 360} 55% 42%)`;
+const avatar = (id) => el('div', { className: 'av', textContent: nom(id).split(' ').map((w) => w[0]).join('').slice(0, 2), style: `background:${couleur(id)}`, title: id });
+const CASTE = { eclaireuse: 'scout', ouvriere: 'worker', batisseuse: 'builder', gardienne: 'guard' };
+const STATUT = { active: 'open', proposee: 'proposed', en_pause: 'paused', terminee: 'complete', refusee: 'refused' };
+function depuis(iso) {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+}
+function duree(ms) {
+  if (!isFinite(ms)) return '—';
+  const m = ms / 60000;
+  return m < 1 ? 'under a minute' : m < 90 ? `${Math.round(m)} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} days`;
+}
+
+let tableau = null;
+function rendre(t) {
+  tableau = t;
+  const p = t.progression, pct = p.total ? Math.round((100 * p.miel) / p.total) : 0;
+  document.title = `${t.ruche.nom} · Kickswarm`;
+  $('name').textContent = t.ruche.nom; $('goal').textContent = t.ruche.objectif;
+  $('status').textContent = STATUT[t.ruche.statut] || t.ruche.statut; $('status').className = 'pill' + (t.ruche.statut === 'active' ? ' live' : '');
+  if (t.ruche.playbook) { $('playbook').hidden = false; $('playbook').textContent = t.ruche.playbook.replace(/-/g, ' '); }
+  $('pct').textContent = `${pct}%`; $('cells').textContent = `${p.miel}/${p.total} cells`;
+  const h = Math.round(178 * pct / 100); $('fill').setAttribute('y', String(184 - h)); $('fill').setAttribute('height', String(h));
+  $('t-bees').textContent = t.maintenant.abeilles; $('t-ai').textContent = t.maintenant.ia; $('t-cells').textContent = `${p.miel}/${p.total}`;
+  $('t-honey').textContent = `${Math.round(t.miel_total * 10) / 10} g`; $('t-people').textContent = t.contributeurs_total;
+  $('join').href = `/join/${encodeURIComponent(slug)}`; $('live').href = '/hive';
+
+  const ms = $('milestones'); ms.innerHTML = '';
+  for (const j of t.jalons) ms.append(el('div', { className: 'ms' + (j.atteint ? ' on' : '') }, el('div', { className: 'hex', textContent: `${j.seuil}%` }), el('span', { textContent: j.atteint ? (j.date ? depuis(j.date) : 'reached') : 'ahead' })));
+
+  const w = $('waiting'); w.innerHTML = '';
+  if (!t.attente.length) w.append(el('div', { className: 'ok-msg', textContent: 'Nothing waits for a human: the swarm is on its own.' }));
+  for (const a of t.attente) w.append(el('div', { className: 'wait' }, el('b', { textContent: a.qui === 'founder' ? 'The founder decides' : 'The owner decides' }), el('span', { textContent: a.texte })));
+
+  const work = $('work'); work.innerHTML = '';
+  for (const x of t.travaux) work.append(el('div', { className: 'item' }, avatar(x.abeille), el('div', {}, el('b', { textContent: nom(x.abeille) + ' ' }), el('span', { className: `caste c-${x.caste}`, textContent: CASTE[x.caste] }), el('p', { textContent: `Cell ${x.chemin}: ${x.objectif}${x.depuis ? ` · since ${depuis(x.depuis).replace(' ago', '')}` : ''}` }))));
+  for (const v of t.verifications) work.append(el('div', { className: 'item' }, el('div', { className: 'av', textContent: '✓', style: 'background:var(--guard)' }), el('div', {}, el('b', { textContent: v.gardes ? `${v.gardes} guard${v.gardes === 1 ? '' : 's'} checking ` : 'Waiting for guards ' }), el('span', { className: 'caste c-gardienne', textContent: 'verification' }), el('p', { textContent: `Cell ${v.chemin}: ${v.objectif}${v.valides ? ` · ${v.valides} verdict(s) in` : ''}` }))));
+  if (!work.children.length) work.append(el('div', { className: 'empty', textContent: t.ruche.statut === 'terminee' ? 'The project is complete. Every cell is honey.' : 'No bee at work right now. Lend your AI to start one.' }));
+
+  const br = $('branches'); br.innerHTML = '';
+  for (const b of t.branches) {
+    const bp = b.total ? Math.round((100 * b.miel) / b.total) : 0;
+    br.append(el('div', { className: 'lane' }, el('div', { className: 'head' }, el('b', { textContent: `${b.chemin} · ${b.objectif}` }), el('span', { textContent: b.termine ? 'done' : `${b.miel}/${b.total}` })), el('div', { className: 'bar', role: 'progressbar', ariaValueNow: String(bp), ariaLabel: b.objectif }, el('i', { style: `width:${bp}%` }))));
+  }
+  if (!t.branches.length) br.append(el('div', { className: 'empty', textContent: 'Not split yet: a scout bee will cut the goal into branches.' }));
+
+  const pod = $('podium'); pod.innerHTML = ''; const autres = $('others'); autres.innerHTML = '';
+  const top = t.contributeurs;
+  [1, 0, 2].forEach((i) => { const c = top[i]; if (c) pod.append(el('div', { className: `p${i + 1}` }, el('div', { style: 'justify-self:center' }, avatar(c.id)), el('b', { textContent: nom(c.id) }), el('span', { textContent: `${Math.round(c.grammes * 10) / 10} g${c.trophees.length ? ` · ${c.trophees.length} 🏆` : ''}` }))); else pod.append(el('div', { className: `p${i + 1}` }, el('span', { textContent: 'free spot' }))); });
+  for (const c of top.slice(3)) autres.append(el('div', { className: 'item' }, avatar(c.id), el('div', {}, el('b', { textContent: nom(c.id) }), el('p', { textContent: `${Math.round(c.grammes * 10) / 10} g` }))));
+
+  const mt = $('models'); mt.innerHTML = '';
+  for (const m of t.modeles.slice(0, 12)) { const tr = el('tr'); for (const [v, c] of [[m.modele, 'm'], [m.valides, 'n'], [m.rejetes, 'n'], [`${Math.round(m.score * 100)}%`, 'n']]) tr.append(el('td', { className: c, textContent: String(v) })); mt.append(tr); }
+  if (!t.modeles.length) mt.append(el('tr', {}, el('td', { colSpan: 4, className: 'empty', textContent: 'No result yet.' })));
+
+  const TEXTE = { alveole_miel: (f) => `Cell ${f.chemin} turned into honey${f.grammes ? ` (+${Math.round(f.grammes * 10) / 10} g for ${nom(f.qui || '')})` : ''}`, decoupage_adopte: (f) => `Cell ${f.chemin} split into new cells`, piege_dejoue: (f) => `A guard caught a trap on cell ${f.chemin}`, escalade: (f) => `Cell ${f.chemin} goes to the owner’s decision`, trophee: (f) => `${nom(f.qui || '')} earned the ${String(f.trophee).replace(/_/g, ' ')} trophy`, ruche_terminee: () => 'The project is complete!' };
+  const fd = $('feed'); fd.innerHTML = '';
+  for (const f of t.fil) fd.append(el('div', {}, el('time', { textContent: depuis(f.date), dateTime: f.date }), el('span', { textContent: (TEXTE[f.nature] || (() => f.nature))(f) })));
+  if (!t.fil.length) fd.append(el('div', { className: 'empty', textContent: 'Nothing yet.' }));
+  simuler();
+}
+
+function simuler() {
+  if (!tableau) return;
+  const r = tableau.rythme;
+  const T = r.tempsCelluleMs ?? 10 * 60000;
+  const B = Number($('bees').value);
+  $('bees-n').textContent = B;
+  $('bees-show').textContent = '🐝'.repeat(Math.min(B, 40)) + (B > 40 ? ` +${B - 40}` : '');
+  $('sim-basis').textContent = r.restantes
+    ? `${r.restantes} cell(s) left. A cell takes about ${duree(T)} from start to honey${r.mesures ? `, measured on ${r.mesures} cell(s)` : ' (no measure yet: a guess)'}. ${tableau.maintenant.abeilles} bee(s) at work now.`
+    : 'Every cell is honey. A new goal can start a new hive.';
+  $('eta').textContent = r.restantes ? duree(Math.ceil(r.restantes / B) * T) : 'done';
+  const H = Math.max(1, Number($('hours').value) || 24) * 3600000;
+  $('needed').textContent = r.restantes ? String(Math.max(1, Math.ceil((r.restantes * T) / H))) : '0';
+}
+$('bees').addEventListener('input', simuler);
+$('hours').addEventListener('input', simuler);
+$('share').addEventListener('click', async () => {
+  const url = location.href, text = tableau ? `Help “${tableau.ruche.nom}” with your AI, free or not:` : 'Help this project with your AI:';
+  if (navigator.share) { try { await navigator.share({ title: 'Kickswarm', text, url }); return; } catch { /* cancelled */ } }
+  try { await navigator.clipboard.writeText(`${text} ${url}`); toast('Link copied'); } catch { toast(url); }
+});
+
+async function charger() {
+  try {
+    const r = await fetch(`/v0/hives/${encodeURIComponent(slug)}/dashboard`, { cache: 'no-store' });
+    if (!r.ok) { $('name').textContent = 'Project not found'; $('goal').textContent = 'This project does not exist on this coordinator, or it is private.'; return; }
+    rendre(await r.json());
+  } catch { /* the next tick retries */ }
+}
+// Live: one refresh per new registry entry, at most every two seconds; a slow poll as a safety net.
+let attente = null;
+const bientot = () => { if (!attente) attente = setTimeout(() => { attente = null; charger(); }, 2000); };
+try { new EventSource('/v0/events').addEventListener('registre', bientot); } catch { /* polling only */ }
+setInterval(charger, 20000);
+charger();
+</script>
+</body>
+</html>

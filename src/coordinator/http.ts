@@ -49,6 +49,7 @@ const PAGES = {
   join: new URL('../../web/join.html', import.meta.url),
   hive: new URL('../../web/hive.html', import.meta.url),
   bee: new URL('../../web/bee.html', import.meta.url),
+  projet: new URL('../../web/projet.html', import.meta.url),
 };
 
 async function sendPage(res: ServerResponse, page: keyof typeof PAGES): Promise<void> {
@@ -104,6 +105,8 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
         if (req.method === 'GET') hote.lecteur(prive, ticketDe(req, url));
       } else {
         if (req.method === 'GET' && url.pathname === '/hive') return await sendPage(res, 'hive');
+        // A project's dashboard: /project/<hive>.
+        if (req.method === 'GET' && /^\/project\/[a-z0-9-]{1,40}\/?$/.test(url.pathname)) return await sendPage(res, 'projet');
         // OSP v0.4 §2.3: the chat door and the guard door, and the modules they load.
         if (req.method === 'GET' && (url.pathname === '/bee' || url.pathname === '/bee/')) return await sendPage(res, 'bee');
         if (req.method === 'GET' && (await servirStatique(url.pathname, res))) return;
@@ -143,6 +146,8 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
           return ok(200, cible.listHives());
         case route.startsWith('GET /v0/hives/') && parts.length === 3:
           return ok(200, cible.hiveView(parts[2]!));
+        case route.startsWith('GET /v0/hives/') && parts.length === 4 && parts[3] === 'dashboard':
+          return ok(200, cible.tableauProjet(parts[2]!));
         case route === 'POST /v0/hives':
           return ok(201, cible.proposeHive(body.ruche as Hive, body.racine as CellSpec, body.secrets as Secrets | undefined));
         case route === 'POST /v0/work/claim':

@@ -174,6 +174,25 @@ interface FusionRecord {
   date: string;
 }
 
+
+/** A project's dashboard (see Coordinator.tableauProjet). */
+export interface TableauProjet {
+  ruche: { slug: string; nom: string; objectif: string; statut: HiveStatus; porteur: string; playbook?: string };
+  progression: { miel: number; total: number };
+  jalons: Array<{ seuil: number; atteint: boolean; date?: string }>;
+  maintenant: { abeilles: number; parCaste: Record<Caste, number>; ia: number };
+  travaux: Array<{ chemin: string; objectif: string; caste: Caste; abeille: string; depuis?: string }>;
+  verifications: Array<{ chemin: string; objectif: string; gardes: number; valides: number }>;
+  attente: Array<{ type: 'approbation_ruche' | 'approbation_decoupage' | 'arbitrage' | 'pause'; qui: 'founder' | 'owner'; texte: string; chemin?: string; cible?: string }>;
+  branches: Array<{ chemin: string; objectif: string; miel: number; total: number; termine: boolean }>;
+  modeles: Array<{ modele: string; famille: string; soumis: number; valides: number; rejetes: number; en_cours: number; score: number }>;
+  contributeurs: Array<{ id: string; grammes: number; trophees: string[] }>;
+  contributeurs_total: number;
+  miel_total: number;
+  rythme: { tempsCelluleMs: number | null; mesures: number; restantes: number };
+  fil: Array<{ date: string; nature: string; chemin?: string; qui?: string; trophee?: string; grammes?: number }>;
+}
+
 export interface DetailCellule {
   cell: Cell;
   etat: CellState;
@@ -1094,6 +1113,128 @@ export class Coordinator {
     };
   }
 
+
+  /**
+   * A project's dashboard (OSP v0.3 §3.5, v0.4): progress and milestones, branches, who does what now,
+   * how many bees and AIs work on it, what waits for a decision, the AIs and contributors, a feed, and
+   * the measured time per cell for the simulator. Same discretion as the live view: a guard holding a
+   * trap counts like any guard, and the registry is read up to the embargo horizon only.
+   */
+  tableauProjet(slug: string): TableauProjet {
+    const hive = this.hiveOrThrow(slug);
+    const now = this.now();
+    const cells = this.cellsOf(slug);
+    const ids = new Set<string>(cells.map((c) => c.id));
+    const visibles = this.registry.entries.slice(0, this.horizon() + 1);
+    const progression = this.progression(slug);
+
+    // Who works now: a lease, or a guard seat (a trap's seat looks like any other).
+    const travaux: TableauProjet['travaux'] = [];
+    const verifications: TableauProjet['verifications'] = [];
+    const parCaste: Record<Caste, number> = { eclaireuse: 0, ouvriere: 0, batisseuse: 0, gardienne: 0 };
+    const abeilles = new Set<string>();
+    const debut = new Map<string, number>();
+    for (const e of visibles) {
+      if (e.nature !== 'commande') continue;
+      const c = e.donnees as CommandeDonnees;
+      const alveole = (c.entree as { requete?: Requete }).requete?.alveole;
+      if (c.type === 'start' && alveole && ids.has(alveole)) debut.set(alveole, Date.parse(e.date));
+    }
+    for (const c of cells) {
+      if (c.bail && c.bail.expire > now && (c.state === 'reservee' || c.state === 'en_cours')) {
+        abeilles.add(c.bail.par);
+        parCaste[c.bail.caste]++;
+        const d = debut.get(c.id);
+        travaux.push({ chemin: c.cell.chemin, objectif: c.cell.objectif, caste: c.bail.caste, abeille: c.bail.par, ...(d ? { depuis: new Date(d).toISOString() } : {}) });
+      }
+      if (c.state === 'en_verification') {
+        const gardes = [
+          ...c.gardiennes.filter((g) => g.expire > now).map((g) => g.par),
+          ...this.engagesSur(c.en_attente).map((g) => g.par),
+          ...this.piegesSur(c).filter((p) => p.expire > now).map((p) => p.attribue_a),
+        ];
+        for (const g of gardes) abeilles.add(g);
+        parCaste.gardienne += gardes.length;
+        verifications.push({ chemin: c.cell.chemin, objectif: c.cell.objectif, gardes: gardes.length, valides: c.verdicts.length });
+      }
+    }
+
+    // What waits for a human.
+    const attente: TableauProjet['attente'] = [];
+    if (hive.statut === 'proposee') attente.push({ type: 'approbation_ruche', qui: 'founder', texte: 'The project waits for the founder’s approval to start.' });
+    if (hive.statut === 'en_pause') attente.push({ type: 'pause', qui: 'owner', texte: 'The owner paused the project.' });
+    for (const [id, d] of Object.entries(this.state.decompositions)) {
+      const rec = this.state.cells[d.decomposition.alveole];
+      if (d.statut === 'en_attente' && rec && ids.has(rec.id)) attente.push({ type: 'approbation_decoupage', qui: 'owner', chemin: rec.cell.chemin, cible: id, texte: `A split of “${rec.cell.objectif.slice(0, 80)}” into ${d.decomposition.enfants.length} cells waits for the owner’s approval.` });
+    }
+    for (const c of cells) {
+      const rr = c.en_attente ? this.state.results[c.en_attente] : undefined;
+      if (rr?.escalade && c.state === 'en_verification') attente.push({ type: 'arbitrage', qui: 'owner', chemin: c.cell.chemin, cible: c.en_attente!, texte: `The guards of “${c.cell.objectif.slice(0, 80)}” did not reach a conclusion: the owner decides.` });
+    }
+
+    // Branches: the children of the heart, each with its own progress.
+    const racine = this.state.cells[hive.racine];
+    const branches = (racine?.enfants ?? []).map((id) => {
+      const b = this.state.cells[id]!;
+      const sous = cells.filter((c) => c.cell.chemin === b.cell.chemin || c.cell.chemin.startsWith(`${b.cell.chemin}.`));
+      return { chemin: b.cell.chemin, objectif: b.cell.objectif, miel: sous.filter((c) => c.state === 'miel').length, total: sous.length, termine: b.state === 'miel' };
+    });
+
+    // Milestones and pace, from the honey written in the registry.
+    const miels = visibles.filter((e) => e.nature === 'alveole_miel' && ids.has(String((e.donnees as { alveole: string }).alveole)));
+    const jalons = [25, 50, 75, 100].map((seuil) => {
+      const n = Math.ceil((seuil / 100) * Math.max(1, progression.total));
+      const e = miels[n - 1];
+      return { seuil, atteint: progression.total > 0 && progression.miel * 100 >= seuil * progression.total, ...(e ? { date: e.date } : {}) };
+    });
+    const durees = miels
+      .map((e) => {
+        const a = String((e.donnees as { alveole: string }).alveole);
+        const d = debut.get(a);
+        return d ? Date.parse(e.date) - d : null;
+      })
+      .filter((x): x is number => x !== null && x >= 0)
+      .sort((a, z) => a - z);
+    const mediane = durees.length ? durees[Math.floor(durees.length / 2)]! : null;
+
+    const fil = visibles
+      .filter((e) => {
+        const d = (e.donnees ?? {}) as Record<string, unknown>;
+        if (['alveole_miel', 'decoupage_adopte', 'piege_dejoue', 'escalade'].includes(e.nature)) return ids.has(String(d.alveole));
+        if (e.nature === 'trophee') return d.ruche === slug;
+        return e.nature === 'ruche_terminee' && d.slug === slug;
+      })
+      .slice(-25)
+      .reverse()
+      .map((e) => {
+        const d = e.donnees as Record<string, unknown>;
+        return { date: e.date, nature: e.nature, ...(d.chemin !== undefined ? { chemin: String(d.chemin) } : {}), ...(d.auteur ? { qui: String(d.auteur) } : {}), ...(d.beneficiaire ? { qui: String(d.beneficiaire) } : {}), ...(d.trophee ? { trophee: String(d.trophee) } : {}), ...(typeof d.grammes === 'number' ? { grammes: d.grammes } : {}) };
+      });
+
+    const contributeurs = Object.entries(hive.contributions)
+      .map(([id, g]) => ({ id, grammes: Math.round(g * 1000) / 1000, trophees: [...new Set(this.trophiesOf(id).map((t) => t.id))] }))
+      .sort((a, z) => z.grammes - a.grammes)
+      .slice(0, 10);
+    const modeles = this.classementModeles(slug).modeles;
+
+    return {
+      ruche: { slug, nom: hive.ruche.nom, objectif: hive.ruche.objectif, statut: hive.statut, porteur: hive.ruche.porteur, ...(hive.ruche.playbook ? { playbook: hive.ruche.playbook } : {}) },
+      progression,
+      jalons,
+      maintenant: { abeilles: abeilles.size, parCaste, ia: modeles.length },
+      travaux: travaux.sort((a, z) => cheminCompare(a.chemin, z.chemin)),
+      verifications,
+      attente,
+      branches,
+      modeles,
+      contributeurs,
+      contributeurs_total: Object.keys(hive.contributions).length,
+      miel_total: Math.round(Object.values(hive.contributions).reduce((s, x) => s + x, 0) * 1000) / 1000,
+      rythme: { tempsCelluleMs: mediane, mesures: durees.length, restantes: progression.total - progression.miel },
+      fil,
+    };
+  }
+
   /** Complete snapshot of a hive for the live view: cells, bees at work, leaderboard, log. */
   liveView(slug: string): LiveView {
     const hive = this.hiveOrThrow(slug);
@@ -1170,9 +1311,10 @@ export class Coordinator {
    * model (agent.modele, or its family), and every result is verified: handed in, validated, refused.
    * Ranked by validated over judged, with a prior, so a model judged twice does not top the list.
    */
-  classementModeles(): { modeles: Array<{ modele: string; famille: string; soumis: number; valides: number; rejetes: number; en_cours: number; score: number }> } {
+  classementModeles(ruche?: string): { modeles: Array<{ modele: string; famille: string; soumis: number; valides: number; rejetes: number; en_cours: number; score: number }> } {
     const parModele = new Map<string, { modele: string; famille: string; soumis: number; valides: number; rejetes: number; en_cours: number }>();
     for (const rr of Object.values(this.state.results)) {
+      if (ruche !== undefined && this.state.cells[rr.resultat.alveole]?.cell.ruche !== ruche) continue;
       const a = rr.resultat.agent ?? { famille: 'inconnue' };
       const cle = (a.modele ?? a.famille ?? 'inconnue').slice(0, 120);
       const m = parModele.get(cle) ?? { modele: cle, famille: String(a.famille ?? 'inconnue').slice(0, 40), soumis: 0, valides: 0, rejetes: 0, en_cours: 0 };

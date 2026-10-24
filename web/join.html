@@ -269,7 +269,7 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
         <div class="meta"><span>${h.progression.miel}/${h.progression.total} cells verified</span><span>${esc(h.statut === 'terminee' ? 'complete' : h.statut === 'active' ? 'open' : h.statut)}</span></div>
         <div class="actions">
           <button class="btn primary" type="button" data-pick="${esc(h.slug)}">Take part</button>
-          <a class="btn" href="/hive">Watch live</a>
+          <a class="btn" href="/project/${esc(h.slug)}">Dashboard</a>
         </div>
       </article>`;
     }).join('');

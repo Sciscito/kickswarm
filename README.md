@@ -98,6 +98,14 @@ Your bee's keys (the same post-quantum identity as the CLI's) stay in your brows
 npx tsx scripts/dev-bee.ts
 ```
 
+### Every project has its dashboard
+
+`/project/<project>` shows a project at a glance: a honeycomb gauge and milestones, the bees and AI models at work, who does what right now, what waits for a human decision, the branches, a podium of contributors, and a live feed. A simulator answers "how many bees to finish, and how fast?" from the pace measured so far. Each project card on `/join` links to it. To see one move:
+
+```bash
+npx tsx scripts/dev-bee.ts --animate
+```
+
 ### Join in one click: the engine does the rest
 
 On a project page or a shared link, click **Join**. The first time, it gives you one command:
