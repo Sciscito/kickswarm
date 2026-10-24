@@ -1,6 +1,6 @@
 import { makeRequete } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
-import type { Assignment, CellSpec, Decision, Decomposition, EngagementVerdict, Hash, Hive, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
+import type { Adhesion, Assignment, CellSpec, Decision, Decomposition, EngagementVerdict, Hash, Hive, Invitation, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
 
 /** HTTP client for the coordinator. It signs every request with the local identity. */
 export class CoordinatorClient {
@@ -9,10 +9,37 @@ export class CoordinatorClient {
     readonly identite: Identity,
   ) {}
 
+  /** OSP v0.3 §2.8: the private hive this client works in, if any, and its current read ticket. */
+  private prive: string | undefined;
+  private ticket: { valeur: string; expire: number } | undefined;
+
+  /** From now on, every hive route goes to this private hive's own instance (`/v0/p/{id}/…`). */
+  utiliserRuchePrivee(id: string | undefined): void {
+    this.prive = id;
+    this.ticket = undefined;
+  }
+
+  get ruchePrivee(): string | undefined {
+    return this.prive;
+  }
+
+  /** A read ticket lasts an hour: one signature per hour, renewed a few minutes before it runs out. */
+  private async ticketLecture(): Promise<string> {
+    if (this.ticket && this.ticket.expire - Date.now() > 5 * 60_000) return this.ticket.valeur;
+    const r = await this.call<{ ticket: string; expire: string }>('POST', '/v0/ticket', makeRequete(this.identite, 'lire'));
+    this.ticket = { valeur: r.ticket, expire: Date.parse(r.expire) };
+    return r.ticket;
+  }
+
   private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
-    const res = await fetch(new URL(path, this.url), {
+    // Host routes (creating a private hive, joining with a code) stay public.
+    const hote = path === '/v0/private' || path === '/v0/join';
+    const chemin = this.prive && !hote && path.startsWith('/v0/') ? `/v0/p/${this.prive}${path.slice(3)}` : path;
+    const headers: Record<string, string> = body === undefined ? {} : { 'content-type': 'application/json' };
+    if (this.prive && !hote && method === 'GET') headers.authorization = `Bearer ${await this.ticketLecture()}`;
+    const res = await fetch(new URL(chemin, this.url), {
       method,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = (await res.json().catch(() => ({}))) as { erreur?: string };
@@ -72,5 +99,25 @@ export class CoordinatorClient {
   }
   decide(d: Decision) {
     return this.call<{ decision: Hash }>('POST', '/v0/decisions', d);
+  }
+
+  // OSP v0.3 §2: private hives.
+  creerRuchePrivee(ruche: Hive, racine: CellSpec, approbation: Decision, secrets?: Secrets) {
+    return this.call<{ id: string; slug: string }>('POST', '/v0/private', { ruche, racine, approbation, ...(secrets ? { secrets } : {}) });
+  }
+  rejoindreAvecCode(a: Adhesion) {
+    return this.call<{ id: string; slug: string; role: string }>('POST', '/v0/join', a);
+  }
+  inviter(i: Invitation) {
+    return this.call<{ invitation: Hash }>('POST', '/v0/invitations', i);
+  }
+  membres() {
+    return this.call<Array<{ id: string; role: string; gardienne: boolean; depuis: string }>>('GET', '/v0/members');
+  }
+  ancres() {
+    return this.call<Array<{ seq: number; tete: Hash }>>('GET', '/v0/anchors');
+  }
+  etatPublie() {
+    return this.call<{ seq: number; etat: Hash | null; tete: { seq: number; hash: Hash } | null }>('GET', '/v0/state-hash');
   }
 }

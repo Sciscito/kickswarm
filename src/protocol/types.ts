@@ -124,6 +124,44 @@ export interface Hive extends Signed {
   classe_verif_defaut: VerifClass;
   licence_resultats: string;
   budget: { plafond_miel: number };
+  /** OSP v0.3 §2.2: set at creation, never changed. A private hive runs in its own registry. */
+  visibilite?: 'publique' | 'privee';
+  /** OSP v0.3 §2.5: a private hive's own guarantee (target error rate, guard floor), written at launch. */
+  parametres?: { alpha_faux?: number; gardiennes_v0?: number };
+  /** A private hive's random salt: its identifier, a hash, reveals nothing of its name. */
+  sel?: string;
+}
+
+/** Roles in a private hive (OSP v0.3 §2.3). */
+export type RolePrive = 'proprietaire' | 'membre' | 'observateur';
+
+/**
+ * OSP v0.3 §2.2: an invitation into a private hive, signed by its owner. Only the hash of the
+ * code (salted) is stored: reading the registry does not reveal it.
+ */
+export interface Invitation extends Signed {
+  type: 'osp.invitation/0.3';
+  /** The private hive's identifier. */
+  ruche: string;
+  role: 'membre' | 'observateur';
+  /** sha256(sel ":" code), with the code in its normal form (upper case, no spaces). */
+  code_hash: Hash;
+  sel: string;
+  utilisations_max: number;
+  /** Unix time in ms after which the code no longer works. */
+  expire: number;
+  auteur: ContributorId;
+  ts: number;
+  nonce: string;
+}
+
+/** OSP v0.3 §2.2: a person asks to join a private hive with an invitation code. */
+export interface Adhesion extends Signed {
+  type: 'osp.adhesion/0.3';
+  contributeur: ContributorId;
+  code: string;
+  ts: number;
+  nonce: string;
 }
 
 /** §4.3 */
@@ -199,7 +237,15 @@ export type DecisionNature =
   | 'refus_decoupage'
   /** OSP v0.2 §4.4: the hive owner settles an escalated result (cible: the result's identifier). */
   | 'arbitrage_valide'
-  | 'arbitrage_rejet';
+  | 'arbitrage_rejet'
+  /** OSP v0.3 §2.3, private hives only: the owner gives a member a role (cible: the member; params.role, params.gardienne). */
+  | 'role_attribue'
+  /** The owner removes a member (cible: the member). Their past work stays in the registry. */
+  | 'role_retire'
+  /** A member leaves (cible: themselves). */
+  | 'depart'
+  /** The owner revokes an invitation not used up yet (cible: the invitation's identifier). */
+  | 'invitation_revoquee';
 
 /** §14.6 */
 export interface Decision extends Signed {
@@ -210,13 +256,14 @@ export interface Decision extends Signed {
   cible: string;
   motif: string;
   date: string;
-  params?: { multiplicateur?: number };
+  params?: { multiplicateur?: number; role?: 'membre' | 'observateur'; gardienne?: boolean };
 }
 
 /** Signed request for actions with no object of their own (claim, start, release). */
 export interface Requete extends Signed {
   type: 'osp.requete/0.1';
-  action: 'claim' | 'start' | 'release';
+  /** `lire`: a member asks for a read ticket on a private hive (OSP v0.3 §2.8). */
+  action: 'claim' | 'start' | 'release' | 'lire';
   contributeur: ContributorId;
   ruche?: string;
   alveole?: Hash;

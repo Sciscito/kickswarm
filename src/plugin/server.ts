@@ -137,6 +137,22 @@ export function createPluginServer(
       if (scelles.tous.length) reveler().catch(() => undefined);
     }, intervalle).unref();
   }
+  /**
+   * Enters a hive by slug, or a private hive by its identifier (OSP v0.3: `p` + 32 hex). For a private
+   * hive, every call then goes to its own instance, with a read ticket; the hive's slug comes back.
+   */
+  const entrer = async (demande: string): Promise<string> => {
+    if (/^p[0-9a-f]{32}$/.test(demande)) {
+      client.utiliserRuchePrivee(demande);
+      const liste = await client.hives();
+      if (!liste[0]) throw new Error('This private hive has no hive in it yet');
+      ruche = liste[0].slug;
+    } else {
+      client.utiliserRuchePrivee(undefined);
+      ruche = demande;
+    }
+    return ruche;
+  };
   const journalise = <A,>(nom: string, fn: (args: A) => Promise<ToolResult>) => async (args: A): Promise<ToolResult> => {
     try {
       return await fn(args);
@@ -151,11 +167,11 @@ export function createPluginServer(
     {
       title: 'Join a hive',
       description: 'Joins a Kickswarm hive. The next cells will come from this hive.',
-      inputSchema: { ruche: z.string().describe('Hive slug, e.g. math-toolkit') },
+      inputSchema: { ruche: z.string().describe('Hive slug, e.g. math-toolkit, or a private hive identifier (p followed by 32 hex characters)') },
     },
-    outil(journalise('swarm_join', async ({ ruche: slug }: { ruche: string }) => {
+    outil(journalise('swarm_join', async ({ ruche: demande }: { ruche: string }) => {
+      const slug = await entrer(demande);
       const vue = await client.hive(slug);
-      ruche = slug;
       note('rejoint', { ruche: slug, nom: vue.ruche.nom, statut: vue.statut });
       return texte(
         `You joined “${vue.ruche.nom}” (${vue.statut}). ${vue.progression.miel}/${vue.progression.total} cells verified.\n` +
@@ -179,7 +195,9 @@ export function createPluginServer(
       const p = participation();
       const pourquoi = repos(p);
       if (pourquoi) return texte(`${prefixe}${pourquoi}`);
-      const cible = ruche ?? p.ruches.at(-1);
+      // Without swarm_join, the last hive joined from the command line (a private one included).
+      if (!ruche && p.ruches.length) await entrer(p.ruches.at(-1)!);
+      const cible = ruche;
       // Only the roles the contributor accepts: any other task goes straight back to the swarm, with no penalty.
       let ecarte = false;
       const prendre = async (): Promise<Assignment | null> => {

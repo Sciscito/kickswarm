@@ -33,6 +33,8 @@ export interface AuditOptions {
   reverifier?: boolean;
   /** State hash announced by a live coordinator, to compare with the replay. */
   etatAnnonce?: Hash;
+  /** For a private hive's registry: its anchors found in the public registry (OSP v0.3 §2.4). */
+  ancres?: Array<{ seq: number; tete: Hash }>;
 }
 
 interface Lancement {
@@ -63,6 +65,22 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   const chain = verifyRegistry(entries);
   add('Hash chain intact', chain.ok, chain.ok ? undefined : chain.erreur);
   if (!chain.ok) return report();
+
+  if (opts.ancres) {
+    // OSP v0.3 §2.4: every public anchor of this private hive must point into this very history.
+    // Checked before the replay: a rewritten history must be caught even when it no longer replays.
+    const faux = opts.ancres.filter((a) => entries[a.seq]?.hash !== a.tete);
+    const derniere = opts.ancres.reduce((m, a) => Math.max(m, a.seq), -1);
+    add(
+      'Matches the public anchors of this private hive',
+      opts.ancres.length > 0 && faux.length === 0,
+      !opts.ancres.length
+        ? 'no anchor found in the public registry'
+        : faux.length
+          ? `${faux.length} anchor(s) point to a different history: ${faux.slice(0, 3).map((a) => `#${a.seq}`).join(', ')}`
+          : `${opts.ancres.length} anchor(s) in the public registry, the last one covering entry #${derniere} of ${entries.length - 1}`,
+    );
+  }
 
   // 2. The launch announces the founder, the coordinator's public identities and the parameters.
   const first = entries[0];
@@ -110,6 +128,13 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
         divergence = `seal #${e.seq} could not be replayed: ${(err as Error).message}`;
         break;
       }
+      const mine = coord.registry.entries;
+      if (mine.length !== e.seq + 1 || mine[e.seq]!.hash !== e.hash) divergence = firstDifference(mine, entries, e.seq);
+      continue;
+    }
+    if (e.nature === 'ancre') {
+      // OSP v0.3 §2.4: the head of a private hive's registry. Opaque here; each member checks it against their copy.
+      coord.importAncre(e.date, e.donnees as { ruche: Hash; seq: number; tete: Hash });
       const mine = coord.registry.entries;
       if (mine.length !== e.seq + 1 || mine[e.seq]!.hash !== e.hash) divergence = firstDifference(mine, entries, e.seq);
       continue;
@@ -303,11 +328,17 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   const share = totalParts > 0 ? partsCommun / totalParts : 0.3;
   const communCompte = coord.account(COMMUN).parts;
   const communOk = communIssues.length === 0 && (totalParts < 1 || close(share, 0.3, 0.005)) && close(communCompte, partsCommun, 0.001 * (gagne.size + communIssues.length + 1) + 0.01);
-  add(
-    'The Commons holds 30% of every power share',
-    communOk,
-    communOk ? `Commons ${(share * 100).toFixed(2)}% of ${totalParts.toFixed(3)} shares` : `bad split at ${communIssues.slice(0, 5).join(', ') || 'global share'}; share ${(share * 100).toFixed(2)}%`,
-  );
+  if (L.params.prive) {
+    // OSP v0.3 §2.6: a private hive's honey stays local. Not a single power share may come out of it.
+    const sansParts = totalParts === 0 && coord.account(COMMUN).parts === 0;
+    add('Private hive: honey stays local, no power share issued', sansParts, sansParts ? `${gagne.size} member(s) earned local honey` : `${totalParts.toFixed(3)} shares issued`);
+  } else {
+    add(
+      'The Commons holds 30% of every power share',
+      communOk,
+      communOk ? `Commons ${(share * 100).toFixed(2)}% of ${totalParts.toFixed(3)} shares` : `bad split at ${communIssues.slice(0, 5).join(', ') || 'global share'}; share ${(share * 100).toFixed(2)}%`,
+    );
+  }
 
   if (opts.reverifier) {
     const notes = [

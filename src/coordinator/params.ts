@@ -36,6 +36,11 @@ export interface Params {
   taux_pieges_min: number;
   /** OSP v0.2 P0-3: mutants tried per delivery to make traps. */
   pieges_essais: number;
+  /**
+   * OSP v0.3 §2.6: a private hive's instance. Its honey stays local (no power shares, no Commons), and
+   * only its members take part. Written at launch, so the audit knows which invariants apply.
+   */
+  prive: boolean;
   /** Version of the mutation engine (it is part of the replay). A registry that does not announce it uses version 1. */
   moteur_mutation: number;
   /** OSP v0.2 P0-3: maximum delay before a registry entry is published, even if a verification is still open. */
@@ -111,6 +116,7 @@ export const DEFAULT_PARAMS: Params = {
   taux_pieges_min: 0.01,
   pieges_essais: 8,
   moteur_mutation: 2,
+  prive: false,
   embargo_max_ms: 2 * HEURE,
   score_mutation_min: 0.8,
   reference_obligatoire: false,

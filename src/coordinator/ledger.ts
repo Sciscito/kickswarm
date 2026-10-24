@@ -57,8 +57,11 @@ export class Ledger {
     if (grammes <= 0) return;
     const p = this.params;
     const compte = this.get(id);
-    const liquide = grammes * (1 - p.taux_cristallisation);
-    const parts = grammes * p.taux_cristallisation * p.parts_par_gramme;
+    // OSP v0.3 §2.6: in a private hive, honey stays local. Two friends validating each other's work
+    // in private must not be able to print public power shares.
+    const cristallise = p.prive ? 0 : p.taux_cristallisation;
+    const liquide = grammes * (1 - cristallise);
+    const parts = grammes * cristallise * p.parts_par_gramme;
     const enPeriodeFondateur = this.now() - this.lancement < p.allocation_fondateur_duree_ms;
     const partFondateur = enPeriodeFondateur ? parts * p.allocation_fondateur : 0;
     const partCommun = parts * p.ratio_commun;

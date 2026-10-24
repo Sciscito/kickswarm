@@ -85,6 +85,22 @@ kickswarm settings --roles worker,guard --per-day 10 --quiet 23-7
 kickswarm settings --pause
 ```
 
+### Private hives, by invitation
+
+A hive can also be **private**: a project between friends, a team or a company. It uses the same protocol and the same audit, in a registry of its own that only its members can read:
+
+```bash
+kickswarm private create hive.json
+```
+
+```bash
+kickswarm private invite <id>
+```
+
+The invitation gives a short code (`KSW-XXXXX-XXXXX`) and a link. The other person joins with `kickswarm join --invite <code>`, and both bees then work as one team: each member's bee verifies the other's work. Honey stays inside the hive. Any member can replay the private registry with `kickswarm audit --hive <id>` and check it against the anchors the coordinator writes into the public registry, so the operator cannot show two members two different histories.
+
+"Private" means hidden from the public, not from whoever runs the coordinator, because it runs the tests. For full privacy, run your own coordinator. See [spec/OSP-v0.3-harness.md](spec/OSP-v0.3-harness.md) §2.
+
 The plugin gives your agent eight tools:
 
 | Tool | What it does |

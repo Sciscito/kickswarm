@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { idRuchePrivee, normaliserCode } from '../protocol/builders.js';
 import { canonicalize, commitment, hashOf, sha256 } from '../protocol/canonical.js';
 import { generateIdentity, isContributorId, signObject, verifyObject, type Identity } from '../protocol/identity.js';
 import type {
+  Adhesion,
   Assignment,
   Caste,
   Cell,
@@ -16,9 +18,11 @@ import type {
   Hash,
   Hive,
   HiveStatus,
+  Invitation,
   Livrable,
   Requete,
   Result,
+  RolePrive,
   Secrets,
   TestCase,
   Verdict,
@@ -158,6 +162,10 @@ interface State {
   engagements: Record<string, Engagement[]>;
   /** P0-4: reliability of each guard (sensitivity and specificity, Beta distributions). */
   fiabilite: Record<string, Fiabilite>;
+  /** OSP v0.3 §2.3, private hives only (absent elsewhere, so older registries keep their state hashes). */
+  membres?: Record<string, { role: RolePrive; gardienne: boolean; depuis: number }>;
+  /** OSP v0.3 §2.2, private hives only: invitations, by identifier. */
+  invitations?: Record<string, { code_hash: Hash; sel: string; role: 'membre' | 'observateur'; utilisations_max: number; utilisations: number; expire: number; revoquee: boolean }>;
   board: Record<string, BoardEntry[]>;
   accounts: Record<string, Account>;
   nonces: Record<string, number>;
@@ -169,7 +177,7 @@ interface State {
 
 /** The commands that change the state. Each one is written in full to the registry (OSP v0.2, §6.1). */
 export type CommandeType =
-  | 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'engageVerdict' | 'submitVerdict';
+  | 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'engageVerdict' | 'submitVerdict' | 'inviter' | 'rejoindre';
 
 /**
  * The content of a `commande` entry: the signed objects received, plus everything that is not
@@ -518,7 +526,7 @@ export class Coordinator {
     };
     const e = c.entree as {
       ruche: Hive; racine: CellSpec; decision: Decision; requete: Requete; resultat: Result; livrable: Livrable; decomposition: Decomposition;
-      engagement: EngagementVerdict; verdict: Verdict;
+      engagement: EngagementVerdict; verdict: Verdict; invitation: Invitation; adhesion: Adhesion;
     };
     try {
       switch (c.type) {
@@ -531,6 +539,8 @@ export class Coordinator {
         case 'submitDecomposition': await this.submitDecomposition(e.decomposition); break;
         case 'engageVerdict': this.engagerVerdict(e.engagement); break;
         case 'submitVerdict': await this.submitVerdict(e.verdict); break;
+        case 'inviter': this.inviter(e.invitation); break;
+        case 'rejoindre': this.rejoindre(e.adhesion); break;
         default: throw new ReplayDivergence(`Unknown command: ${String(c.type)}`);
       }
     } finally {
@@ -719,6 +729,13 @@ export class Coordinator {
     if (this.state.hives[ruche.slug]) throw new OspError(`The hive "${ruche.slug}" already exists`, 409);
     if (!ruche.nom || !ruche.objectif) throw new OspError('A hive needs a name and a goal');
     if (ruche.classe_verif_defaut !== 'V0') throw new OspError('The MVP only supports verification class V0');
+    // OSP v0.3 §2.7: a private hive is a coordinator instance of its own, hosting that one hive.
+    if (this.params.prive) {
+      if (ruche.visibilite !== 'privee') throw new OspError('This instance only hosts its private hive', 409);
+      if (Object.keys(this.state.hives).length) throw new OspError('A private instance hosts a single hive', 409);
+    } else if (ruche.visibilite === 'privee') {
+      throw new OspError('A private hive is created through POST /v0/private, in its own registry', 400);
+    }
     this.validateSpec(racine);
 
     const hive: HiveRecord = {
@@ -731,9 +748,144 @@ export class Coordinator {
       contributions: {},
     };
     this.state.hives[ruche.slug] = hive;
+    if (this.params.prive) {
+      this.state.membres = { [ruche.porteur]: { role: 'proprietaire', gardienne: true, depuis: this.now() } };
+      this.state.invitations = {};
+    }
     this.registry.append('ruche_proposee', { slug: ruche.slug, id: hive.id, porteur: ruche.porteur, nom: ruche.nom });
     hive.racine = this.emitCell(ruche.slug, racine, null, '0', 0).id;
     return this.hiveView(ruche.slug);
+  }
+
+  // ---------------------------------------------------------------- private hives (OSP v0.3 §2)
+
+  /** The one hive of a private instance. */
+  private rucheUnique(): HiveRecord {
+    const h = Object.values(this.state.hives)[0];
+    if (!h) throw new OspError('This private hive is not set up yet', 409);
+    return h;
+  }
+
+  /** In a private hive, only members take part, and observers only read. A public hive is open to all. */
+  private exigerMembre(id: ContributorId, pourTravailler = true): void {
+    if (!this.params.prive) return;
+    const m = this.state.membres?.[id];
+    if (!m) throw new OspError('This hive is private: only its members take part', 403);
+    if (pourTravailler && m.role === 'observateur') throw new OspError('Observers can read this hive, not work in it', 403);
+  }
+
+  /** The members of a private hive, for the owner's tools and the dashboard. */
+  membres(): Array<{ id: string; role: RolePrive; gardienne: boolean; depuis: string }> {
+    return Object.entries(this.state.membres ?? {}).map(([id, m]) => ({ id, role: m.role, gardienne: m.gardienne, depuis: new Date(m.depuis).toISOString() }));
+  }
+
+  /** A signed object's freshness and single use, as for requests. */
+  private fraicheur(auteur: ContributorId, ts: number, nonce: string): void {
+    if (typeof ts !== 'number' || Math.abs(this.now() - ts) > this.params.fenetre_requete_ms) throw new OspError('Expired object: check your clock', 401);
+    const cle = `${auteur}:${nonce}`;
+    if (!nonce || this.state.nonces[cle] !== undefined) throw new OspError('Replayed object', 409);
+    this.state.nonces[cle] = ts;
+  }
+
+  /** OSP v0.3 §2.2: the owner invites. Only the salted hash of the code is kept. */
+  inviter(inv: Invitation): { invitation: Hash } {
+    return this.run('inviter', { invitation: inv }, [], () => this.doInviter(inv));
+  }
+
+  private doInviter(inv: Invitation): { invitation: Hash } {
+    if (!this.params.prive) throw new OspError('Invitations only exist in private hives', 400);
+    if (inv?.type !== 'osp.invitation/0.3') throw new OspError('Expected an invitation object (osp.invitation/0.3)');
+    if (!isContributorId(inv.auteur) || !verifyObject(inv, inv.auteur)) throw new OspError('Invalid invitation signature', 401);
+    const hive = this.rucheUnique();
+    if (inv.auteur !== hive.ruche.porteur) throw new OspError('Only the hive owner invites', 403);
+    if (inv.ruche !== idRuchePrivee(hive.ruche)) throw new OspError('This invitation is for another hive', 400);
+    if (inv.role !== 'membre' && inv.role !== 'observateur') throw new OspError('An invitation is for a member or an observer');
+    if (!/^sha256:[0-9a-f]{64}$/.test(inv.code_hash) || typeof inv.sel !== 'string' || inv.sel.length < 16) throw new OspError('Invalid code hash or salt');
+    if (!Number.isInteger(inv.utilisations_max) || inv.utilisations_max < 1 || inv.utilisations_max > 100) throw new OspError('An invitation is used 1 to 100 times');
+    if (!(inv.expire > this.now() && inv.expire <= this.now() + 90 * 24 * 3600_000)) throw new OspError('An invitation lasts at most 90 days');
+    this.fraicheur(inv.auteur, inv.ts, inv.nonce);
+    const id = hashOf(inv);
+    const invitations = (this.state.invitations ??= {});
+    invitations[id] = { code_hash: inv.code_hash, sel: inv.sel, role: inv.role, utilisations_max: inv.utilisations_max, utilisations: 0, expire: inv.expire, revoquee: false };
+    this.registry.append('invitation', { id, role: inv.role, utilisations_max: inv.utilisations_max, expire: new Date(inv.expire).toISOString() });
+    return { invitation: id };
+  }
+
+  /** The invitation a code opens, if it is still valid. Reads only: the host asks every private instance. */
+  trouverInvitation(code: string): Hash | null {
+    const c = normaliserCode(String(code ?? ''));
+    const now = this.now();
+    for (const [id, inv] of Object.entries(this.state.invitations ?? {})) {
+      if (inv.revoquee || inv.utilisations >= inv.utilisations_max || inv.expire <= now) continue;
+      if (sha256(`${inv.sel}:${c}`) === inv.code_hash) return id as Hash;
+    }
+    return null;
+  }
+
+  /** OSP v0.3 §2.2: a person joins with a code. The membership is written in the hive's own registry. */
+  rejoindre(a: Adhesion): { ruche: string; role: RolePrive } {
+    return this.run('rejoindre', { adhesion: a }, [], () => this.doRejoindre(a));
+  }
+
+  private doRejoindre(a: Adhesion): { ruche: string; role: RolePrive } {
+    if (!this.params.prive) throw new OspError('Only private hives are joined with a code', 400);
+    if (a?.type !== 'osp.adhesion/0.3') throw new OspError('Expected a membership request (osp.adhesion/0.3)');
+    if (!isContributorId(a.contributeur) || !verifyObject(a, a.contributeur)) throw new OspError('Invalid membership signature', 401);
+    this.fraicheur(a.contributeur, a.ts, a.nonce);
+    const id = this.trouverInvitation(a.code);
+    if (!id) throw new OspError('Unknown, used or expired invitation code', 404);
+    const membres = this.state.membres!;
+    if (membres[a.contributeur]) throw new OspError('You are already a member of this hive', 409);
+    const inv = this.state.invitations![id]!;
+    inv.utilisations++;
+    membres[a.contributeur] = { role: inv.role, gardienne: inv.role === 'membre', depuis: this.now() };
+    this.registry.append('membre_ajoute', { contributeur: a.contributeur, role: inv.role, invitation: id });
+    return { ruche: this.rucheUnique().ruche.slug, role: inv.role };
+  }
+
+  /**
+   * OSP v0.3 §2.8: a read ticket on a private hive. The member signs a fresh request; nothing is
+   * written (reads must not fill the registry). Any role may read, observers included.
+   */
+  verifierLecteur(r: Requete): ContributorId {
+    if (r?.type !== 'osp.requete/0.1' || r.action !== 'lire') throw new OspError('Expected a read request');
+    if (!isContributorId(r.contributeur) || !verifyObject(r, r.contributeur)) throw new OspError('Invalid request signature', 401);
+    if (typeof r.ts !== 'number' || Math.abs(this.now() - r.ts) > this.params.fenetre_requete_ms) throw new OspError('Expired request: check your clock', 401);
+    this.exigerMembre(r.contributeur, false);
+    return r.contributeur;
+  }
+
+  /** A member leaves or is removed: their open leases go back to the swarm at once. Their past work stays. */
+  private retirerMembre(id: ContributorId): void {
+    delete this.state.membres![id];
+    for (const rec of Object.values(this.state.cells)) {
+      if (rec.bail?.par === id) {
+        delete rec.bail;
+        if (rec.state === 'reservee' || rec.state === 'en_cours') rec.state = 'libre';
+      }
+      rec.gardiennes = rec.gardiennes.filter((g) => g.par !== id);
+    }
+    for (const [pid, p] of Object.entries(this.state.pieges)) if (p.attribue_a === id && !p.engagement) delete this.state.pieges[pid];
+    this.registry.append('membre_retire', { contributeur: id });
+  }
+
+  /** OSP v0.3 §2.4, public instance: the head of a private registry. It commits the coordinator to one history. */
+  ancrer(ruche: Hash, seq: number, tete: Hash): void {
+    if (this.options.replay) throw new Error('An audit coordinator does not anchor: it imports anchors');
+    if (this.params.prive) throw new Error('Anchors go into the public registry');
+    this.registry.append('ancre', { ruche, seq, tete });
+    this.peutEtreSceller();
+  }
+
+  /** Audit mode: takes an anchor from the original registry, as it does for seals. */
+  importAncre(date: string, a: { ruche: Hash; seq: number; tete: Hash }): void {
+    if (!this.options.replay) throw new Error('Anchor import is for audit mode only');
+    this.clock = Date.parse(date);
+    try {
+      this.registry.append('ancre', { ruche: a.ruche, seq: a.seq, tete: a.tete });
+    } finally {
+      this.clock = null;
+    }
   }
 
   listHives(): Array<{ slug: string; nom: string; statut: HiveStatus; progression: { miel: number; total: number } }> {
@@ -923,6 +1075,42 @@ export class Coordinator {
         else this.rejectResult(rec, d.cible, `Arbitrage du porteur : ${d.motif}`);
         break;
       }
+      // OSP v0.3 §2.3: every change of membership is a signed, stated decision, in the hive's own registry.
+      case 'role_attribue':
+      case 'role_retire':
+      case 'depart':
+      case 'invitation_revoquee': {
+        if (!this.params.prive) throw new OspError('Roles and invitations only exist in private hives', 400);
+        const proprietaire = this.rucheUnique().ruche.porteur;
+        const membres = this.state.membres!;
+        if (d.nature === 'depart') {
+          if (d.cible !== d.auteur) throw new OspError('You can only leave for yourself', 403);
+          if (d.auteur === proprietaire) throw new OspError('The owner cannot leave the hive', 409);
+          if (!membres[d.cible]) throw new OspError('You are not a member of this hive', 404);
+          this.retirerMembre(d.cible as ContributorId);
+          break;
+        }
+        if (d.auteur !== proprietaire) throw new OspError('Only the hive owner manages members and invitations', 403);
+        if (d.nature === 'invitation_revoquee') {
+          const inv = this.state.invitations?.[d.cible];
+          if (!inv) throw new OspError('Unknown invitation', 404);
+          inv.revoquee = true;
+        } else if (d.nature === 'role_retire') {
+          if (d.cible === proprietaire) throw new OspError('The owner cannot be removed', 409);
+          if (!membres[d.cible]) throw new OspError('Not a member of this hive', 404);
+          this.retirerMembre(d.cible as ContributorId);
+        } else {
+          const m = membres[d.cible];
+          if (!m) throw new OspError('Not a member of this hive', 404);
+          if (m.role === 'proprietaire') throw new OspError('The owner keeps their role', 409);
+          const role = d.params?.role ?? m.role;
+          if (role !== 'membre' && role !== 'observateur') throw new OspError('A role is member or observer');
+          m.role = role;
+          // An observer never guards; a member guards unless the owner says otherwise.
+          m.gardienne = role === 'membre' && (d.params?.gardienne ?? true);
+        }
+        break;
+      }
       default:
         throw new OspError(`Unknown decision nature: ${String((d as Decision).nature)}`);
     }
@@ -953,6 +1141,8 @@ export class Coordinator {
     // the Wald test requires (OSP v0.2 P0-4), never fewer than the floor.
     const aVerifier = cells.filter((c) => {
       if (c.state !== 'en_verification' || !c.en_attente) return false;
+      // OSP v0.3 §2.3: in a private hive, only members with the guard role are drawn to verify.
+      if (this.params.prive && !this.state.membres?.[who]?.gardienne) return false;
       const rr = this.state.results[c.en_attente];
       if (!rr || rr.resultat.auteur === who) return false;
       const engages = this.engagesSur(c.en_attente);
@@ -1076,6 +1266,7 @@ export class Coordinator {
   private checkResult(res: Result, livrable: Livrable): CellRecord {
     if (res?.type !== 'osp.result/0.1') throw new OspError('Expected a result object (osp.result/0.1)');
     if (!isContributorId(res.auteur) || !verifyObject(res, res.auteur)) throw new OspError('Invalid result signature', 401);
+    this.exigerMembre(res.auteur);
     if (this.state.results[hashOf(res)]) throw new OspError('Result already submitted', 409);
     const rec = this.cellOrThrow(res.alveole);
     if (rec.bail?.par !== res.auteur) throw new OspError('You do not hold the lease on this cell', 403);
@@ -1176,6 +1367,7 @@ export class Coordinator {
   private decompositionBasics(d: Decomposition): CellRecord {
     if (d?.type !== 'osp.decomposition/0.1') throw new OspError('Expected a split object (osp.decomposition/0.1)');
     if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Invalid split signature', 401);
+    this.exigerMembre(d.auteur);
     if (this.state.decompositions[hashOf(d)]) throw new OspError('Split already submitted', 409);
     const rec = this.cellOrThrow(d.alveole);
     if (rec.bail?.par !== d.auteur || rec.bail.caste !== 'eclaireuse') throw new OspError('You are not the scout of this cell', 403);
@@ -1231,6 +1423,7 @@ export class Coordinator {
   private doEngagerVerdict(e: EngagementVerdict): { statut: 'engage'; revelation: boolean } {
     if (e?.type !== 'osp.engagement/0.1') throw new OspError('Expected a commitment object (osp.engagement/0.1)');
     if (!isContributorId(e.gardienne) || !verifyObject(e, e.gardienne)) throw new OspError('Invalid commitment signature', 401);
+    this.exigerMembre(e.gardienne);
     if (typeof e.engagement !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(e.engagement)) throw new OspError('Invalid commitment: expected sha256');
     this.expire();
 
@@ -1328,6 +1521,7 @@ export class Coordinator {
   private doSubmitVerdict(v: Verdict, rejeu: VerifReport | null): { statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number } {
     if (v?.type !== 'osp.verdict/0.1') throw new OspError('Expected a verdict object (osp.verdict/0.1)');
     if (!isContributorId(v.gardienne) || !verifyObject(v, v.gardienne)) throw new OspError('Invalid verdict signature', 401);
+    this.exigerMembre(v.gardienne);
     if (!['valide', 'rejete', 'abstention'].includes(v.decision)) throw new OspError('Invalid decision');
     if (typeof v.sel !== 'string' || !/^[0-9a-f]{64,}$/.test(v.sel)) throw new OspError('Verdict salt missing or too short (32 bytes in hexadecimal)');
     this.expire();
@@ -1762,6 +1956,7 @@ export class Coordinator {
   private checkRequete(r: Requete, action: Requete['action']): void {
     if (r?.type !== 'osp.requete/0.1' || r.action !== action) throw new OspError(`Expected a ${action} request`);
     if (!isContributorId(r.contributeur) || !verifyObject(r, r.contributeur)) throw new OspError('Invalid request signature', 401);
+    this.exigerMembre(r.contributeur);
     if (typeof r.ts !== 'number' || Math.abs(this.now() - r.ts) > this.params.fenetre_requete_ms) throw new OspError('Request expired: check your clock', 401);
     const key = `${r.contributeur}:${r.nonce}`;
     if (!r.nonce || this.state.nonces[key] !== undefined) throw new OspError('Replayed request', 409);

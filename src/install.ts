@@ -100,7 +100,13 @@ export async function joinHive(slug: string, opts: { url: string; yes: boolean; 
   const client = new CoordinatorClient(opts.url, identite);
   let hiveName = slug;
   try {
-    const hive = await client.hive(slug);
+    // A private hive (OSP v0.3) is read through its own routes, with a member's ticket.
+    let cible = slug;
+    if (/^p[0-9a-f]{32}$/.test(slug)) {
+      client.utiliserRuchePrivee(slug);
+      cible = (await client.hives())[0]?.slug ?? slug;
+    }
+    const hive = await client.hive(cible);
     hiveName = hive.ruche.nom;
     log(`Hive found: “${hive.ruche.nom}” (${hive.statut}), ${hive.progression.miel}/${hive.progression.total} cells verified.`);
   } catch (e) {

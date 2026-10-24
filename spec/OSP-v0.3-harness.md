@@ -182,7 +182,39 @@ This reuses, unchanged, the transactions, the replay, the seals, drand, sealed v
 
 Writes are already signed objects, so they need no new authentication: only the membership check.
 
-### 2.9 Summary
+### 2.9 What is implemented (P0-1)
+
+- **One coordinator instance per private hive** (`src/coordinator/hote.ts`). The host routes `/v0/p/{id}/…` to it, and private hives come back after a restart. The instance launches with `prive: true` and the hive's own guarantee in its launch entry.
+- **Invitations and codes.**
+  - The owner signs an `osp.invitation/0.3`. It carries the role, the number of uses, the expiry (at most 90 days) and `code_hash = sha256(salt ":" code)`.
+  - The code (`KSW-XXXXX-XXXXX`) never leaves the owner's terminal before it is shared.
+  - The invitee signs an `osp.adhesion/0.3` that contains the code. The host asks each private hive whether the code opens one of its invitations.
+  - The links `…/join#invite=CODE` keep the code after the `#`, so it never reaches the server. The join page shows the matching command.
+  - Join attempts are limited per address (20 per 10 minutes by default).
+- **Roles.**
+  - Owner, member and observer, plus a per-member "guards" flag. Decisions `role_attribue`, `role_retire`, `depart` and `invitation_revoquee` are written in the hive's registry.
+  - A removed member loses their open leases and their read ticket at once. Their past work stays.
+  - In a private hive, every way in (claim, result, split, commitment, verdict) checks membership. Only members who guard are drawn to verify.
+- **Reads need a ticket.** A member signs a `lire` request and gets a ticket valid for 1 hour. Private answers carry no cross-origin permission. The public hive list never shows a private hive.
+- **Local honey.** In a private instance, honey does not crystallize into shares and feeds no Commons. The audit then checks "no power share issued" instead of the 30% Commons.
+- **Public anchors.** After every private command, the host writes into the public registry the head of the private registry: an opaque key, an index and a hash. The public audit replays anchors like seals. `kickswarm audit --hive <id>` checks a member's copy against every anchor, before the replay, so a rewritten history is caught even when it no longer replays.
+- **Commands.**
+  - `kickswarm private create|invite|members|role|remove|revoke|leave`
+  - `kickswarm join --invite <code>`
+  - `kickswarm audit --hive <id>`
+  - The plugin's `swarm_join` accepts a private hive's identifier.
+
+**Different from §2.2 to §2.8, for now:**
+
+- **The default guarantee is α\* = 5% with a floor of one guard, not 1%.** With two members, 1% would need three newcomer guards, which two people cannot provide. With 5% and one guard, each member's bee reviews the other's work. The owner can choose both values at creation (`--alpha`, `--guards`).
+- **Not done yet:**
+  - invitations addressed to an identity (`"to"`, without a code);
+  - transferring ownership;
+  - the reviewer role (it comes with V2-human verdicts);
+  - the charter attestation;
+  - per-hive questions, the bridge and the dashboard (P0-2 to P0-5).
+
+### 2.10 Summary
 
 **Reused.** The whole protocol, the trust engine, the registry format, the audit, drand, seals, sandboxes. The `Coordinator` class, almost unchanged, as one instance per private hive.
 
@@ -748,7 +780,7 @@ Each step says what can be **shown** when it is done. **The first milestone is t
 
 | Step | Work item | What can be shown |
 |---|---|---|
-| **P0-1** | **Private hives**: `visibility`, invitations and codes, memberships, roles, one `Coordinator` instance per private hive, private routes, read tickets, per-hive parameters, local honey, public anchors | On two machines, the cousin joins with a code; a third identity gets "403"; both run `kickswarm audit` on the private registry and see every ✓; the public registry shows only an anchor. |
+| **P0-1** ✅ | *Done: see §2.9.* **Private hives**: `visibility`, invitations and codes, memberships, roles, one `Coordinator` instance per private hive, private routes, read tickets, per-hive parameters, local honey, public anchors | On two machines, the cousin joins with a code; a third identity gets "403"; both run `kickswarm audit` on the private registry and see every ✓; the public registry shows only an anchor. |
 | **P0-2** | **Repo capsules, write scopes and the bridge** | A cell's honey becomes a pull request on the real repository, with the right co-author; the audit checks that the commit holds exactly the validated deliverable. Two cells on the same file are never open at the same time. |
 | **P0-3** | **`tests-luau@1` and `luau-checks@1`**, the Luau mutation engine, the "pure logic first" Roblox playbook | A Luau module of the game (coins, shop) is validated by tests and hidden tests; a guard catches a mutated trap; the same verdict on both machines. |
 | **P0-4** | **Questions with choices**: `osp.question`, `osp.answer`, `attente_decision`, routing to the owner and the branch owner, defaults and deadlines; answered from the terminal or the dashboard | A bee asks "R15 or R6?"; only its cell waits while the cousin's bee keeps working on another branch; the answer is signed, and the branch resumes. |

@@ -6,10 +6,11 @@ import { DrandHttp, QUICKNET, tourA, type SourceBalise } from './coordinator/bal
 import { Coordinator } from './coordinator/coordinator.js';
 import type { RegistryEntry } from './coordinator/registry.js';
 import { createCoordinatorServer } from './coordinator/http.js';
+import { Hote } from './coordinator/hote.js';
 import { demo } from './demo.js';
 import { joinHive } from './install.js';
 import { liveDemo } from './live-demo.js';
-import { makeDecision, makeHive } from './protocol/builders.js';
+import { makeAdhesion, makeDecision, makeHive, makeInvitation } from './protocol/builders.js';
 import { isContributorId } from './protocol/identity.js';
 import type { CellSpec, DecisionNature } from './protocol/types.js';
 import { CoordinatorClient } from './plugin/client.js';
@@ -34,7 +35,12 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm hives [--url ...]                           List hives
   kickswarm propose <hive.json> [--url ...]             Propose a hive (slug, nom, objectif, racine)
   kickswarm decide <nature> <target> <reason> [--multiplier n] [--url ...]
-  kickswarm audit [--data ./data | --file registre.jsonl | --url ...] [--reverify]   Replay the public registry and check everything
+  kickswarm audit [--data ./data | --file registre.jsonl | --url ...] [--hive <private id>] [--reverify]   Replay a registry and check everything
+  kickswarm private create <hive.json> [--alpha 0.05] [--guards 1]   Create a private hive, by invitation only
+  kickswarm private invite <id> [--role member|observer] [--uses 1] [--days 14]
+  kickswarm private members <id>  ·  private role <id> <member> member|observer <reason> [--no-guard]
+  kickswarm private remove <id> <member> <reason>  ·  private revoke <id> <invitation> <reason>  ·  private leave <id>
+  kickswarm join --invite <code>                       Join a private hive with an invitation code
 
 Default coordinator: $KICKSWARM_URL or http://127.0.0.1:7777
 Identity: $KICKSWARM_HOME/identite.json (default ~/.kickswarm)`;
@@ -64,6 +70,70 @@ function participationOptions(opts: Record<string, string>, ruche?: string): Opt
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 
+/** `kickswarm private …`: create a private hive, invite, manage members (OSP v0.3 §2). */
+async function commandePrivee(args: string[], opts: Record<string, string>, c: CoordinatorClient): Promise<void> {
+  const [action, id, ...reste] = args;
+  const raison = (mots: string[]) => {
+    if (!mots.length) throw new Error('Every decision states its reason: add it at the end of the command');
+    return mots.join(' ');
+  };
+  switch (action) {
+    case 'create': {
+      if (!id) throw new Error('Usage: kickswarm private create <hive.json> [--alpha 0.05] [--guards 1]');
+      const def = JSON.parse(readFileSync(id, 'utf8')) as { slug: string; nom: string; objectif: string; racine: CellSpec };
+      const parametres = {
+        ...(opts.alpha !== undefined ? { alpha_faux: Number(opts.alpha) } : {}),
+        ...(opts.guards !== undefined ? { gardiennes_v0: Number(opts.guards) } : {}),
+      };
+      const ruche = makeHive(c.identite, { ...def, privee: true, ...(Object.keys(parametres).length ? { parametres } : {}) });
+      const r = await c.creerRuchePrivee(ruche, def.racine, makeDecision(c.identite, 'approbation_ruche', def.slug, 'Private hive created by its owner'));
+      console.log(`Private hive “${r.slug}” created. Its identifier: ${r.id}`);
+      console.log(`Invite someone: kickswarm private invite ${r.id}`);
+      console.log('What "private" means: hidden from the public, not from whoever runs this coordinator (it runs the tests). For full privacy, run your own coordinator.');
+      return;
+    }
+    case 'invite': {
+      if (!id) throw new Error('Usage: kickswarm private invite <id> [--role member|observer] [--uses 1] [--days 14]');
+      c.utiliserRuchePrivee(id);
+      const role = opts.role === 'observer' ? 'observateur' : 'membre';
+      const { invitation, code } = makeInvitation(c.identite, id, { role, utilisations: Number(opts.uses ?? 1), joursValidite: Number(opts.days ?? 14) });
+      await c.inviter(invitation);
+      console.log(`Invitation code: ${code}`);
+      console.log(`Valid until ${new Date(invitation.expire).toLocaleString('en-GB')}, ${invitation.utilisations_max} use(s), as ${role === 'membre' ? 'a member' : 'an observer'}.`);
+      console.log(`They join with:  kickswarm join --invite ${code} --url ${c.url}`);
+      console.log(`Or with this link (the code stays in the browser):  ${c.url.replace(/\/$/, '')}/join#invite=${code}`);
+      return;
+    }
+    case 'members': {
+      if (!id) throw new Error('Usage: kickswarm private members <id>');
+      c.utiliserRuchePrivee(id);
+      for (const m of await c.membres()) console.log(`${m.role.padEnd(12)} ${m.gardienne ? 'guard   ' : '        '} ${m.id}  (since ${m.depuis.slice(0, 10)})`);
+      return;
+    }
+    case 'role':
+    case 'remove':
+    case 'revoke':
+    case 'leave': {
+      if (!id) throw new Error(`Usage: kickswarm private ${action} <id> …`);
+      c.utiliserRuchePrivee(id);
+      let d;
+      if (action === 'leave') d = makeDecision(c.identite, 'depart', c.identite.id, opts.reason ?? 'Leaving the hive');
+      else if (action === 'remove') d = makeDecision(c.identite, 'role_retire', reste[0] ?? '', raison(reste.slice(1)));
+      else if (action === 'revoke') d = makeDecision(c.identite, 'invitation_revoquee', reste[0] ?? '', raison(reste.slice(1)));
+      else {
+        const role = reste[1] === 'observer' ? 'observateur' : reste[1] === 'member' ? 'membre' : undefined;
+        if (!reste[0] || !role) throw new Error('Usage: kickswarm private role <id> <member> member|observer <reason> [--no-guard]');
+        d = makeDecision(c.identite, 'role_attribue', reste[0], raison(reste.slice(2)), { role, gardienne: opts['no-guard'] === undefined });
+      }
+      const r = await c.decide(d);
+      console.log(`Decision written to the private hive's registry: ${r.decision}`);
+      return;
+    }
+    default:
+      throw new Error('Usage: kickswarm private create|invite|members|role|remove|revoke|leave …');
+  }
+}
+
 function parse(argv: string[]): { pos: string[]; opts: Record<string, string> } {
   const pos: string[] = [];
   const opts: Record<string, string> = {};
@@ -83,14 +153,25 @@ async function main(): Promise<void> {
 
   switch (pos[0]) {
     case 'join': {
-      if (!pos[1]) throw new Error('Usage: kickswarm join <hive> [--url <coordinator>] [--preset full|light|night] [--roles ...] [--per-day n] [--quiet 23-7]');
+      let ruche = pos[1];
+      // OSP v0.3 §2.2: a private hive is joined with the code of an invitation.
+      if (opts.invite) {
+        const c = client();
+        const r = await c.rejoindreAvecCode(makeAdhesion(c.identite, opts.invite));
+        console.log(`\nYou joined the private hive “${r.slug}” as ${r.role === 'observateur' ? 'an observer' : 'a member'}. Its identifier: ${r.id}`);
+        ruche = r.id;
+      }
+      if (!ruche) throw new Error('Usage: kickswarm join <hive> [--url <coordinator>] [--preset full|light|night] [--roles ...] [--per-day n] [--quiet 23-7], or kickswarm join --invite <code>');
       // How you take part: the default request, or a preset, or your own options.
       const home = kickswarmHome();
-      const p = appliquerOptions(chargerParticipation(home), participationOptions(opts, pos[1]));
+      const p = appliquerOptions(chargerParticipation(home), participationOptions(opts, ruche));
       enregistrerParticipation(home, p);
       console.log(`\nHow your bee takes part: ${decrire(p)}\n   Change it at any time: kickswarm settings --help`);
-      return joinHive(pos[1], { url, yes: opts.yes !== undefined });
+      return joinHive(ruche, { url, yes: opts.yes !== undefined });
     }
+    case 'private':
+    case 'privee':
+      return commandePrivee(pos.slice(1), opts, client());
     case 'settings':
     case 'participation': {
       const home = kickswarmHome();
@@ -139,7 +220,9 @@ async function main(): Promise<void> {
         }
       } else if (beacon !== 'none') throw new Error('--beacon must be drand or none');
       const coord = new Coordinator({ fondateur: founder, dataDir, balise });
-      createCoordinatorServer(coord).listen(port, host, () => {
+      // Private hives (OSP v0.3) run next to the public ones, each in its own instance and registry.
+      const hote = new Hote(coord, { dataDir, ...(balise ? { balise } : {}) });
+      createCoordinatorServer(coord, hote).listen(port, host, () => {
         console.log(`OSP v0.1 coordinator on http://${host}:${port}`);
         console.log(`Live hive: http://${host}:${port}/hive`);
         console.log(`Founder: ${founder}\nData: ${dataDir}\nSandbox: ${sandbox}${sandbox === 'process' ? ' (network not cut: keep this coordinator private)' : ''}`);
@@ -191,8 +274,19 @@ async function main(): Promise<void> {
       let announced: string | undefined;
       let source: string;
       let embargo = 0;
-      const file = opts.file ?? (opts.url === undefined ? join(resolve(opts.data ?? 'data'), 'registre.jsonl') : undefined);
-      if (file && existsSync(file)) {
+      let ancres: Array<{ seq: number; tete: `sha256:${string}` }> | undefined;
+      const file = opts.file ?? (opts.url === undefined && opts.hive === undefined ? join(resolve(opts.data ?? 'data'), 'registre.jsonl') : undefined);
+      if (opts.hive) {
+        // A private hive: its own registry, read with a member's ticket, checked against the public anchors.
+        const c = client();
+        c.utiliserRuchePrivee(opts.hive);
+        const head = await c.etatPublie();
+        entries = ((await c.registry()) as RegistryEntry[]).slice(0, head.seq + 1);
+        announced = head.etat ?? undefined;
+        ancres = await c.ancres();
+        source = `private hive ${opts.hive} at ${url}`;
+        if (head.tete && head.tete.seq > head.seq) embargo = head.tete.seq - head.seq;
+      } else if (file && existsSync(file)) {
         source = file;
         entries = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l) as RegistryEntry);
       } else {
@@ -206,7 +300,7 @@ async function main(): Promise<void> {
         if (head.tete && head.tete.seq > head.seq) embargo = head.tete.seq - head.seq;
       }
       console.log(`\nAuditing ${entries.length} registry entries from ${source}${opts.reverify !== undefined ? ', re-running every verification' : ''}…\n`);
-      const report = await auditRegistry(entries, { reverifier: opts.reverify !== undefined, etatAnnonce: announced as `sha256:${string}` | undefined });
+      const report = await auditRegistry(entries, { reverifier: opts.reverify !== undefined, etatAnnonce: announced as `sha256:${string}` | undefined, ...(ancres ? { ancres } : {}) });
       for (const c of report.controles) console.log(`  ${c.ok ? '✓' : '✗'} ${c.nom}${c.detail ? `\n      ${c.detail}` : ''}`);
       console.log(`\n${report.ok ? 'AUDIT PASSED' : 'AUDIT FAILED'}: ${report.commandes} commands replayed${report.etat ? `, state ${report.etat}` : ''}`);
       if (embargo) console.log(`${embargo} newer entr${embargo > 1 ? 'ies are' : 'y is'} still under embargo while verifications are open; audit again later to cover them.`);
