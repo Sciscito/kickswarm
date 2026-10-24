@@ -32,7 +32,7 @@ export interface HiveAccess {
 export function directAccess(c: Coordinator, identite: Identity, ruche?: string): HiveAccess {
   return {
     identite,
-    claim: async () => c.claim(makeRequete(identite, 'claim', ruche ? { ruche } : {})),
+    claim: () => c.reclamer(makeRequete(identite, 'claim', ruche ? { ruche } : {})),
     start: async (alveole) => c.start(makeRequete(identite, 'start', { alveole })),
     submit: (r, l) => c.submitResult(r, l),
     decompose: (d, secrets) => c.submitDecomposition(d, secrets),

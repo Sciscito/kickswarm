@@ -87,7 +87,7 @@ export function createCoordinatorServer(coord: Coordinator): Server {
         case route === 'POST /v0/hives':
           return send(res, 201, coord.proposeHive(body.ruche as Hive, body.racine as CellSpec, body.secrets as Secrets | undefined));
         case route === 'POST /v0/work/claim':
-          return send(res, 200, { assignation: coord.claim(body as unknown as Requete) });
+          return send(res, 200, { assignation: await coord.reclamer(body as unknown as Requete) });
         case route === 'POST /v0/work/start':
           return send(res, 200, coord.start(body as unknown as Requete));
         case route === 'POST /v0/work/release':

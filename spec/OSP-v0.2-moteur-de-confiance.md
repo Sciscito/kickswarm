@@ -213,7 +213,7 @@ Une seule violation, et l'alerte est publique.
 
 ### 6.3 Un aléa que personne ne contrôle
 
-- Les tirages utilisent la **balise publique drand**, celle de la *League of Entropy* : graine = hash(tour drand ‖ identifiant de l'alvéole).
+- Les tirages utilisent la **balise publique drand**, celle de la *League of Entropy* : graine = hash(aléa du tour drand ‖ demande signée). *Implémenté : voir §6.6.*
 - **Engagement puis révélation.** Chaque gardienne publie d'abord le hash de son verdict, puis le verdict. Personne ne peut copier les autres ni s'aligner sur eux.
 
 ### 6.4 Ce qui est implémenté (P0-1)
@@ -233,7 +233,7 @@ Une seule violation, et l'alerte est publique.
 **Limites assumées :**
 
 - L'auditeur rejoue avec le **code de référence**. Un auditeur indépendant doit donc lire ce code, ou l'implémenter à nouveau à partir de la spec.
-- Un tirage aléatoire modifié **sans effet sur le déroulé** est indétectable, mais aussi sans conséquence. Contre un opérateur qui choisirait ses tirages pour truquer l'attribution, la parade est la balise publique drand (P1-3).
+- Un tirage aléatoire modifié **sans effet sur le déroulé** est indétectable, mais aussi sans conséquence. Contre un opérateur qui choisirait ses tirages pour truquer l'attribution, la parade est la balise publique drand (P1-3, §6.6) : les tirages y sont recalculés, donc vérifiés.
 - Les livrables vivent dans le registre lui-même. Au-delà de quelques milliers d'alvéoles, il faudra un stockage par hash, à côté du registre.
 
 ### 6.5 Une cryptographie post-quantique (P0-5, implémenté)
@@ -268,7 +268,34 @@ La variante 128s, trop lente pour sceller souvent, est écartée.
 - **Les entrées postérieures au dernier sceau** ne sont garanties que par le chaînage, jusqu'au sceau suivant. L'audit les compte.
 - **« Mathématiquement incassable » n'existe pas en signature.** SLH-DSA est ce qui s'en approche le plus : le casser demande de casser la fonction de hachage elle-même.
 
-### 6.6 Plusieurs auditeurs, puis plusieurs coordinateurs
+### 6.6 Des tirages que personne ne choisit : drand (P1-3, implémenté)
+
+Tous les tirages du coordinateur (la caste d'une abeille, l'alvéole qu'elle reçoit, la relecture qu'on lui confie, l'éventuelle alvéole piège) ont lieu pendant une demande de travail. Ils découlent désormais de la **balise publique drand quicknet** de la *League of Entropy* : toutes les 3 secondes, des organisations indépendantes produisent ensemble une signature BLS à seuil sur le numéro du tour, et l'aléa est le SHA-256 de cette signature.
+
+**La règle du tirage :**
+
+- Une demande signée par le contributeur à l'instant `ts` est tirée avec le tour **`tourA(ts) + 3`**, où `tourA(ts)` est le dernier tour publié à `ts`. Ce tour est publié **au moins 6 secondes après la signature** : au moment où il signe, le contributeur ne peut pas connaître l'aléa.
+- **graine = SHA-256(aléa du tour ‖ hash de la demande signée)**. Les tirages en découlent par SHA-256 en mode compteur (53 bits par tirage). Deux abeilles qui demandent au même tour obtiennent des tirages différents.
+- **La fenêtre d'horloge est de 4 secondes.** Le coordinateur refuse une demande dont l'heure s'écarte de plus de 4 s de la sienne. Comme 4 s < 6 s, une demande reste toujours signée avant la publication de son tour. Et un contributeur qui signerait plusieurs demandes pour garder celle qui l'arrange ne le peut pas : quand l'aléa paraît, ses demandes ont expiré.
+- **Le coordinateur ne choisit ni le tour ni la graine.** Le tour se déduit de l'heure *signée par le contributeur*, et la graine de la demande elle-même.
+
+**Ce que le registre conserve et ce que l'audit contrôle :**
+
+- Le lancement annonce la balise : réseau, clé publique du groupe, genèse, période et décalage.
+- Chaque demande inscrit la balise utilisée (tour, aléa, signature BLS). Au rejeu, l'auditeur **recalcule** les tirages au lieu de les reprendre. Il vérifie la signature BLS hors ligne, avec la seule clé publique de drand, et contrôle que le tour respecte la règle.
+- **Tricher sur un tirage, sur l'aléa ou sur le tour fait diverger le rejeu**, même sans les sceaux, et c'est testé. Une demande tirée sans balise alors qu'une balise était annoncée fait échouer le contrôle « Random draws from a public beacon ».
+- Une balise privée, utilisée pour les tests ou le travail hors ligne, suit le même schéma mais l'audit la signale : elle ne vient pas du réseau public.
+
+**En pratique :** `kickswarm coordinator` utilise drand par défaut et vérifie au démarrage qu'il le joint ; `--beacon none` revient aux tirages internes, que l'audit signale comme non publics. `kickswarm demo live --beacon drand` montre une ruche entière tirée par drand. Les balises sont récupérées sur plusieurs relais (api.drand.sh, drand.cloudflare.com…), toujours vérifiées, et mises en cache.
+
+**Limites assumées :**
+
+- **Le coordinateur peut encore écarter une demande.** Il voit l'aléa avant de répondre : il pourrait refuser une demande dont le tirage lui déplaît, et le contributeur en signerait une autre. Cette censure ne laisse aucune trace dans le registre. Elle en laisse une dans le journal local du contributeur, qui note chaque demande et chaque refus. Les auditeurs multiples (§6.7), puis la fédération, la rendront visible.
+- **Chaque demande de travail attend son tour**, de 6 à 9 secondes. C'est négligeable devant le temps de travail d'une IA sur une alvéole.
+- **Si drand est injoignable**, le coordinateur répond 503 au lieu de tirer lui-même. Le travail s'arrête plutôt que de perdre sa garantie.
+- **L'engagement puis révélation des verdicts** (§6.3) reste à faire.
+
+### 6.7 Plusieurs auditeurs, puis plusieurs coordinateurs
 
 - **Étape 1 :** des auditeurs indépendants (communautés, universités, la fondation) rejouent le registre en continu et publient leur hash d'état.
 - **Étape 2 :** la fédération. Plusieurs coordinateurs partagent le registre et se vérifient mutuellement. Il n'y a plus de point de confiance unique.
@@ -355,7 +382,7 @@ Chaque erreur détectée laisse l'essaim plus fort qu'avant. C'est le sens exact
 | **P0-5** ✅ | *Fait : voir §6.5.* **Signatures post-quantiques** : identités hybrides Ed25519 + ML-DSA-65 (FIPS 204), coordinateur et registre signés en SLH-DSA (FIPS 205, sécurité fondée sur les seules fonctions de hachage). Node 24 les fournit nativement. | Menace quantique sur Ed25519 | Moyenne |
 | **P1-1** | **Caste des chasseuses** et primes au contre-exemple | F1, auto-renforcement | Moyenne |
 | **P1-2** | **Contrat d'abord** pour les découpages, et découpages en concurrence | F7 | Grande |
-| **P1-3** | **drand et engagement-révélation** pour les verdicts | F5 | Petite |
+| **P1-3** ◐ | **drand** ✅ *(fait : voir §6.6)* **et engagement-révélation** pour les verdicts *(à faire)* | F5 | Petite |
 | **P1-4** | **Programmation à N versions** pour les alvéoles critiques | F1 | Moyenne |
 | **P2-1** | Verdicts avec confiance, score logarithmique, prédiction par les pairs | Incitations | Moyenne |
 | **P2-2** | Sandbox gVisor ou Firecracker, Sigstore, SLSA, fuzzing, ruche de sécurité | Sécurité | Grande |

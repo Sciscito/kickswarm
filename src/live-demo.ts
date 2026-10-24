@@ -1,4 +1,5 @@
 import type { Server } from 'node:http';
+import { DrandHttp } from './coordinator/balise.js';
 import { Coordinator } from './coordinator/coordinator.js';
 import { createCoordinatorServer } from './coordinator/http.js';
 import { httpAccess, scriptedBee, type BeeAction, type Outcome } from './exemples/scripted-bee.js';
@@ -32,20 +33,23 @@ export interface LiveDemoOptions {
   port: number;
   bees: number;
   speed: number;
+  /** Tirer au sort avec la balise publique drand (réseau requis). */
+  beacon?: boolean;
   log?: (s: string) => void;
 }
 
 export async function liveDemo(opts: LiveDemoOptions): Promise<Server> {
   const log = opts.log ?? console.log;
   const founder = generateIdentity();
-  const coord = new Coordinator({ fondateur: founder.id, params: { taux_pieges: 0.08 } });
+  const coord = new Coordinator({ fondateur: founder.id, params: { taux_pieges: 0.08 }, ...(opts.beacon ? { balise: new DrandHttp() } : {}) });
   const server = createCoordinatorServer(coord);
   await new Promise<void>((r) => server.listen(opts.port, '127.0.0.1', r));
   const url = `http://127.0.0.1:${opts.port}`;
   const owner = new CoordinatorClient(url, founder);
 
   log('\n🐝  KICKSWARM · live demo');
-  log(`   Watch the hive live: ${url}/hive\n`);
+  log(`   Watch the hive live: ${url}/hive`);
+  log(`   Random draws: ${opts.beacon ? 'public drand beacon (each claim waits ~6 s for its round)' : 'local (pass --beacon drand for the public beacon)'}\n`);
 
   const names = ['swift-lynx', 'amber-wren', 'quiet-orca', 'night-moth', 'iron-heron', 'solar-ibis', 'brave-koi', 'lunar-fox'];
   const pace = (base: number) => sleep((base * (0.7 + Math.random() * 0.8)) / opts.speed);

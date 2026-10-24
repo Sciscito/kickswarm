@@ -26,6 +26,7 @@ import { COMMUN, Ledger, type Account } from './ledger.js';
 import { transition } from './lifecycle.js';
 import { DEFAULT_PARAMS, type Params } from './params.js';
 import { Registry } from './registry.js';
+import { graine, rngDepuis, tourA, verifierBalise, type Balise, type BaliseInfo, type SourceBalise } from './balise.js';
 import { brancheOf, chooseCandidate, type Rng } from './scheduler.js';
 import { PAR_RUCHE, type Trophee, type TropheeId } from './trophees.js';
 
@@ -152,8 +153,13 @@ export interface CommandeDonnees {
   verifs: VerifReport[];
   /** Secrets révélés pendant la commande (tests cachés, références), par engagement. */
   secrets?: Record<string, unknown>;
+  /** P1-3 : la balise d'aléa public dont découlent les tirages de cette commande. */
+  balise?: Balise;
   etat: Hash;
 }
+
+/** La balise annoncée au lancement : son réseau, sa clé, et le décalage en tours. */
+export type BaliseAnnoncee = BaliseInfo & { decalage: number };
 
 interface ReplayStep {
   at: number;
@@ -177,8 +183,10 @@ export interface CoordinatorOptions {
   now?: () => number;
   /** Vérificateur automatique, remplaçable pour les tests. */
   verifier?: Verifier;
+  /** P1-3 : la balise d'aléa public (drand). Sans elle, le coordinateur tire lui-même ses aléas. */
+  balise?: SourceBalise;
   /** Mode audit : on rejoue un registre existant, avec les identités publiques qu'il annonce. */
-  replay?: { coordinateur: ContributorId; pieges: ContributorId };
+  replay?: { coordinateur: ContributorId; pieges: ContributorId; balise?: BaliseAnnoncee };
 }
 
 export interface HiveView {
@@ -257,10 +265,17 @@ export class Coordinator {
   private replayNext: ReplayStep | null = null;
   private dernierSceau = 0;
   private commandesSansSceau = 0;
+  /** Pendant une demande tirée avec la balise : les tirages en découlent, et sont notés. */
+  private tirageBalise: { rng: Rng; balise: Balise; tirages: number[] } | null = null;
 
   private readonly now = (): number => this.clock ?? this.baseNow();
 
   private readonly rng: Rng = () => {
+    if (this.tirageBalise) {
+      const v = this.tirageBalise.rng();
+      this.tirageBalise.tirages.push(v);
+      return v;
+    }
     if (this.replayCtx) {
       const v = this.replayCtx.alea.shift();
       if (v === undefined) throw new ReplayDivergence('Tirage aléatoire absent du registre');
@@ -324,7 +339,10 @@ export class Coordinator {
         compteurs: {},
         contributeurs: [],
       };
-      this.registry.append('lancement', { fondateur: options.fondateur, coordinateur: this.identite.id, pieges: this.identitePieges.id, params: this.params });
+      const balise = this.baliseAnnoncee();
+      this.registry.append('lancement', {
+        fondateur: options.fondateur, coordinateur: this.identite.id, pieges: this.identitePieges.id, params: this.params, ...(balise ? { balise } : {}),
+      });
       this.clock = null;
       if (!options.replay) this.sceller();
     }
@@ -415,7 +433,7 @@ export class Coordinator {
       switch (c.type) {
         case 'proposeHive': this.proposeHive(e.ruche, e.racine); break;
         case 'decide': this.decide(e.decision); break;
-        case 'claim': this.claim(e.requete); break;
+        case 'claim': if (c.balise) this.claimAvecBalise(e.requete, c.balise); else this.claim(e.requete); break;
         case 'start': this.start(e.requete); break;
         case 'release': this.release(e.requete); break;
         case 'submitResult': await this.submitResult(e.resultat, e.livrable); break;
@@ -444,14 +462,16 @@ export class Coordinator {
     this.registry.begin();
     try {
       const out = fn();
-      if (this.replayCtx && (this.replayCtx.alea.length || this.replayCtx.signatures.length)) {
+      // Tirés avec la balise, les aléas sont recalculés et non repris : on ne contrôle que les signatures.
+      if (this.replayCtx && ((!this.tirageBalise && this.replayCtx.alea.length) || this.replayCtx.signatures.length)) {
         throw new ReplayDivergence('Le rejeu a consommé moins de tirages ou de signatures que l’original');
       }
-      const alea = replay ? replay.alea : this.recording!.alea;
+      const alea = this.tirageBalise ? this.tirageBalise.tirages : replay ? replay.alea : this.recording!.alea;
       const signatures = replay ? replay.signatures : this.recording!.signatures;
       const secrets = replay ? replay.secrets : this.recording!.secrets;
       this.registry.append('commande', {
-        type, entree, at, alea, signatures, verifs, ...(Object.keys(secrets).length ? { secrets } : {}), etat: this.stateHash(),
+        type, entree, at, alea, signatures, verifs, ...(Object.keys(secrets).length ? { secrets } : {}),
+        ...(this.tirageBalise ? { balise: this.tirageBalise.balise } : {}), etat: this.stateHash(),
       } satisfies CommandeDonnees);
       this.registry.commit();
       this.save();
@@ -466,6 +486,52 @@ export class Coordinator {
       this.clock = null;
       this.replayCtx = null;
       this.recording = null;
+      this.tirageBalise = null;
+    }
+  }
+
+  /** La balise annoncée au lancement, en direct comme au rejeu. */
+  baliseAnnoncee(): BaliseAnnoncee | undefined {
+    if (this.options.replay) return this.options.replay.balise;
+    return this.options.balise ? { ...this.options.balise.info, decalage: this.params.balise_decalage } : undefined;
+  }
+
+  /**
+   * Prendre du travail, avec un tirage que personne ne contrôle (P1-3) : la demande signée à
+   * l'instant `ts` est tirée avec le tour drand tourA(ts) + décalage, qui n'existait pas encore
+   * quand le contributeur a signé. Sans balise configurée, c'est un claim ordinaire.
+   */
+  async reclamer(r: Requete): Promise<Assignment | null> {
+    const src = this.options.balise;
+    if (!src) return this.claim(r);
+    if (r?.type !== 'osp.requete/0.1' || r.action !== 'claim') throw new OspError('Requête claim attendue');
+    if (!isContributorId(r.contributeur) || !verifyObject(r, r.contributeur)) throw new OspError('Signature de la requête invalide', 401);
+    if (typeof r.ts !== 'number' || Math.abs(this.baseNow() - r.ts) > this.params.fenetre_balise_ms) {
+      throw new OspError('Ton horloge est trop éloignée de celle du coordinateur pour un tirage équitable : synchronise-la', 401);
+    }
+    let b: Balise;
+    try {
+      b = await src.get(tourA(src.info, r.ts) + this.params.balise_decalage);
+    } catch (e) {
+      throw new OspError(`Balise d'aléa indisponible : ${(e as Error).message}`, 503);
+    }
+    return this.claimAvecBalise(r, b);
+  }
+
+  private claimAvecBalise(r: Requete, b: Balise): Assignment | null {
+    const info = this.baliseAnnoncee();
+    if (!info) throw new ReplayDivergence('Balise utilisée sans avoir été annoncée au lancement');
+    if (b.round !== tourA(info, r.ts) + info.decalage) throw new ReplayDivergence(`Tour de balise ${b.round} contraire à la règle (attendu ${tourA(info, r.ts) + info.decalage})`);
+    if (!verifierBalise(info, b)) throw new ReplayDivergence(`Balise du tour ${b.round} invalide`);
+    const tirage = { rng: rngDepuis(graine(b, hashOf(r))), balise: b, tirages: [] as number[] };
+    this.tirageBalise = tirage;
+    try {
+      return this.run('claim', { requete: r }, [], () => {
+        this.tirageBalise = tirage;
+        return this.doClaim(r);
+      });
+    } finally {
+      this.tirageBalise = null;
     }
   }
 
@@ -754,6 +820,7 @@ export class Coordinator {
   // ---------------------------------------------------------------- travail
 
   claim(r: Requete): Assignment | null {
+    if (this.options.balise && !this.replayNext) throw new OspError('Ce coordinateur tire au sort avec la balise publique : passe par reclamer()', 400);
     return this.run('claim', { requete: r }, [], () => this.doClaim(r));
   }
 

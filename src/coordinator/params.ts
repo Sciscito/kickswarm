@@ -58,6 +58,10 @@ export interface Params {
   sceau_max_commandes: number;
   /** Fenêtre d'acceptation des requêtes signées (anti-rejeu). */
   fenetre_requete_ms: number;
+  /** P1-3 : le tirage utilise le tour drand tourA(ts) + ce décalage. */
+  balise_decalage: number;
+  /** P1-3 : écart maximal entre l'horloge du contributeur et celle du coordinateur, pour un tirage équitable. */
+  fenetre_balise_ms: number;
 }
 
 const HEURE = 3600_000;
@@ -100,4 +104,6 @@ export const DEFAULT_PARAMS: Params = {
   sceau_intervalle_ms: 2000,
   sceau_max_commandes: 50,
   fenetre_requete_ms: 5 * 60_000,
+  balise_decalage: 3,
+  fenetre_balise_ms: 4000,
 };

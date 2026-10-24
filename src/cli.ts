@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { auditRegistry } from './coordinator/audit.js';
+import { DrandHttp, QUICKNET, tourA, type SourceBalise } from './coordinator/balise.js';
 import { Coordinator } from './coordinator/coordinator.js';
 import type { RegistryEntry } from './coordinator/registry.js';
 import { createCoordinatorServer } from './coordinator/http.js';
@@ -20,9 +21,9 @@ import { resolveSandbox } from './verifier/v0.js';
 const HELP = `kickswarm · Open Swarm Protocol v0.1
 
   kickswarm join <hive> [--url <coordinator>] [--yes]   Send your AI into a hive (one command)
-  kickswarm demo live [--port 7777] [--bees 6] [--speed 1]   Live hive demo in your browser
+  kickswarm demo live [--port 7777] [--bees 6] [--speed 1] [--beacon none|drand]   Live hive demo in your browser
   kickswarm demo                                        End-to-end demo in the terminal
-  kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox auto|container|process]
+  kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox auto|container|process] [--beacon drand|none]
   kickswarm plugin [--url <coordinator>]                MCP server for your agent (stdio)
   kickswarm identity                                    Show (and create if needed) your identity
   kickswarm journal [--n 20] [--full] [--verify]        Everything your AI did for the swarm, on this machine
@@ -78,11 +79,23 @@ async function main(): Promise<void> {
           'Refusing to expose a coordinator beyond this machine without the container sandbox (the process sandbox does not cut the network). Install Docker or Podman, or pass --unsafe on a network you fully trust.',
         );
       }
-      const coord = new Coordinator({ fondateur: founder, dataDir });
+      // Les tirages au sort viennent de drand par défaut : personne, pas même le coordinateur, ne les choisit.
+      let balise: SourceBalise | undefined;
+      const beacon = opts.beacon || 'drand';
+      if (beacon === 'drand') {
+        balise = new DrandHttp();
+        try {
+          await balise.get(tourA(QUICKNET, Date.now()));
+        } catch (e) {
+          throw new Error(`The drand beacon is unreachable (${(e as Error).message}). Fix the network, or pass --beacon none to let the coordinator draw by itself (draws then become unverifiable).`);
+        }
+      } else if (beacon !== 'none') throw new Error('--beacon must be drand or none');
+      const coord = new Coordinator({ fondateur: founder, dataDir, balise });
       createCoordinatorServer(coord).listen(port, host, () => {
         console.log(`OSP v0.1 coordinator on http://${host}:${port}`);
         console.log(`Live hive: http://${host}:${port}/hive`);
         console.log(`Founder: ${founder}\nData: ${dataDir}\nSandbox: ${sandbox}${sandbox === 'process' ? ' (network not cut: keep this coordinator private)' : ''}`);
+        console.log(`Random draws: ${balise ? 'public drand beacon (League of Entropy, quicknet), verifiable by anyone' : 'drawn by the coordinator itself (not verifiable)'}`);
       });
       return;
     }
@@ -150,7 +163,7 @@ async function main(): Promise<void> {
     }
     case 'demo': {
       if (pos[1] === 'live' || opts.live !== undefined) {
-        await liveDemo({ port: Number(opts.port ?? 7777), bees: Number(opts.bees ?? 6), speed: Number(opts.speed ?? 1) });
+        await liveDemo({ port: Number(opts.port ?? 7777), bees: Number(opts.bees ?? 6), speed: Number(opts.speed ?? 1), beacon: opts.beacon === 'drand' });
         return;
       }
       const ok = await demo();

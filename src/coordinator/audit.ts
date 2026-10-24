@@ -2,7 +2,8 @@ import { commitment } from '../protocol/canonical.js';
 import { algoOf, isPostQuantum, verifyObject } from '../protocol/identity.js';
 import type { ContributorId, Hash, Livrable, Result, TestCase, Verdict } from '../protocol/types.js';
 import { verifierV0 } from '../verifier/v0.js';
-import { Coordinator, type CommandeDonnees } from './coordinator.js';
+import { QUICKNET } from './balise.js';
+import { Coordinator, type BaliseAnnoncee, type CommandeDonnees } from './coordinator.js';
 import { COMMUN } from './ledger.js';
 import type { Params } from './params.js';
 import { verifyRegistry, type RegistryEntry } from './registry.js';
@@ -38,6 +39,7 @@ interface Lancement {
   coordinateur: ContributorId;
   pieges?: ContributorId;
   params: Params;
+  balise?: BaliseAnnoncee;
 }
 
 const close = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
@@ -75,7 +77,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     fondateur: L.fondateur,
     params: L.params,
     now: () => Date.parse(first.date),
-    replay: { coordinateur: L.coordinateur, pieges: L.pieges },
+    replay: { coordinateur: L.coordinateur, pieges: L.pieges, ...(L.balise ? { balise: L.balise } : {}) },
   });
   let divergence = coord.registry.entries[0]?.hash === first.hash ? undefined : 'the launch entry differs';
   const reverif: string[] = [];
@@ -145,6 +147,23 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
       ? 'no seal found'
       : `${sceaux.n} seal(s) by ${algo === 'slh1' ? 'SLH-DSA-SHA2-128f (FIPS 205)' : algo}; the last one covers entry #${sceaux.dernier}${nonScelles ? `, ${nonScelles} newer entr${nonScelles > 1 ? 'ies' : 'y'} not sealed yet (up to #${derniereEntree})` : ''}`,
   );
+
+  // P1-3 : les tirages viennent-ils d'une balise publique que personne ne contrôle ?
+  const claims = entries.filter((e) => e.nature === 'commande' && (e.donnees as CommandeDonnees).type === 'claim');
+  const avecBalise = claims.filter((e) => (e.donnees as CommandeDonnees).balise).length;
+  if (!L.balise) {
+    add('Random draws from a public beacon', true, 'off: the coordinator draws its own random numbers (start it with the drand beacon to make every draw verifiable)');
+  } else {
+    const officielle = L.balise.chaine === QUICKNET.chaine && L.balise.cle_publique === QUICKNET.cle_publique;
+    const manque = claims.length - avecBalise;
+    add(
+      'Random draws from a public beacon',
+      manque === 0,
+      manque
+        ? `${manque} work request(s) drawn without the announced beacon`
+        : `${avecBalise} draw(s), each from a BLS-verified round ${L.balise.decalage} rounds after the signed request, on ${officielle ? 'the League of Entropy drand network (quicknet)' : `a private beacon (${L.balise.chaine}), not the public drand network`}`,
+    );
+  }
 
   // Part des signatures de contributeurs qui résistent à un ordinateur quantique.
   const signataires: string[] = [];
