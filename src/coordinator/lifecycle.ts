@@ -1,9 +1,9 @@
 import type { CellState } from '../protocol/types.js';
 
 /**
- * Machine à états d'une alvéole (§5). Le découpage (§6) ajoute deux passages vers
- * `verrouillee` : quand les enfants sont créés, depuis `en_cours` (découpage profond,
- * adopté d'office) ou depuis `en_verification` (découpage approuvé par le porteur).
+ * State machine of a cell (§5). Splitting (§6) adds two paths to
+ * `verrouillee`: when the children are created, from `en_cours` (deep split,
+ * adopted automatically) or from `en_verification` (split approved by the hive owner).
  */
 export const TRANSITIONS: Readonly<Record<CellState, readonly CellState[]>> = {
   verrouillee: ['libre'],
@@ -21,6 +21,6 @@ export function canTransition(from: CellState, to: CellState): boolean {
 }
 
 export function transition(rec: { state: CellState }, to: CellState): void {
-  if (!canTransition(rec.state, to)) throw new Error(`Transition interdite : ${rec.state} → ${to}`);
+  if (!canTransition(rec.state, to)) throw new Error(`Forbidden transition: ${rec.state} → ${to}`);
   rec.state = to;
 }

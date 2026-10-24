@@ -2,23 +2,23 @@ import { createHash } from 'node:crypto';
 import { bls12_381 } from '@noble/curves/bls12-381.js';
 import type { Rng } from './scheduler.js';
 
-// La balise d'aléa public (OSP v0.2, P1-3) : drand, le réseau de la League of Entropy.
-// Toutes les 3 secondes, des organisations indépendantes produisent ensemble une signature BLS
-// à seuil sur le numéro du tour ; l'aléa est le sha256 de cette signature. Personne, ni un
-// contributeur ni le coordinateur, ne peut la prévoir ni la choisir, et tout le monde peut la vérifier.
+// The public randomness beacon (OSP v0.2, P1-3): drand, the League of Entropy network.
+// Every 3 seconds, independent organizations jointly produce a threshold BLS signature
+// on the round number; the randomness is the sha256 of that signature. Nobody, neither a
+// contributor nor the coordinator, can predict or choose it, and everyone can verify it.
 //
-// Règle du tirage : une demande de travail signée à l'instant `ts` est tirée avec le tour
-// tourA(ts) + décalage, qui n'existe pas encore quand le contributeur signe. La graine est
-// sha256(aléa du tour ‖ hash de la demande signée), et les tirages en découlent (SHA-256 en mode compteur).
+// Draw rule: a work request signed at time `ts` is drawn with round
+// tourA(ts) + offset, which does not exist yet when the contributor signs. The seed is
+// sha256(round randomness ‖ hash of the signed request), and the draws follow from it (SHA-256 in counter mode).
 
 export interface BaliseInfo {
-  /** Hash de la chaîne drand (identifie le réseau et sa clé). */
+  /** Hash of the drand chain (identifies the network and its key). */
   chaine: string;
-  /** Clé publique du groupe, en hexadécimal (G2, 96 octets). */
+  /** Public key of the group, in hexadecimal (G2, 96 bytes). */
   cle_publique: string;
-  /** Tour 1 publié à cet instant, en secondes Unix. */
+  /** Round 1 published at this time, in Unix seconds. */
   genese: number;
-  /** Secondes entre deux tours. */
+  /** Seconds between two rounds. */
   periode: number;
   schema: 'bls-unchained-g1-rfc9380';
 }
@@ -34,7 +34,7 @@ export interface SourceBalise {
   get(round: number): Promise<Balise>;
 }
 
-/** Le réseau public drand « quicknet » de la League of Entropy. */
+/** The League of Entropy's public drand "quicknet" network. */
 export const QUICKNET: BaliseInfo = {
   chaine: '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971',
   cle_publique:
@@ -48,12 +48,12 @@ const DST = 'BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_';
 const sha256 = (x: string | Buffer) => createHash('sha256').update(x).digest();
 const HEX = /^[0-9a-f]+$/;
 
-/** Le dernier tour publié à l'instant `ms`. */
+/** The last round published at time `ms`. */
 export function tourA(info: BaliseInfo, ms: number): number {
   return Math.floor((ms / 1000 - info.genese) / info.periode) + 1;
 }
 
-/** L'instant de publication d'un tour, en millisecondes. */
+/** The publication time of a round, in milliseconds. */
 export function publication(info: BaliseInfo, round: number): number {
   return Math.round((info.genese + (round - 1) * info.periode) * 1000);
 }
@@ -64,7 +64,7 @@ function messageDuTour(round: number) {
   return bls12_381.shortSignatures.hash(sha256(rb), DST);
 }
 
-/** Vérifie la signature BLS d'une balise et la dérivation de son aléa. */
+/** Verifies a beacon's BLS signature and the derivation of its randomness. */
 export function verifierBalise(info: BaliseInfo, b: Balise): boolean {
   try {
     if (!Number.isInteger(b.round) || b.round < 1) return false;
@@ -76,12 +76,12 @@ export function verifierBalise(info: BaliseInfo, b: Balise): boolean {
   }
 }
 
-/** La graine d'un tirage : l'aléa public du tour, lié à la demande signée qui le déclenche. */
+/** The seed of a draw: the round's public randomness, bound to the signed request that triggers it. */
 export function graine(b: Balise, demande: string): string {
   return sha256(`${b.randomness}:${demande}`).toString('hex');
 }
 
-/** Tirages déterministes à partir d'une graine : SHA-256 en mode compteur, 53 bits par tirage. */
+/** Deterministic draws from a seed: SHA-256 in counter mode, 53 bits per draw. */
 export function rngDepuis(g: string): Rng {
   let n = 0;
   return () => {
@@ -92,7 +92,7 @@ export function rngDepuis(g: string): Rng {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Le vrai réseau drand, par HTTP, avec plusieurs relais et une vérification systématique. */
+/** The real drand network, over HTTP, with several relays and systematic verification. */
 export class DrandHttp implements SourceBalise {
   private readonly cache = new Map<number, Balise>();
 
@@ -106,30 +106,30 @@ export class DrandHttp implements SourceBalise {
     if (hit) return hit;
     const attente = publication(this.info, round) - Date.now();
     if (attente > 0) await sleep(attente + 150);
-    let derniere = 'aucun relais joignable';
+    let derniere = 'no relay reachable';
     for (let essai = 0; essai < 4; essai++) {
       for (const base of this.relais) {
         try {
           const r = await fetch(`${base}/${this.info.chaine}/public/${round}`, { signal: AbortSignal.timeout(4000) });
-          if (!r.ok) { derniere = `${base} : HTTP ${r.status}`; continue; }
+          if (!r.ok) { derniere = `${base}: HTTP ${r.status}`; continue; }
           const b = (await r.json()) as Balise;
-          if (b.round !== round || !verifierBalise(this.info, b)) { derniere = `${base} : balise invalide`; continue; }
+          if (b.round !== round || !verifierBalise(this.info, b)) { derniere = `${base}: invalid beacon`; continue; }
           this.cache.set(round, b);
           if (this.cache.size > 2000) this.cache.delete(this.cache.keys().next().value!);
           return b;
         } catch (e) {
-          derniere = `${base} : ${(e as Error).message}`;
+          derniere = `${base}: ${(e as Error).message}`;
         }
       }
       await sleep(1000);
     }
-    throw new Error(`Balise drand du tour ${round} introuvable (${derniere})`);
+    throw new Error(`drand beacon for round ${round} not found (${derniere})`);
   }
 }
 
 /**
- * Une balise locale, avec sa propre clé BLS : même schéma que drand, pour les tests et le travail
- * hors ligne. L'audit la signale : elle ne vient pas du réseau public.
+ * A local beacon, with its own BLS key: same scheme as drand, for tests and offline
+ * work. The audit flags it: it does not come from the public network.
  */
 export class BaliseLocale implements SourceBalise {
   readonly info: BaliseInfo;

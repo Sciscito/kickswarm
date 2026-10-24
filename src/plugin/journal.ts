@@ -3,9 +3,9 @@ import { join } from 'node:path';
 import { Registry, verifyRegistry, type RegistryEntry } from '../coordinator/registry.js';
 import { kickswarmHome } from './identite.js';
 
-// Le journal local : tout ce que ton IA fait pour l'essaim, sur ta machine, et seulement là.
-// Consignes reçues, livrables envoyés (code complet), vérifications rejouées, verdicts, découpages,
-// erreurs. Il est chaîné par hash comme le registre public : une entrée modifiée après coup se voit.
+// The local journal: everything your AI does for the swarm, on your machine, and only there.
+// Instructions received, deliverables sent (full code), replayed checks, verdicts, splits,
+// errors. It is hash-chained like the public registry: an entry changed after the fact shows.
 
 export class JournalLocal {
   readonly fichier: string;
@@ -18,10 +18,10 @@ export class JournalLocal {
     try {
       reg = new Registry(this.fichier);
     } catch {
-      // Un journal altéré n'est pas effacé : on le met de côté, et on en ouvre un neuf.
+      // An altered journal is not erased: it is set aside, and a new one is opened.
       const cote = join(dir, `journal.altere-${Date.now()}.jsonl`);
       renameSync(this.fichier, cote);
-      console.error(`[kickswarm] Journal local altéré : mis de côté dans ${cote}`);
+      console.error(`[kickswarm] Local journal altered: set aside in ${cote}`);
       reg = new Registry(this.fichier);
     }
     this.reg = reg;
@@ -34,7 +34,7 @@ export class JournalLocal {
       try {
         chmodSync(this.fichier, 0o600);
       } catch {
-        /* sans effet sous Windows */
+        /* no effect on Windows */
       }
     }
   }
@@ -48,7 +48,7 @@ export class JournalLocal {
   }
 }
 
-/** Une ligne lisible par entrée du journal. */
+/** One readable line per journal entry. */
 export function resumer(e: RegistryEntry): string {
   const d = e.donnees as Record<string, unknown>;
   const t = new Date(e.date).toLocaleString('en-GB');

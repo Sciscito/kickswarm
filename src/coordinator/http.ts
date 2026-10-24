@@ -5,7 +5,7 @@ import type { CellSpec, Decision, Decomposition, EngagementVerdict, Hive, Livrab
 import { Coordinator, OspError } from './coordinator.js';
 import { COMMUN } from './ledger.js';
 
-// API HTTP du coordinateur (spec §21.2). Toute requête qui modifie l'état porte un objet signé.
+// Coordinator HTTP API (spec §21.2). Every request that changes the state carries a signed object.
 
 const MAX_BODY = 1024 * 1024;
 
@@ -16,7 +16,7 @@ function readBody(req: IncomingMessage): Promise<unknown> {
     req.on('data', (c: Buffer) => {
       size += c.length;
       if (size > MAX_BODY) {
-        reject(new OspError('Corps de requête trop gros (1 Mo maximum)', 413));
+        reject(new OspError('Request body too large (1 MB maximum)', 413));
         req.destroy();
       } else chunks.push(c);
     });
@@ -24,7 +24,7 @@ function readBody(req: IncomingMessage): Promise<unknown> {
       try {
         resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
       } catch {
-        reject(new OspError('JSON invalide'));
+        reject(new OspError('Invalid JSON'));
       }
     });
     req.on('error', reject);
@@ -41,7 +41,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(json);
 }
 
-// La ruche en direct (web/hive.html), servie par le coordinateur lui-même.
+// The live hive (web/hive.html), served by the coordinator itself.
 const PAGE = new URL('../../web/hive.html', import.meta.url);
 
 async function sendPage(res: ServerResponse): Promise<void> {
@@ -50,7 +50,7 @@ async function sendPage(res: ServerResponse): Promise<void> {
   res.end(html);
 }
 
-/** Flux temps réel (Server-Sent Events) : une notification par nouvelle entrée du registre. */
+/** Real-time stream (Server-Sent Events): one notification per new registry entry. */
 function streamEvents(coord: Coordinator, req: IncomingMessage, res: ServerResponse): void {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -75,7 +75,7 @@ export function createCoordinatorServer(coord: Coordinator): Server {
     try {
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/hive')) return await sendPage(res);
       if (route === 'GET /v0/events') return streamEvents(coord, req, res);
-      if (parts[0] !== 'v0') throw new OspError('Route inconnue', 404);
+      if (parts[0] !== 'v0') throw new OspError('Unknown route', 404);
       const body = req.method === 'POST' ? ((await readBody(req)) as Record<string, unknown>) : {};
       switch (true) {
         case route === 'GET /v0':
@@ -95,7 +95,7 @@ export function createCoordinatorServer(coord: Coordinator): Server {
         case route === 'POST /v0/work/submit':
           return send(res, 200, await coord.submitResult(body.resultat as Result, body.livrable as Livrable));
         case route === 'POST /v0/work/decompose':
-          // Les secrets voyagent à côté de l'objet signé : { decomposition, secrets }. Le format nu reste accepté.
+          // Secrets travel next to the signed object: { decomposition, secrets }. The bare format is still accepted.
           if (body.type === 'osp.decomposition/0.1') return send(res, 200, await coord.submitDecomposition(body as unknown as Decomposition));
           return send(res, 200, await coord.submitDecomposition(body.decomposition as Decomposition, (body.secrets as Secrets[] | undefined) ?? []));
         case route === 'POST /v0/work/commit':
@@ -109,24 +109,24 @@ export function createCoordinatorServer(coord: Coordinator): Server {
         case route === 'GET /v0/state-hash':
           return send(res, 200, coord.etatPublie());
         case route === 'GET /v0/registry': {
-          // Le contenu est publié jusqu'à l'horizon de l'embargo (OSP v0.2 P0-3).
+          // The content is published up to the embargo horizon (OSP v0.2 P0-3).
           const since = Number(url.searchParams.get('since') ?? 0);
           return send(res, 200, coord.registry.entries.slice(Number.isFinite(since) ? Math.max(0, since) : 0, coord.horizon() + 1));
         }
         case route.startsWith('GET /v0/contributors/') && parts.length === 3: {
           const id = parts[2]!;
-          if (id !== COMMUN && !isContributorId(id)) throw new OspError('Identifiant invalide');
+          if (id !== COMMUN && !isContributorId(id)) throw new OspError('Invalid identifier');
           return send(res, 200, coord.account(id as Parameters<Coordinator['account']>[0]));
         }
         case route === 'POST /v0/decisions':
           return send(res, 201, coord.decide(body as unknown as Decision));
         default:
-          throw new OspError('Route inconnue', 404);
+          throw new OspError('Unknown route', 404);
       }
     } catch (e) {
       const status = e instanceof OspError ? e.status : 500;
       const message = e instanceof Error ? e.message : String(e);
-      if (status === 500) console.error(`[coordinateur] ${route} :`, e);
+      if (status === 500) console.error(`[coordinator] ${route}:`, e);
       if (!res.headersSent) send(res, status, { erreur: message });
     }
   });

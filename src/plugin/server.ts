@@ -81,16 +81,16 @@ export function createPluginServer(
   journal?: JournalLocal,
   options: { scelles?: Scelles; intervalleRevelationMs?: number; attenteMs?: number } = {},
 ): McpServer {
-  // Quand rien n'est disponible, swarm_next patiente jusqu'à ce délai avant de répondre.
+  // When nothing is available, swarm_next waits up to this delay before answering.
   const attente = options.attenteMs ?? 30_000;
   const server = new McpServer({ name: 'kickswarm', version: '0.1.0' });
   let ruche: string | undefined;
   let enCours: Assignment | undefined;
-  // Tout ce que l'IA fait pour l'essaim est noté dans le journal local du contributeur.
+  // Everything the AI does for the swarm is noted in the contributor's local journal.
   const note = (nature: string, donnees: Record<string, unknown>) => journal?.note(nature, { coordinateur: client.url, ...donnees });
 
-  // Verdicts scellés (OSP v0.2, P1-3) : révélés dès que toutes les gardiennes se sont engagées,
-  // à chaque appel d'outil et en tâche de fond, pour ne jamais laisser passer la fenêtre.
+  // Sealed verdicts (OSP v0.2, P1-3): revealed as soon as every guard has committed,
+  // on each tool call and in the background, so the window is never missed.
   const scelles = options.scelles ?? new Scelles();
   type Revele = { scelle: VerdictScelle; r: Revelation };
   const revelerScelles = async (): Promise<Revele[]> => {
@@ -159,8 +159,8 @@ export function createPluginServer(
       const prefixe = avant.length ? `${lignes(avant)}\n` : '';
       if (enCours) return texte(`${prefixe}You already have a cell in progress.\n\n${consignes(enCours)}`);
       let a = await client.claim(ruche);
-      // Rien à prendre, mais la ruche vit : les gardiennes vérifient. On patiente un peu plutôt que de
-      // renvoyer l'agent tout de suite (il ne sait pas attendre seul).
+      // Nothing to take, but the hive is alive: guards are verifying. Wait a little rather than
+      // sending the agent back right away (it cannot wait on its own).
       let terminee = false;
       const fin = Date.now() + attente;
       while (!a && Date.now() < fin) {
@@ -187,7 +187,7 @@ export function createPluginServer(
         const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
         const verdict = makeVerdict(client.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
         note('verification', { ruche, chemin, resultat: cible.id, ok: rejeu.ok, motif: rejeu.motif, sandbox: rejeu.sandbox });
-        // Le verdict est gardé sur disque avant que son engagement parte : on pourra toujours le révéler.
+        // The verdict is kept on disk before its commitment is sent: it can always be revealed.
         const s: VerdictScelle = { verdict, coordinateur: client.url, chemin, ...(ruche ? { ruche } : {}) };
         scelles.ajouter(s);
         try {
@@ -338,7 +338,7 @@ export function createPluginServer(
       if (!cible) return erreur('Give a hive, or call swarm_join.');
       const entrees = await client.board(cible);
       if (!entrees.length) return texte('The hive board is empty for now.');
-      return texte(entrees.slice(-30).map((e) => `[${e.nature}] ${e.chemin} : ${e.texte}`).join('\n'));
+      return texte(entrees.slice(-30).map((e) => `[${e.nature}] ${e.chemin}: ${e.texte}`).join('\n'));
     }),
   );
 

@@ -1,5 +1,5 @@
-// Objets de l'Open Swarm Protocol v0.1 (spec/OSP-v0.1.md, §4).
-// Les noms de champs suivent la spec, en français.
+// Open Swarm Protocol v0.1 objects (spec/OSP-v0.1.md, §4).
+// Field names follow the spec, in French.
 
 export type Hash = `sha256:${string}`;
 export type ContributorId = `ed25519:${string}` | `pq1:${string}` | `slh1:${string}`;
@@ -7,7 +7,7 @@ export type ContributorId = `ed25519:${string}` | `pq1:${string}` | `slh1:${stri
 export type VerifClass = 'V0' | 'V1' | 'V2';
 export type Caste = 'eclaireuse' | 'ouvriere' | 'gardienne' | 'batisseuse';
 
-/** États d'une alvéole (§5). */
+/** States of a cell (§5). */
 export type CellState =
   | 'verrouillee'
   | 'libre'
@@ -29,7 +29,7 @@ export interface Budget {
   duree_max_s: number;
 }
 
-/** Un cas de test du vérificateur V0 `tests-js@1`. */
+/** A test case for the V0 verifier `tests-js@1`. */
 export interface TestCase {
   nom?: string;
   fn: string;
@@ -37,7 +37,7 @@ export interface TestCase {
   attendu: unknown;
 }
 
-/** Générateur d'entrées aléatoires pour un test par propriété (OSP v0.2, §3.3). */
+/** Random input generator for a property test (OSP v0.2, §3.3). */
 export type Generateur =
   | { type: 'int'; min: number; max: number }
   | { type: 'float'; min: number; max: number }
@@ -47,74 +47,74 @@ export type Generateur =
   | { type: 'oneOf'; values: unknown[] };
 
 /**
- * Test par propriété : `fn` est appelée sur des entrées tirées par `args`, et l'expression
- * JavaScript `verifie` doit être vraie. Elle voit `args`, `out` (le résultat) et `eq` (égalité profonde).
- * Exemple : pgcd → verifie = "args[0] % out === 0 && args[1] % out === 0".
+ * Property test: `fn` is called on inputs drawn by `args`, and the JavaScript expression
+ * `verifie` must be true. It sees `args`, `out` (the result) and `eq` (deep equality).
+ * Example: pgcd → verifie = "args[0] % out === 0 && args[1] % out === 0".
  */
 export interface Propriete {
   nom: string;
   fn: string;
   args: Generateur[];
   verifie: string;
-  /** Nombre de cas tirés, 200 par défaut. */
+  /** Number of cases drawn, 200 by default. */
   cas?: number;
 }
 
-/** Critère de fin V0 : un module ES dont les exports doivent passer les tests. */
+/** V0 definition of done: an ES module whose exports must pass the tests. */
 export interface CritereV0 {
   classe: 'V0';
   verificateur: 'tests-js@1';
-  /** Fichier à importer, `solution.mjs` par défaut. */
+  /** File to import, `solution.mjs` by default. */
   module?: string;
   tests: TestCase[];
   proprietes?: Propriete[];
   /**
-   * Engagement sur des tests cachés (§3.1) : sha256 de leur forme canonique. Les tests eux-mêmes
-   * restent dans le coffre du coordinateur et ne sont révélés au registre qu'à la validation.
+   * Commitment to hidden tests (§3.1): sha256 of their canonical form. The tests themselves
+   * stay in the coordinator's vault and are revealed to the registry only on validation.
    */
   tests_caches_hash?: Hash;
-  /** Engagement sur une implémentation de référence, qui sert à mesurer la force des tests (§3.2). */
+  /** Commitment to a reference implementation, used to measure how strong the tests are (§3.2). */
   reference_hash?: Hash;
   timeout_ms?: number;
 }
 
 /**
- * Critère V0 pour une tâche qui consiste à écrire des tests : le livrable `tests.json` contient des
- * tests et des propriétés pour le module `cible`. Ils doivent tous passer sur la vraie cible, et
- * détecter au moins `score_min` des mutants de la cible (score de mutation, §3.2).
+ * V0 criterion for a task that consists of writing tests: the deliverable `tests.json` holds
+ * tests and properties for the `cible` module. They must all pass on the real target, and
+ * catch at least `score_min` of the target's mutants (mutation score, §3.2).
  */
 export interface CritereTestsDeTests {
   classe: 'V0';
   verificateur: 'tests-de-tests@1';
-  /** Module de la cible à tester. */
+  /** Module of the target to test. */
   module: string;
   cible: Livrable;
-  /** Fonctions de la cible que les tests doivent couvrir. */
+  /** Functions of the target the tests must cover. */
   fonctions: string[];
   score_min?: number;
   timeout_ms?: number;
 }
 
-/** Le MVP ne connaît que V0 ; V1 et V2 arrivent ensuite (§9.1). */
+/** The MVP only knows V0; V1 and V2 come later (§9.1). */
 export type CritereFini = CritereV0 | CritereTestsDeTests;
 
-/** Ce qu'un porteur ou une éclaireuse décrit avant que le coordinateur n'émette l'alvéole. */
+/** What a hive owner or a scout describes before the coordinator issues the cell. */
 export interface CellSpec {
   objectif: string;
-  /** Texte du contexte. Le coordinateur en garde le hash dans l'alvéole. */
+  /** Context text. The coordinator keeps its hash in the cell. */
   capsule: string;
   critere_fini: CritereFini;
   atomique: boolean;
   budget?: Budget;
 }
 
-/** La partie secrète d'une alvéole, envoyée à côté de l'objet signé, jamais dedans. */
+/** The secret part of a cell, sent next to the signed object, never inside it. */
 export interface Secrets {
   tests_caches?: TestCase[];
   reference?: Livrable;
 }
 
-/** §4.2. Le statut vit dans l'état du coordinateur : un objet signé est immuable. */
+/** §4.2. The status lives in the coordinator's state: a signed object is immutable. */
 export interface Hive extends Signed {
   type: 'osp.hive/0.1';
   slug: string;
@@ -156,7 +156,7 @@ export interface Result extends Signed {
   cout: { tokens?: number; duree_s?: number };
 }
 
-/** §6.2 : la proposition de découpage d'une éclaireuse. */
+/** §6.2: a scout's proposed split. */
 export interface Decomposition extends Signed {
   type: 'osp.decomposition/0.1';
   alveole: Hash;
@@ -173,19 +173,19 @@ export interface Verdict extends Signed {
   motif: string;
   mise_reputation: number;
   piege: boolean;
-  /** OSP v0.2 P1-3 : 32 octets aléatoires, pour que l'engagement ne se devine pas parmi trois décisions. */
+  /** OSP v0.2 P1-3: 32 random bytes, so the commitment cannot be guessed among three decisions. */
   sel: string;
 }
 
 /**
- * OSP v0.2 P1-3 : la gardienne s'engage d'abord sur son verdict (son hash), puis le révèle
- * quand toutes les gardiennes du résultat se sont engagées. Personne ne peut copier les autres.
+ * OSP v0.2 P1-3: the guard first commits to its verdict (its hash), then reveals it
+ * once every guard of the result has committed. Nobody can copy the others.
  */
 export interface EngagementVerdict extends Signed {
   type: 'osp.engagement/0.1';
   resultat: Hash;
   gardienne: ContributorId;
-  /** hashOf(verdict) : le verdict signé, sel compris. */
+  /** hashOf(verdict): the signed verdict, salt included. */
   engagement: Hash;
 }
 
@@ -197,7 +197,7 @@ export type DecisionNature =
   | 'orientation'
   | 'approbation_decoupage'
   | 'refus_decoupage'
-  /** OSP v0.2 §4.4 : le porteur tranche un résultat parti en escalade (cible : l'identifiant du résultat). */
+  /** OSP v0.2 §4.4: the hive owner settles an escalated result (cible: the result's identifier). */
   | 'arbitrage_valide'
   | 'arbitrage_rejet';
 
@@ -206,14 +206,14 @@ export interface Decision extends Signed {
   type: 'osp.decision/0.1';
   auteur: ContributorId;
   nature: DecisionNature;
-  /** Slug de ruche, `slug:branche` pour une orientation, ou hash d'un découpage. */
+  /** Hive slug, `slug:branch` for an orientation, or hash of a split. */
   cible: string;
   motif: string;
   date: string;
   params?: { multiplicateur?: number };
 }
 
-/** Requête signée pour les actions sans objet propre (prendre, commencer, rappeler). */
+/** Signed request for actions with no object of their own (claim, start, release). */
 export interface Requete extends Signed {
   type: 'osp.requete/0.1';
   action: 'claim' | 'start' | 'release';
@@ -224,7 +224,7 @@ export interface Requete extends Signed {
   nonce: string;
 }
 
-/** Ce que reçoit une abeille quand elle prend du travail. */
+/** What a bee receives when it claims work. */
 export interface Assignment {
   caste: Caste;
   alveole_id: Hash;
@@ -233,10 +233,10 @@ export interface Assignment {
   profondeur: number;
   bail_expire: number;
   /**
-   * Pour une gardienne : le livrable à vérifier, et l'identifiant à citer dans son verdict.
-   * La vérification est anonyme (OSP v0.2 P0-3) : ni l'auteur, ni rien qui distingue un piège.
+   * For a guard: the deliverable to verify, and the identifier to cite in its verdict.
+   * Verification is anonymous (OSP v0.2 P0-3): neither the author, nor anything that sets a trap apart.
    */
   a_verifier?: { id: Hash; livrable: Livrable };
-  /** Pour une bâtisseuse : les livrables validés des enfants. */
+  /** For a builder: the children's validated deliverables. */
   enfants_valides?: Array<{ chemin: string; objectif: string; module: string; livrable: Livrable }>;
 }

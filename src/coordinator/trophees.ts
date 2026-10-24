@@ -1,5 +1,5 @@
-// Trophées (spec §10.5) : des succès sans valeur marchande ni transfert possible,
-// qui gardent la trace de ce que chacun a apporté, et de qui était là au début.
+// Trophies (spec §10.5): achievements with no market value and no possible transfer,
+// which keep track of what each person contributed, and of who was there at the start.
 
 export type TropheeId =
   | 'pioneer'
@@ -16,11 +16,11 @@ export type TropheeId =
 export interface Trophee {
   id: TropheeId;
   date: string;
-  /** Pour les trophées liés à une ruche. */
+  /** For trophies tied to a hive. */
   ruche?: string;
 }
 
-/** Trophées attribués une fois par ruche ; les autres, une fois pour toutes. */
+/** Trophies awarded once per hive; the others, once and for all. */
 export const PAR_RUCHE: ReadonlySet<TropheeId> = new Set<TropheeId>(['founding_bee', 'heart', 'hive_owner']);
 
 export const TROPHEES: Record<TropheeId, { nom: string; description: string }> = {

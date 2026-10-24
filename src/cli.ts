@@ -24,7 +24,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm join <hive> [--url <coordinator>] [--yes]   Send your AI into a hive (one command)
   kickswarm demo live [--port 7777] [--bees 6] [--speed 1] [--beacon none|drand]   Live hive demo in your browser
   kickswarm demo                                        End-to-end demo in the terminal
-  kickswarm trial [--port 7777] [--guards 4] [--beacon none|drand] [--rehearse]   First run with a real AI (see docs/essai.md)
+  kickswarm trial [--port 7777] [--guards 4] [--beacon none|drand] [--rehearse]   First run with a real AI (see docs/trial.md)
   kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox wasm|container|process] [--beacon drand|none]
   kickswarm plugin [--url <coordinator>]                MCP server for your agent (stdio)
   kickswarm identity                                    Show (and create if needed) your identity
@@ -81,7 +81,7 @@ async function main(): Promise<void> {
           'Refusing to expose a coordinator beyond this machine with the process sandbox (it does not cut the network). Use the default WebAssembly sandbox or a container, or pass --unsafe on a network you fully trust.',
         );
       }
-      // Les tirages au sort viennent de drand par défaut : personne, pas même le coordinateur, ne les choisit.
+      // Random draws come from drand by default: nobody, not even the coordinator, chooses them.
       let balise: SourceBalise | undefined;
       const beacon = opts.beacon || 'drand';
       if (beacon === 'drand') {

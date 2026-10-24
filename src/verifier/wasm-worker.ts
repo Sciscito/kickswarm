@@ -1,10 +1,10 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { newQuickJSWASMModule } from 'quickjs-emscripten';
 
-// Le bac à sable WebAssembly (OSP v0.2) : un moteur JavaScript QuickJS compilé en WebAssembly,
-// neuf pour chaque exécution, dans un thread jetable. Le code testé n'y trouve ni réseau, ni disque,
-// ni processus, ni aucune API de Node : seulement le langage, et les fichiers du livrable comme modules.
-// La mémoire et la pile sont bornées ; une échéance interrompt même une boucle infinie, sans recours possible.
+// The WebAssembly sandbox (OSP v0.2): a QuickJS JavaScript engine compiled to WebAssembly,
+// fresh for each run, in a throwaway thread. The code under test finds no network, no disk,
+// no process and no Node API: only the language, and the deliverable's files as modules.
+// Memory and stack are bounded; a deadline interrupts even an infinite loop, with no way around it.
 
 interface Entree {
   fichiers: Record<string, string>;
@@ -31,7 +31,7 @@ try {
     timedOut = true;
     return true;
   });
-  // Les seuls modules disponibles sont les fichiers du livrable.
+  // The only modules available are the deliverable's files.
   rt.setModuleLoader((nom) => {
     const n = nom.replace(/^\.\//, '');
     const src = Object.hasOwn(fichiers, n) ? fichiers[n] : undefined;
@@ -52,7 +52,7 @@ try {
   if (res.error) {
     stderr = JSON.stringify(ctx.dump(res.error));
   } else {
-    // Le lanceur est asynchrone : on fait tourner la file des tâches jusqu'à ce qu'il ait fini.
+    // The runner is asynchronous: run the job queue until it has finished.
     for (;;) {
       const etat = ctx.getPromiseState(res.value);
       if (etat.type !== 'pending') {
@@ -70,7 +70,7 @@ try {
       }
     }
   }
-  // Rien n'est libéré : le thread s'arrête et emporte toute la mémoire du moteur.
+  // Nothing is freed: the thread stops and takes all the engine's memory with it.
 } catch (e) {
   stderr = String(e);
 }

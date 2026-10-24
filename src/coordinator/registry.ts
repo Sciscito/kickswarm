@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { hashOf } from '../protocol/canonical.js';
 import type { Hash } from '../protocol/types.js';
 
-/** Une entrée du registre public, chaînée à la précédente par son hash (§14.6). */
+/** A public registry entry, chained to the previous one by its hash (§14.6). */
 export interface RegistryEntry {
   seq: number;
   prev: Hash | null;
@@ -13,9 +13,9 @@ export interface RegistryEntry {
 }
 
 /**
- * Le registre est la source de vérité (OSP v0.2, §6.1). Les écritures d'une commande forment
- * une transaction : elles ne sont écrites sur disque et diffusées qu'au commit, et disparaissent
- * si la commande échoue.
+ * The registry is the source of truth (OSP v0.2, §6.1). The writes of a command form
+ * a transaction: they are written to disk and broadcast only on commit, and disappear
+ * if the command fails.
  */
 export class Registry {
   readonly entries: RegistryEntry[] = [];
@@ -31,13 +31,13 @@ export class Registry {
         if (line.trim()) this.entries.push(JSON.parse(line) as RegistryEntry);
       }
       const check = verifyRegistry(this.entries);
-      if (!check.ok) throw new Error(`Registre corrompu (${file}) : ${check.erreur}`);
+      if (!check.ok) throw new Error(`Corrupted registry (${file}): ${check.erreur}`);
     }
   }
 
   append(nature: string, donnees: unknown): RegistryEntry {
     const last = this.entries[this.entries.length - 1];
-    // Copie profonde : une entrée inscrite ne doit plus jamais bouger, même si l'objet source change.
+    // Deep copy: a written entry must never move again, even if the source object changes.
     const base = { seq: this.entries.length, prev: last ? last.hash : null, date: new Date(this.now()).toISOString(), nature, donnees: structuredClone(donnees) };
     const entry: RegistryEntry = { ...base, hash: hashOf(base) };
     this.entries.push(entry);
@@ -47,7 +47,7 @@ export class Registry {
   }
 
   begin(): void {
-    if (this.pending) throw new Error('Transaction du registre déjà ouverte');
+    if (this.pending) throw new Error('Registry transaction already open');
     this.pending = [];
   }
 
@@ -63,7 +63,7 @@ export class Registry {
     this.entries.splice(this.entries.length - n, n);
   }
 
-  /** S'abonne aux nouvelles entrées (flux temps réel). Renvoie la fonction de désabonnement. */
+  /** Subscribes to new entries (real-time stream). Returns the unsubscribe function. */
   onAppend(fn: (entry: RegistryEntry) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -80,14 +80,14 @@ export class Registry {
   }
 }
 
-/** Recalcule chaque hash et chaque chaînage : n'importe qui peut vérifier le registre. */
+/** Recomputes every hash and every link: anyone can verify the registry. */
 export function verifyRegistry(entries: RegistryEntry[]): { ok: true } | { ok: false; erreur: string } {
   let prev: Hash | null = null;
   for (const [i, e] of entries.entries()) {
-    if (e.seq !== i) return { ok: false, erreur: `numéro ${e.seq} à la position ${i}` };
-    if (e.prev !== prev) return { ok: false, erreur: `chaînage rompu à l'entrée ${i}` };
+    if (e.seq !== i) return { ok: false, erreur: `sequence number ${e.seq} at position ${i}` };
+    if (e.prev !== prev) return { ok: false, erreur: `chain broken at entry ${i}` };
     const { hash, ...base } = e;
-    if (hashOf(base) !== hash) return { ok: false, erreur: `hash invalide à l'entrée ${i}` };
+    if (hashOf(base) !== hash) return { ok: false, erreur: `invalid hash at entry ${i}` };
     prev = hash;
   }
   return { ok: true };

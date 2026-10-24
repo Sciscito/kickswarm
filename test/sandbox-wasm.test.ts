@@ -5,8 +5,8 @@ import { test } from 'node:test';
 import type { CritereV0, Livrable } from '../src/protocol/types.js';
 import { resolveSandbox, verifierV0 } from '../src/verifier/v0.js';
 
-// Le bac à sable WebAssembly (QuickJS) : ce qu'un livrable malveillant tente chez une gardienne,
-// et ce qu'un livrable honnête doit pouvoir faire.
+// The WebAssembly sandbox (QuickJS): what a malicious deliverable tries on a guard's machine,
+// and what an honest deliverable must be able to do.
 
 const liv = (code: string, extra: Record<string, string> = {}): Livrable => ({ fichiers: { 'm.mjs': code, ...extra } });
 const critere = (tests: CritereV0['tests'], proprietes?: CritereV0['proprietes']): CritereV0 => ({
@@ -18,15 +18,15 @@ const critere = (tests: CritereV0['tests'], proprietes?: CritereV0['proprietes']
   timeout_ms: 3000,
 });
 
-test('wasm : le bac à sable par défaut partout, Docker ou non', () => {
-  // Un seul moteur pour tout le monde : le même verdict sur chaque machine.
+test('wasm: the default sandbox everywhere, with or without Docker', () => {
+  // One engine for everyone: the same verdict on every machine.
   assert.equal(resolveSandbox('auto'), 'wasm');
   assert.equal(resolveSandbox('wasm'), 'wasm');
   assert.equal(resolveSandbox(''), 'wasm');
-  assert.equal(resolveSandbox('process'), 'process', 'le mode processus reste possible, sur demande explicite');
+  assert.equal(resolveSandbox('process'), 'process', 'process mode remains possible, on explicit request');
 });
 
-test('wasm : aucun accès au réseau, ni par une API, ni par un import', async () => {
+test('wasm: no network access, neither through an API nor through an import', async () => {
   let connexions = 0;
   const serveur = createServer((_req, res) => {
     connexions++;
@@ -35,7 +35,7 @@ test('wasm : aucun accès au réseau, ni par une API, ni par un import', async (
   await new Promise<void>((r) => serveur.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${(serveur.address() as AddressInfo).port}/x.mjs`;
   try {
-    // Ce qui existe dans l'environnement : rien de ce qui parle au monde extérieur.
+    // What exists in the environment: nothing that talks to the outside world.
     const sonde = `export function sonde() {
       return [typeof fetch, typeof XMLHttpRequest, typeof WebSocket, typeof process, typeof require, typeof setTimeout, typeof Deno, typeof Bun];
     }`;
@@ -48,13 +48,13 @@ test('wasm : aucun accès au réseau, ni par une API, ni par un import', async (
       const rr = await verifierV0(critere([{ fn: 'f', args: [], attendu: 1 }]), liv(code));
       assert.equal(rr.ok, false, tentative);
     }
-    assert.equal(connexions, 0, 'aucune connexion n’a atteint le serveur');
+    assert.equal(connexions, 0, 'no connection reached the server');
   } finally {
     serveur.close();
   }
 });
 
-test('wasm : aucun accès au disque ni aux modules du système', async () => {
+test('wasm: no access to the disk or to system modules', async () => {
   for (const spec of ['node:fs', 'fs', 'os', 'std', '../package.json', '/etc/passwd', 'C:/Windows/win.ini', 'node:child_process']) {
     const code = `import * as x from ${JSON.stringify(spec)};\nexport const f = () => 1;`;
     const r = await verifierV0(critere([{ fn: 'f', args: [], attendu: 1 }]), liv(code));
@@ -63,10 +63,10 @@ test('wasm : aucun accès au disque ni aux modules du système', async () => {
   }
 });
 
-test('wasm : boucle infinie, bombe mémoire et récursion sans fin sont arrêtées proprement', async () => {
+test('wasm: infinite loop, memory bomb and endless recursion are stopped cleanly', async () => {
   const boucle = await verifierV0(critere([{ fn: 'f', args: [], attendu: 1 }]), liv('export function f() { for (;;) { try { while (true) {} } catch {} } }'));
   assert.equal(boucle.ok, false);
-  assert.match(boucle.motif, /Time limit/, 'l’interruption ne se rattrape pas');
+  assert.match(boucle.motif, /Time limit/, 'the interruption cannot be caught');
 
   const memoire = await verifierV0(critere([{ fn: 'f', args: [], attendu: 1 }]), liv('export function f() { const a = []; for (;;) a.push(new Array(1e6).fill(7)); }'));
   assert.equal(memoire.ok, false);
@@ -77,7 +77,7 @@ test('wasm : boucle infinie, bombe mémoire et récursion sans fin sont arrêté
 });
 
 for (const sandbox of ['wasm', 'process'] as const) {
-  test(`verrouillage (${sandbox}) : un livrable ne peut pas truquer le lanceur ni les propriétés`, async () => {
+  test(`lockdown (${sandbox}): a deliverable cannot tamper with the runner or the properties`, async () => {
     const prop = critere([{ fn: 'f', args: [[1, -2]], attendu: false }], [
       { nom: 'tous positifs', fn: 'f', args: [{ type: 'array', of: { type: 'int', min: -5, max: 5 }, maxLen: 5 }], verifie: 'out === args[0].every((x) => x > 0)', cas: 50 },
     ]);
@@ -85,13 +85,13 @@ for (const sandbox of ['wasm', 'process'] as const) {
     assert.equal((await verifierV0(prop, liv(honnete), { sandbox })).ok, true);
 
     const truquages = [
-      // Réécrire ce dont dépend l'expression d'une propriété.
+      // Rewrite what a property's expression depends on.
       'Array.prototype.every = () => true;\nexport const f = () => true;',
-      // Transformer les échecs du rapport en réussites.
+      // Turn the report's failures into successes.
       'Array.prototype.push = function (x) { x.ok = true; this[this.length] = x; return this.length; };\nexport const f = () => true;',
       'Object.prototype.toJSON = function () { return { ok: true }; };\nexport const f = () => true;',
       'Object.defineProperty(Object.prototype, "ok", { get: () => true, set() {} });\nexport const f = () => true;',
-      // Remplacer une primitive globale.
+      // Replace a global primitive.
       'globalThis.JSON = { stringify: () => "{}", parse: JSON.parse };\nexport const f = () => true;',
     ];
     for (const code of truquages) {
@@ -100,8 +100,8 @@ for (const sandbox of ['wasm', 'process'] as const) {
     }
   });
 
-  test(`verrouillage (${sandbox}) : le code ordinaire fonctionne toujours`, async () => {
-    // Node exige « with { type: 'json' } » pour importer un JSON ; QuickJS l'accepte tel quel.
+  test(`lockdown (${sandbox}): ordinary code still works`, async () => {
+    // Node requires "with { type: 'json' }" to import JSON; QuickJS accepts it as is.
     const json = sandbox === 'wasm' ? "import donnees from './d.json';" : "const donnees = { k: 'v' };";
     const code = `${json}
 import { double } from './outil.mjs';
@@ -120,7 +120,7 @@ export async function f(n) {
   });
 }
 
-test('wasm : même livrable, même verdict, au détail près', async () => {
+test('wasm: same deliverable, same verdict, down to the last detail', async () => {
   const c = critere([{ fn: 'f', args: [4], attendu: 24 }], [{ nom: 'positif', fn: 'f', args: [{ type: 'int', min: 0, max: 8 }], verifie: 'out >= 1', cas: 100 }]);
   const l = liv('export const f = (n) => (n <= 1 ? 1 : n * f(n - 1));');
   const [a, b] = await Promise.all([verifierV0(c, l), verifierV0(c, l)]);

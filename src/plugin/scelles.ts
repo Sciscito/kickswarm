@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Verdict } from '../protocol/types.js';
 
-// Les verdicts scellés (OSP v0.2, P1-3) : l'engagement est parti, le verdict attend que toutes les
-// gardiennes du résultat se soient engagées. Ils sont gardés sur disque, sel compris : une gardienne
-// qui ne révèle pas à temps perd plus de réputation qu'avec le pire verdict.
+// Sealed verdicts (OSP v0.2, P1-3): the commitment has been sent, the verdict waits until every
+// guard of the result has committed. They are kept on disk, salt included: a guard that does not
+// reveal in time loses more reputation than with the worst verdict.
 
 export interface VerdictScelle {
   verdict: Verdict;

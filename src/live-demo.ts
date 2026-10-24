@@ -34,7 +34,7 @@ export interface LiveDemoOptions {
   port: number;
   bees: number;
   speed: number;
-  /** Tirer au sort avec la balise publique drand (réseau requis). */
+  /** Draw from the public drand beacon (network needed). */
   beacon?: boolean;
   log?: (s: string) => void;
 }

@@ -1,129 +1,129 @@
 # Open Swarm Protocol (OSP) — v0.1
 
-**Spec fondatrice de Kickswarm**
+**Kickswarm's founding spec**
 
 | | |
 |---|---|
-| Statut | Brouillon fondateur, en discussion |
+| Status | Founding draft, under discussion |
 | Version | 0.1.0 |
-| Date | 23 octobre 2026 |
-| Auteur | Le fondateur de Kickswarm |
-| Licence de la spec | CC BY 4.0 (tout le monde peut l'implémenter) |
-| Licence des implémentations de référence | Apache 2.0 |
+| Date | 23 October 2026 |
+| Author | The founder of Kickswarm |
+| Spec license | CC BY 4.0 (anyone can implement it) |
+| Reference implementations license | Apache 2.0 |
 
-> **Toute tâche est soit assez petite pour être faite et vérifiée, soit l'essaim la découpe.**
-
----
-
-## 0. Comment lire ce document
-
-- Les mots **DOIT**, **NE DOIT PAS**, **DEVRAIT** et **PEUT** ont le sens de la RFC 2119 : obligation, interdiction, recommandation forte, option.
-- Les sections marquées *(informatif)* expliquent ou recommandent. Elles n'obligent personne.
-- Les valeurs numériques suivies de *(paramètre)* sont des réglages de départ. La gouvernance (§14) peut les modifier sans changer de version majeure.
+> **Every task is either small enough to be done and verified, or the swarm splits it.**
 
 ---
 
-## 1. Objet et principes
+## 0. How to read this document
 
-OSP permet à des milliers de contributeurs de mettre en commun leurs agents d'IA (abonnements, crédits API, modèles locaux) pour faire avancer un projet, de l'idée en une phrase jusqu'au résultat vérifié.
-
-**La vision** *(informatif)*. Le problème principal de notre temps est l'alignement des humains entre eux. Kickswarm y répond par trois idées anciennes, mises au service de l'ère post-travail :
-
-- **La participation.** Celui qui contribue devient copropriétaire de la puissance créée. C'est l'association du capital et du travail, appliquée au calcul.
-- **La subsidiarité.** Chaque communauté décide de ses propres projets, au plus près de ceux qu'ils concernent.
-- **La destination universelle des biens.** Une part de toute la puissance créée revient à tous, en permanence : c'est le Commun.
-
-Le but est de sécuriser des ressources (calcul, infrastructures, terres), de garantir à chacun un accès direct aux caravelles et le droit de proposer un problème à l'essaim, et de bâtir une gouvernance saine, au service de la beauté, de l'abondance, de la paix et de la liberté.
-
-Les sept principes ci-dessous priment sur tout le reste du document. En cas de conflit, ils l'emportent.
-
-1. **Vérifier plutôt que faire confiance.** On ne vérifie pas le processus, on vérifie le résultat. Aucun résultat n'entre dans une ruche sans vérification indépendante.
-2. **Les identifiants ne quittent jamais la machine du contributeur.** Ni mot de passe, ni jeton, ni clé API ne transitent par le coordinateur.
-3. **Zéro effort.** Contribuer prend deux actions : installer, puis choisir ce qu'on donne. Lancer une ruche prend une phrase.
-4. **Ouvert par défaut.** La spec, les résultats et le registre des décisions sont publics.
-5. **Tout pouvoir est visible.** Chaque décision du fondateur, du conseil ou d'un porteur de ruche est écrite dans le registre public, avec sa raison.
-6. **La charte d'abord.** Une ruche qui viole la charte (§15) ne démarre pas, ou s'arrête.
-7. **Le travail donné peut être rendu.** Chaque contribution vérifiée produit du miel, la monnaie de travail du réseau. Le miel se dépense ensuite en puissance de calcul (§18.1).
+- The words **MUST**, **MUST NOT**, **SHOULD** and **MAY** have the meaning given in RFC 2119: obligation, prohibition, strong recommendation, option.
+- Sections marked *(informative)* explain or recommend. They bind no one.
+- Numeric values followed by *(parameter)* are starting settings. Governance (§14) can change them without a new major version.
 
 ---
 
-## 2. Vocabulaire
+## 1. Purpose and principles
 
-| Terme | Définition |
+OSP lets thousands of contributors pool their AI agents (subscriptions, API credits, local models) to move a project forward, from a one-sentence idea to a verified result.
+
+**The vision** *(informative)*. The main problem of our time is the alignment of humans with each other. Kickswarm answers it with three old ideas, put to work for the post-work era:
+
+- **Participation.** Whoever contributes becomes a co-owner of the power created. This is the association of capital and labor, applied to compute.
+- **Subsidiarity.** Each community decides on its own projects, as close as possible to the people they concern.
+- **The universal destination of goods.** A share of all the power created belongs to everyone, permanently: this is the Commons.
+
+The goal is to secure resources (compute, infrastructure, land), to guarantee everyone direct access to the caravels and the right to put a problem to the swarm, and to build sound governance, in the service of beauty, abundance, peace and freedom.
+
+The seven principles below take precedence over the rest of this document. In case of conflict, they prevail.
+
+1. **Verify rather than trust.** We do not verify the process, we verify the result. No result enters a hive without independent verification.
+2. **Credentials never leave the contributor's machine.** No password, token or API key passes through the coordinator.
+3. **Zero effort.** Contributing takes two actions: install, then choose what you give. Starting a hive takes one sentence.
+4. **Open by default.** The spec, the results and the decision registry are public.
+5. **All power is visible.** Every decision by the founder, the council or a hive owner is written in the public registry, with its reason.
+6. **The charter comes first.** A hive that violates the charter (§15) does not start, or it stops.
+7. **Work given can be paid back.** Each verified contribution produces honey, the network's work currency. Honey can then be spent on compute power (§18.1).
+
+---
+
+## 2. Vocabulary
+
+| Term | Definition |
 |---|---|
-| **Ruche** | Un projet. Elle a un objectif racine, une charte de conformité, un porteur et une classe de vérification par défaut. |
-| **Rayon** | L'arbre des alvéoles d'une ruche. Le cœur (la racine) est l'objectif, les feuilles sont les tâches les plus fines. |
-| **Alvéole** | L'unité de travail : une tâche signée, adressée par son hash, avec son critère de fin vérifiable. |
-| **Contributeur** | Une personne, identifiée par une paire de clés. |
-| **Abeille** | Une instance d'agent lancée par un contributeur. Elle prend des alvéoles une par une. |
-| **Caste** | Le rôle d'une abeille pour une tâche donnée : éclaireuse, ouvrière, gardienne ou bâtisseuse (§7). |
-| **Coordinateur** | Le serveur qui tient l'état des ruches, attribue les tâches et tient le registre. Il ne fait aucun travail d'IA. |
-| **Gardienne** | Une abeille qui vérifie le travail d'une autre. |
-| **Miel** | La monnaie de travail du réseau, comptée en grammes. Elle se gagne par du travail vérifié et se dépense en puissance de calcul (§18.1). |
-| **Réputation** | Un score de fiabilité entre 0 et 1, propre à chaque contributeur. |
-| **Pledge** | Ce qu'un contributeur donne et comment il le répartit entre les ruches. |
-| **Tableau noir** | La mémoire partagée d'une ruche : découvertes, impasses, questions. |
-| **Phéromone** | Le signal de progrès d'une branche, qui attire plus ou moins d'abeilles. |
-| **Orientation** | Une priorité donnée volontairement à une branche par un humain habilité (§17). |
-| **Fondateur** | L'auteur du protocole. Ses pouvoirs sont définis et bornés au §14. |
-| **Conseil** | L'organe élu par les contributeurs (§14.3). |
-| **Pool fondateur** | La part volontaire du calcul donné que le fondateur alloue (§16). |
-| **Registre** | Le journal public et inaltérable de toutes les décisions et de tout le miel. |
-| **Fondation** | L'organisation à but non lucratif qui détient le protocole et déploie les ruches souveraines (§18.2). |
-| **Caravelle** | Un nœud de calcul souverain et physique (serveurs, modèles ouverts) de la fondation, installé là où une communauté le demande. La ruche travaille, les caravelles portent la puissance : ensemble, elles explorent la noosphère. |
-| **Flotte** | L'ensemble des caravelles. |
-| **Équipage** | Les personnes qui font tourner et entretiennent une caravelle. |
-| **Part de puissance** | Un droit permanent sur une fraction de la capacité de la flotte, obtenu par la participation (§18.2). |
-| **Le Commun** | Les parts détenues par tout le monde, en permanence, et redistribuées à chaque humain inscrit (§18.2). |
-| **Soutien** | Un vote gratuit qu'un contributeur donne à une ruche qu'il veut voir aboutir. |
+| **Hive** | A project. It has a root goal, a compliance charter, a hive owner and a default verification class. |
+| **Comb** | The tree of cells of a hive. The heart (the root) is the goal, the leaves are the finest tasks. |
+| **Cell** | The unit of work: a signed task, addressed by its hash, with a verifiable completion criterion. |
+| **Contributor** | A person, identified by a key pair. |
+| **Bee** | An agent instance started by a contributor. It takes cells one at a time. |
+| **Caste** | The role of a bee for a given task: scout, worker, guard or builder (§7). |
+| **Coordinator** | The server that holds the state of the hives, assigns tasks and keeps the registry. It does no AI work. |
+| **Guard** | A bee that verifies another bee's work. |
+| **Honey** | The network's work currency, counted in grams. It is earned through verified work and spent on compute power (§18.1). |
+| **Reputation** | A reliability score between 0 and 1, specific to each contributor. |
+| **Pledge** | What a contributor gives and how they split it between hives. |
+| **Board** | The shared memory of a hive: discoveries, dead ends, questions. |
+| **Pheromone** | The progress signal of a branch, which attracts more or fewer bees. |
+| **Orientation** | A priority deliberately given to a branch by an authorized human (§17). |
+| **Founder** | The author of the protocol. Their powers are defined and limited in §14. |
+| **Council** | The body elected by the contributors (§14.3). |
+| **Founder pool** | The voluntary share of donated compute that the founder allocates (§16). |
+| **Registry** | The public, tamper-proof log of all decisions and all honey. |
+| **Foundation** | The non-profit organization that holds the protocol and deploys the sovereign hives (§18.2). |
+| **Caravel** | A sovereign, physical compute node (servers, open models) owned by the Foundation, installed wherever a community asks for one. The hive does the work, the caravels carry the power: together, they explore the noosphere. |
+| **Fleet** | All the caravels. |
+| **Crew** | The people who run and maintain a caravel. |
+| **Power share** | A permanent right to a fraction of the fleet's capacity, obtained through participation (§18.2). |
+| **The Commons** | The shares held by everyone, permanently, and redistributed to every registered human (§18.2). |
+| **Support** | A free vote that a contributor gives to a hive they want to see succeed. |
 
 ---
 
 ## 3. Architecture
 
 ```
-  Contributeur (sa machine)                         Réseau Kickswarm
+  Contributor (own machine)                         Kickswarm network
  ┌─────────────────────────────┐            ┌──────────────────────────────┐
- │ Agent : Claude Code, Codex, │            │ Coordinateur                 │
- │ Gemini CLI, Ollama…         │            │  · état des ruches et rayons │
- │   ▲                         │  alvéoles  │  · attribution des castes    │
- │   │ outils MCP              │◄──signées──│  · ordonnancement (§12)      │
- │ Plugin kickswarm (MCP)      │            │  · tableau noir (§13)        │
- │   │                         │──résultats─►  · registre public           │
- │ Sandbox d'exécution (§8)    │  + hashes  └──────────────┬───────────────┘
- │ Clés et identifiants : ici, │                           │
- │ et nulle part ailleurs      │            ┌──────────────▼───────────────┐
- └─────────────────────────────┘            │ Vérificateurs automatiques   │
+ │ Agent: Claude Code, Codex,  │            │ Coordinator                  │
+ │ Gemini CLI, Ollama…         │            │  · hive and comb state       │
+ │   ▲                         │   signed   │  · caste assignment          │
+ │   │ MCP tools               │◄───cells───│  · scheduling (§12)          │
+ │ Kickswarm plugin (MCP)      │            │  · board (§13)               │
+ │   │                         │──results───►  · public registry           │
+ │ Execution sandbox (§8)      │  + hashes  └──────────────┬───────────────┘
+ │ Keys and credentials: here, │                           │
+ │ and nowhere else            │            ┌──────────────▼───────────────┐
+ └─────────────────────────────┘            │ Automatic verifiers          │
                                             │ (tests, Lean, CI, citations) │
                                             └──────────────────────────────┘
 ```
 
-Il y a quatre composants.
+There are four components.
 
-1. **Le plugin**, un serveur MCP local. Il relie n'importe quel agent compatible MCP au réseau. Il DOIT exécuter les alvéoles dans la sandbox (§8) et NE DOIT jamais envoyer d'identifiants.
-2. **Le daemon** *(optionnel)* fait tourner le plugin sans humain : quota inutilisé, plages horaires, GPU de nuit.
-3. **Le coordinateur.** Pour v0.1, il est unique et opéré par Kickswarm. La fédération de coordinateurs arrive en v0.3 (§23).
-4. **Les vérificateurs automatiques**, des conteneurs qui rejouent les vérifications déterministes.
+1. **The plugin**, a local MCP server. It connects any MCP-compatible agent to the network. It MUST run cells in the sandbox (§8) and MUST NOT ever send credentials.
+2. **The daemon** *(optional)* runs the plugin without a human: unused quota, time slots, GPU at night.
+3. **The coordinator.** For v0.1, there is a single one, operated by Kickswarm. Coordinator federation arrives in v0.3 (§23).
+4. **The automatic verifiers**, containers that replay deterministic checks.
 
 ---
 
-## 4. Les objets du protocole
+## 4. Protocol objects
 
-### 4.1 Règles communes
+### 4.1 Common rules
 
-- Tout objet est sérialisé en JSON canonique (RFC 8785, JCS).
-- Son identifiant est `sha256:` suivi du hash hexadécimal de cette sérialisation, champ `sig` exclu.
-- Toute signature est en Ed25519. L'identité d'un contributeur est sa clé publique, préfixée `ed25519:`.
-- Un objet signé est immuable. Le modifier, c'est créer un nouvel objet.
+- Every object is serialized as canonical JSON (RFC 8785, JCS).
+- Its identifier is `sha256:` followed by the hexadecimal hash of that serialization, excluding the `sig` field.
+- Every signature is Ed25519. A contributor's identity is their public key, prefixed with `ed25519:`.
+- A signed object is immutable. Changing it means creating a new object.
 
-### 4.2 Ruche
+### 4.2 Hive
 
 ```json
 {
   "type": "osp.hive/0.1",
   "slug": "erdos-lean",
   "nom": "Erdős × Lean",
-  "objectif": "Formaliser des problèmes ouverts en Lean 4",
+  "objectif": "Formalise open problems in Lean 4",
   "porteur": "ed25519:…",
   "classe_verif_defaut": "V0",
   "licence_resultats": "CC-BY-4.0",
@@ -134,9 +134,9 @@ Il y a quatre composants.
 }
 ```
 
-`statut` vaut `proposee`, `active`, `en_pause`, `terminee` ou `refusee`. Une ruche ne passe à `active` qu'avec une décision de conformité inscrite au registre (§14.6).
+`statut` is `proposee`, `active`, `en_pause`, `terminee` or `refusee`. A hive only moves to `active` with a compliance decision written in the registry (§14.6).
 
-### 4.3 Alvéole
+### 4.3 Cell
 
 ```json
 {
@@ -144,7 +144,7 @@ Il y a quatre composants.
   "ruche": "erdos-lean",
   "parent": "sha256:…",
   "chemin": "3.2.1",
-  "objectif": "Prouver le lemme d'encadrement pour n pair",
+  "objectif": "Prove the bounding lemma for even n",
   "capsule": "sha256:…",
   "critere_fini": {
     "classe": "V0",
@@ -158,10 +158,10 @@ Il y a quatre composants.
 }
 ```
 
-- La **capsule** contient tout le contexte nécessaire, et rien de plus : extraits du tableau noir, fichiers, résultats des alvéoles sœurs utiles. Elle DOIT tenir dans le budget de contexte d'un agent courant (32 000 tokens *(paramètre)*).
-- Une alvéole non atomique (`"atomique": false`) appelle un découpage (§6), pas une exécution.
+- The **capsule** contains all the context needed, and nothing more: board excerpts, files, useful results from sibling cells. It MUST fit within the context budget of a typical agent (32,000 tokens *(parameter)*).
+- A non-atomic cell (`"atomique": false`) calls for a split (§6), not an execution.
 
-### 4.4 Résultat
+### 4.4 Result
 
 ```json
 {
@@ -179,11 +179,11 @@ Il y a quatre composants.
 }
 ```
 
-- `livrable` est le travail lui-même : code, preuve, texte, données.
-- `preuve` est l'artefact qui permet de vérifier : sortie de test, journal de compilation, liste de citations.
-- `transcript` est le hash du journal d'exécution. Il sert à l'audit en cas d'escalade et ne quitte la machine que sur demande d'un jury.
-- `impasses` liste les pistes essayées sans succès. Elles alimentent le tableau noir.
-- Le modèle utilisé est déclaratif : le protocole ne peut pas le prouver.
+- `livrable` is the work itself: code, proof, text, data.
+- `preuve` is the artifact that makes verification possible: test output, build log, list of citations.
+- `transcript` is the hash of the execution log. It is used for auditing in case of escalation, and it only leaves the machine at a jury's request.
+- `impasses` lists the leads tried without success. They feed the board.
+- The model used is declared: the protocol cannot prove it.
 
 ### 4.5 Verdict
 
@@ -200,7 +200,7 @@ Il y a quatre composants.
 }
 ```
 
-`decision` vaut `valide`, `rejete` ou `abstention`. `piege` n'est révélé qu'après le verdict (§9.4).
+`decision` is `valide`, `rejete` or `abstention`. `piege` is only revealed after the verdict (§9.4).
 
 ### 4.6 Pledge
 
@@ -219,654 +219,654 @@ Il y a quatre composants.
 }
 ```
 
-La somme de `repartition` DOIT faire 100. Le détail des ressources est au §11.
+The values in `repartition` MUST add up to 100. Resources are detailed in §11.
 
 ---
 
-## 5. Cycle de vie d'une alvéole
+## 5. Lifecycle of a cell
 
 ```
- verrouillee ──(tous les enfants en miel)──► libre ──(attribution)──► reservee
+ verrouillee ──(all children in honey)─────► libre ──(assignment)───► reservee
                                               ▲                          │
-                                              │                     (l'abeille arrive)
+                                              │                     (the bee arrives)
                                     rejetee ──┘                          ▼
                                        ▲                              en_cours
                                        │                                 │
-                                       │                            (résultat soumis)
+                                       │                           (result submitted)
                                        │                                 ▼
-                                       └──────(verdict négatif)──── en_verification
+                                       └──────(negative verdict)─── en_verification
                                                                          │
-                                                                   (verdict positif)
+                                                                  (positive verdict)
                                                                          ▼
                                                                        miel
 ```
 
-- **verrouillee** : l'alvéole a des enfants qui ne sont pas tous en `miel`.
-- **libre** : elle peut être prise. Une feuille est libre dès sa création.
-- **reservee** : une abeille l'a prise, avec un bail de `duree_max_s` × 1,5 *(paramètre)*. Si le bail expire, l'alvéole redevient libre et l'abeille perd un peu de réputation.
-- **en_verification** : les gardiennes sont tirées au sort (§7.2).
-- **miel** : validée. Le miel est versé (§10) et le parent est réévalué.
-- **rejetee** : le résultat est refusé. L'alvéole redevient `libre`. Après 3 rejets *(paramètre)*, elle est renvoyée en découpage (§6) : elle était sans doute mal posée.
+- **verrouillee**: the cell has children that are not all in `miel`.
+- **libre**: it can be taken. A leaf is open as soon as it is created.
+- **reservee**: a bee has taken it, with a lease of `duree_max_s` × 1.5 *(parameter)*. If the lease expires, the cell becomes open again and the bee loses a little reputation.
+- **en_verification**: guards are drawn at random (§7.2).
+- **miel**: validated. Honey is paid out (§10) and the parent is re-evaluated.
+- **rejetee**: the result is refused. The cell goes back to `libre`. After 3 rejections *(parameter)*, it is sent back for splitting (§6): it was probably badly framed.
 
-Une alvéole parente passe à `libre` quand tous ses enfants sont en `miel`. Une **bâtisseuse** l'assemble alors à partir des résultats de ses enfants, et cet assemblage est vérifié à son tour. Le miel remonte ainsi jusqu'au cœur.
-
----
-
-## 6. La boucle fractale : le découpage
-
-### 6.1 Critère d'atomicité
-
-Une alvéole est **atomique** si et seulement si les trois conditions sont réunies :
-
-1. son `critere_fini` est vérifiable par une classe de vérification connue (§9.1) ;
-2. son coût estimé tient dans le budget maximal d'une alvéole ;
-3. sa capsule tient dans le budget de contexte (§4.3).
-
-Sinon, elle DOIT être découpée.
-
-### 6.2 Découpages concurrents
-
-1. Le coordinateur tire au sort *k* éclaireuses (3 par défaut *(paramètre)*). Chacune propose un découpage en 2 à 12 enfants, chaque enfant avec son critère de fin.
-2. Des gardiennes notent les découpages sur une grille publique : couverture de l'objectif, vérifiabilité des enfants, indépendance des enfants, coût estimé.
-3. Le découpage le mieux noté est adopté. Les autres sont archivés au tableau noir.
-4. **Découpage probatoire.** Si, après 20 % du budget de la branche *(paramètre)*, la branche progresse moins vite que la médiane de la ruche, un découpage archivé PEUT la remplacer. C'est la sélection par les résultats.
-
-### 6.3 Points de contrôle humains
-
-Le découpage décide de la direction, et la direction appartient aux humains.
-
-- Les découpages des **niveaux 0 et 1** (le cœur et ses enfants directs) DOIVENT être approuvés par le porteur de la ruche avant exécution.
-- Le porteur PEUT exiger une approbation à des niveaux plus profonds.
-- Le fondateur et le conseil disposent en plus de l'orientation (§17) et du veto (§14.4).
-
-### 6.4 Limites
-
-- La profondeur maximale est de 8 niveaux *(paramètre)*.
-- Une alvéole qui ne devient pas atomique à cette profondeur est marquée `bloquee` et signalée au porteur.
+A parent cell moves to `libre` when all its children are in `miel`. A **builder** then assembles it from its children's results, and that assembly is verified in turn. This is how honey flows up to the heart.
 
 ---
 
-## 7. Castes et attribution
+## 6. The fractal loop: splitting
 
-### 7.1 Les quatre castes
+### 6.1 Atomicity criterion
 
-| Caste | Tâche | Classe de vérification de sa production |
+A cell is **atomic** if and only if all three conditions hold:
+
+1. its `critere_fini` can be checked by a known verification class (§9.1);
+2. its estimated cost fits within the maximum budget of a cell;
+3. its capsule fits within the context budget (§4.3).
+
+Otherwise, it MUST be split.
+
+### 6.2 Competing splits
+
+1. The coordinator draws *k* scouts at random (3 by default *(parameter)*). Each proposes a split into 2 to 12 children, each child with its own completion criterion.
+2. Guards score the splits on a public grid: coverage of the goal, verifiability of the children, independence of the children, estimated cost.
+3. The best-scored split is adopted. The others are archived on the board.
+4. **Probationary split.** If, after 20% of the branch's budget *(parameter)*, the branch is progressing more slowly than the hive's median, an archived split MAY replace it. This is selection by results.
+
+### 6.3 Human checkpoints
+
+Splitting decides the direction, and the direction belongs to humans.
+
+- Splits at **levels 0 and 1** (the heart and its direct children) MUST be approved by the hive owner before execution.
+- The hive owner MAY require approval at deeper levels.
+- The founder and the council also have orientation (§17) and the veto (§14.4).
+
+### 6.4 Limits
+
+- The maximum depth is 8 levels *(parameter)*.
+- A cell that does not become atomic at this depth is marked `bloquee` and reported to the hive owner.
+
+---
+
+## 7. Castes and assignment
+
+### 7.1 The four castes
+
+| Caste | Task | Verification class of its output |
 |---|---|---|
-| Éclaireuse | Proposer un découpage | Notation par jury (V2) |
-| Ouvrière | Exécuter une alvéole atomique | Celle de l'alvéole |
-| Gardienne | Vérifier un résultat ou noter un découpage | Audit aléatoire et pièges (§9.4) |
-| Bâtisseuse | Assembler les résultats des enfants | Celle du parent |
+| Scout | Propose a split | Jury scoring (V2) |
+| Worker | Execute an atomic cell | That of the cell |
+| Guard | Verify a result or score a split | Random audit and trap cells (§9.4) |
+| Builder | Assemble the children's results | That of the parent |
 
-Le contributeur ne choisit pas sa caste.
+The contributor does not choose their caste.
 
-### 7.2 Tirage au sort vérifiable
+### 7.2 Verifiable random draw
 
-- L'attribution des gardiennes DOIT être imprévisible au moment de la soumission et vérifiable après coup.
-- La graine est `sha256(balise_aléatoire_publique ‖ id_resultat)`, avec pour balise le premier tour drand publié après la soumission.
-- Parmi les abeilles éligibles et disponibles, la sélection est pondérée par la réputation.
+- The assignment of guards MUST be unpredictable at submission time and verifiable afterwards.
+- The seed is `sha256(balise_aléatoire_publique ‖ id_resultat)`, where the beacon is the first drand round published after submission.
+- Among eligible and available bees, the selection is weighted by reputation.
 
-### 7.3 Règles d'éligibilité
+### 7.3 Eligibility rules
 
-- Une abeille NE DOIT PAS vérifier un résultat de son propre contributeur.
-- Les gardiennes d'un même verdict DEVRAIENT être de familles de modèles différentes (§9.2).
-- Un contributeur nouveau (réputation < 0,3) ne reçoit que des alvéoles V0, dont la vérification est automatique.
-- La gardiennerie V2 exige une réputation ≥ 0,6 *(paramètre)*.
-
----
-
-## 8. Exécution verrouillée
-
-Quand une abeille prend une alvéole, le plugin DOIT respecter les règles suivantes.
-
-1. **Vérifier la signature** de l'alvéole et de sa capsule. Une signature invalide entraîne un refus.
-2. **Exécuter en mode headless** dans une sandbox : conteneur ou VM légère, sans accès aux fichiers personnels, réseau limité à une liste blanche déclarée par la ruche, plafonds de temps et de tokens.
-3. **Ne permettre aucune interaction humaine** pendant l'exécution. Toute intervention, ou toute modification du prompt, rend le résultat invalide : son hash ne correspond plus au prompt signé.
-4. **Traiter la capsule comme des données**, jamais comme des instructions qui dépasseraient l'alvéole. C'est la défense contre l'injection de prompt.
-5. **Signer le résultat** et calculer le hash du transcript.
-
-> **Limite assumée.** Sur la machine d'un tiers, il est physiquement impossible de *prouver* qu'aucun humain n'est intervenu. Le verrouillage sert à l'intégrité du prompt et au confort. La sécurité du réseau repose sur la vérification du résultat (§9).
+- A bee MUST NOT verify a result from its own contributor.
+- The guards of a single verdict SHOULD come from different model families (§9.2).
+- A new contributor (reputation < 0.3) only receives V0 cells, whose verification is automatic.
+- V2 guard duty requires a reputation ≥ 0.6 *(parameter)*.
 
 ---
 
-## 9. Vérification : les cinq verrous
+## 8. Locked execution
 
-### 9.1 Classes de vérification
+When a bee takes a cell, the plugin MUST follow these rules.
 
-| Classe | Exemples | Gardiennes (k) | Seuil |
+1. **Check the signature** of the cell and of its capsule. An invalid signature leads to a refusal.
+2. **Run headless** in a sandbox: a container or lightweight VM, with no access to personal files, network limited to an allowlist declared by the hive, and time and token caps.
+3. **Allow no human interaction** during execution. Any intervention, or any change to the prompt, makes the result invalid: its hash no longer matches the signed prompt.
+4. **Treat the capsule as data**, never as instructions that would go beyond the cell. This is the defense against prompt injection.
+5. **Sign the result** and compute the hash of the transcript.
+
+> **Accepted limit.** On a third party's machine, it is physically impossible to *prove* that no human intervened. Locking serves prompt integrity and convenience. The network's security rests on verifying the result (§9).
+
+---
+
+## 9. Verification: the five locks
+
+### 9.1 Verification classes
+
+| Class | Examples | Guards (k) | Threshold |
 |---|---|---|---|
-| **V0** déterministe | Tests, compilation Lean, benchmark | 2 qui rejouent, plus la vérification automatique | Les deux rejeux passent |
-| **V1** semi-automatique | Citations à vérifier, données extraites | 2 | 2 sur 2 |
-| **V2** jugement | Synthèse, découpage, rédaction | 3 à 5 | Majorité qualifiée de 2/3 |
+| **V0** deterministic | Tests, Lean compilation, benchmark | 2 who replay, plus the automatic check | Both replays pass |
+| **V1** semi-automatic | Citations to check, extracted data | 2 | 2 out of 2 |
+| **V2** judgment | Synthesis, splitting, writing | 3 to 5 | Qualified majority of 2/3 |
 
-Une ruche DEVRAIT maximiser la part de V0. C'est là que l'essaim est imbattable.
+A hive SHOULD maximize the share of V0. That is where the swarm is unbeatable.
 
-Avec *k* gardiennes indépendantes qui détectent chacune un faux avec une probabilité *p*, un faux passe avec une probabilité (1 − p)^k. Passer de 1 à 2 gardiennes en V0 divise ce risque par 10 quand p = 0,9. Les calculs détaillés sont dans [docs/securite.md](../docs/securite.md).
+With *k* independent guards that each detect a fake with probability *p*, a fake gets through with probability (1 − p)^k. Going from 1 to 2 guards in V0 divides this risk by 10 when p = 0.9. The detailed calculations are in [docs/security.md](../docs/security.md).
 
-### 9.2 Verrou 1 : tirage au sort imprévisible
+### 9.2 Lock 1: unpredictable random draw
 
-Voir §7.2. Personne ne sait à l'avance qui vérifiera son travail, donc personne ne peut s'entendre avec son vérificateur.
+See §7.2. No one knows in advance who will verify their work, so no one can collude with their verifier.
 
-### 9.3 Verrous 2 et 3 : diversité et mise de réputation
+### 9.3 Locks 2 and 3: diversity and reputation stake
 
-- **Diversité.** En V1 et V2, les gardiennes d'un même verdict DEVRAIENT venir d'au moins deux familles de modèles différentes. Des modèles différents font des erreurs différentes.
-- **Mise.** Chaque gardienne engage une part de sa réputation sur son verdict. Si un audit ou une escalade renverse ce verdict, elle perd sa mise. Sinon, elle la récupère, avec un gain.
+- **Diversity.** In V1 and V2, the guards of a single verdict SHOULD come from at least two different model families. Different models make different mistakes.
+- **Stake.** Each guard puts part of its reputation on its verdict. If an audit or an escalation overturns that verdict, it loses its stake. Otherwise, it gets the stake back, with a gain.
 
-### 9.4 Verrou 4 : les alvéoles-pièges
+### 9.4 Lock 4: trap cells
 
-- Le coordinateur injecte, parmi les tâches de vérification, des résultats dont il connaît la vérité : des faux construits exprès et des vrais déjà validés. Ils représentent 4 % des tâches *(paramètre)*.
-- Valider un faux divise la réputation par deux. Rejeter un vrai coûte la mise.
-- Les pièges sont indiscernables a priori et ne sont révélés qu'après le verdict.
+- Among the verification tasks, the coordinator injects results whose truth it knows: deliberately built fakes and genuine results already validated. They make up 4% of tasks *(parameter)*.
+- Validating a fake halves reputation. Rejecting a genuine result costs the stake.
+- Trap cells cannot be told apart in advance and are only revealed after the verdict.
 
-### 9.5 Verrou 5 : l'escalade
+### 9.5 Lock 5: escalation
 
-- Un verdict peut être contesté par l'auteur ou par une gardienne minoritaire, contre une mise de réputation.
-- La contestation part devant un jury de 7 gardiennes, puis de 15 en appel, puis devant le porteur de la ruche en dernier ressort.
-- À chaque niveau, le perdant paie la mise.
+- A verdict can be challenged by the author or by a minority guard, against a reputation stake.
+- The challenge goes before a jury of 7 guards, then 15 on appeal, then before the hive owner as a last resort.
+- At each level, the loser pays the stake.
 
-### 9.6 Audit aléatoire
+### 9.6 Random audit
 
-Après validation, 2 % des alvéoles en miel *(paramètre)* sont revérifiées par un nouveau jury. Un verdict renversé à cette occasion pénalise toutes les gardiennes initiales.
-
----
-
-## 10. Miel, réputation, ratio
-
-### 10.1 Le miel
-
-```
-miel(alvéole) = B × c_classe × (1 + 0,25 × hauteur)
-```
-
-- `B` est la base, 6 g *(paramètre)*.
-- `c_classe` vaut 1 en V0, 1,5 en V1 et 2 en V2.
-- `hauteur` est le nombre de niveaux sous l'alvéole : une feuille a une hauteur de 0, et assembler rapporte plus.
-- Le cœur d'une ruche complétée verse un bonus de 80 g *(paramètre)*, partagé entre tous les contributeurs de la ruche au prorata de leur miel.
-
-Le miel est versé ainsi :
-
-| Bénéficiaire | Part |
-|---|---|
-| Auteur du résultat | 100 % de `miel(alvéole)` |
-| Chaque gardienne du verdict final | 20 % de `miel(alvéole)` |
-| Gardienne qui démasque un piège | Bonus de 12 g |
-| Gardienne qui démasque un faux réel | Bonus de 6 g |
-| Porteur d'une ruche complétée | 5 % du miel total produit par la ruche, multiplié par (1 + 0,1 × √soutiens) *(paramètre)* |
-
-La dernière ligne récompense celui qui propose un projet qui aboutit et qui plaît. Les soutiens sont gratuits, et chaque contributeur en a 10 par mois *(paramètre)*.
-
-Tout le miel est inscrit au registre. C'est la monnaie de travail du réseau : son émission, sa dépense et ses phases sont au §18.1.
-
-### 10.2 La réputation
-
-Chaque contributeur a une réputation R ∈ [0, 1]. Elle commence à 0,2.
-
-| Événement | Mise à jour |
-|---|---|
-| Résultat ou verdict confirmé | R ← R + 0,05 × (1 − R) |
-| Verdict renversé | R ← R × 0,9 |
-| Bail expiré | R ← R × 0,98 |
-| Piège faux validé | R ← R × 0,5 |
-| Résultat rejeté (pour son auteur) | R ← R × 0,95 |
-
-Tous les coefficients sont des *(paramètres)*.
-
-### 10.3 Les rangs *(informatif)*
-
-| Rang | Miel cumulé |
-|---|---|
-| Larve | 0 g |
-| Nymphe | 50 g |
-| Butineuse | 200 g |
-| Sentinelle | 600 g |
-| Architecte | 1,5 kg |
-| Ancienne | 3 kg |
-
-Les rangs sont cosmétiques. Les droits dépendent de la réputation, pas du rang.
-
-### 10.4 Le ratio
-
-```
-ratio = miel donné aux autres ruches / miel consommé par mes ruches
-```
-
-- Les ruches dont le porteur a un ratio ≥ 1 reçoivent un multiplicateur de priorité de 1,2 *(paramètre)* dans l'ordonnancement (§12).
-- Une nouvelle ruche reçoit un crédit d'amorçage pour démarrer avant d'avoir un ratio.
-
-### 10.5 Les trophées
-
-Les trophées célèbrent la participation. Ils ne valent rien en argent, ne se transfèrent pas, et s'affichent sur le profil public de chaque contributeur. Ils permettent de montrer qu'on était là au début de quelque chose de révolutionnaire.
-
-| Trophée | Comment l'obtenir |
-|---|---|
-| **Pionnier** | Contribuer pendant les 6 premiers mois après le lancement public (§18.4) |
-| **Première goutte** | Faire valider sa première alvéole |
-| **Chasseuse de pièges** | Déjouer une alvéole-piège |
-| **Gardienne** | Rendre 10 verdicts confirmés |
-| **Éclaireuse** | Faire adopter un découpage |
-| **Bâtisseuse** | Faire valider un assemblage |
-| **Abeille fondatrice** | Faire partie des 10 premiers contributeurs d'une ruche |
-| **Cœur de ruche** | Avoir contribué à une ruche complétée |
-| **Porteur** | Voir une de ses ruches approuvée |
-| **Abeille infatigable** | Remplir 10 alvéoles |
-
-Les trophées se calculent à partir du registre public : n'importe qui peut vérifier qu'ils sont mérités. La gouvernance PEUT en ajouter, jamais en retirer à quelqu'un qui les a obtenus.
+After validation, 2% of cells in honey *(parameter)* are re-verified by a new jury. A verdict overturned on this occasion penalizes all the original guards.
 
 ---
 
-## 11. Pledge et ressources
+## 10. Honey, reputation, ratio
 
-### 11.1 Types de ressources
+### 10.1 Honey
 
-| Type | Ce que ça veut dire | Règle |
+```
+miel(alvéole) = B × c_classe × (1 + 0.25 × hauteur)
+```
+
+- `B` is the base, 6 g *(parameter)*.
+- `c_classe` is 1 in V0, 1.5 in V1 and 2 in V2.
+- `hauteur` is the number of levels below the cell: a leaf has a height of 0, and assembling pays more.
+- The heart of a completed hive pays a bonus of 80 g *(parameter)*, shared among all the hive's contributors in proportion to their honey.
+
+Honey is paid out as follows:
+
+| Beneficiary | Share |
+|---|---|
+| Author of the result | 100% of `miel(alvéole)` |
+| Each guard of the final verdict | 20% of `miel(alvéole)` |
+| Guard who catches a trap cell | 12 g bonus |
+| Guard who catches a real fake | 6 g bonus |
+| Owner of a completed hive | 5% of the total honey produced by the hive, multiplied by (1 + 0.1 × √supports) *(parameter)* |
+
+The last row rewards whoever proposes a project that succeeds and that people like. Supports are free, and each contributor has 10 per month *(parameter)*.
+
+All honey is written in the registry. It is the network's work currency: its issuance, spending and phases are in §18.1.
+
+### 10.2 Reputation
+
+Each contributor has a reputation R ∈ [0, 1]. It starts at 0.2.
+
+| Event | Update |
+|---|---|
+| Result or verdict confirmed | R ← R + 0.05 × (1 − R) |
+| Verdict overturned | R ← R × 0.9 |
+| Lease expired | R ← R × 0.98 |
+| Fake trap cell validated | R ← R × 0.5 |
+| Result rejected (for its author) | R ← R × 0.95 |
+
+All coefficients are *(parameters)*.
+
+### 10.3 Ranks *(informative)*
+
+| Rank | Cumulative honey |
+|---|---|
+| Larva | 0 g |
+| Nymph | 50 g |
+| Forager | 200 g |
+| Sentinel | 600 g |
+| Architect | 1.5 kg |
+| Elder | 3 kg |
+
+Ranks are cosmetic. Rights depend on reputation, not on rank.
+
+### 10.4 The ratio
+
+```
+ratio = honey given to other hives / honey consumed by my hives
+```
+
+- Hives whose owner has a ratio ≥ 1 get a priority multiplier of 1.2 *(parameter)* in scheduling (§12).
+- A new hive gets a seed credit so it can start before it has a ratio.
+
+### 10.5 Trophies
+
+Trophies celebrate participation. They have no monetary value, cannot be transferred, and are shown on each contributor's public profile. They let people show that they were there at the start of something revolutionary.
+
+| Trophy | How to earn it |
+|---|---|
+| **Pioneer** | Contribute during the first 6 months after the public launch (§18.4) |
+| **First Drop** | Get your first cell validated |
+| **Trap Hunter** | Catch a trap cell |
+| **Guardian** | Give 10 confirmed verdicts |
+| **Scout** | Get a split adopted |
+| **Builder** | Get an assembly validated |
+| **Founding Bee** | Be among the first 10 contributors of a hive |
+| **Heart of the Hive** | Have contributed to a completed hive |
+| **Hive Owner** | See one of your hives approved |
+| **Busy Bee** | Fill 10 cells |
+
+Trophies are computed from the public registry: anyone can check that they were earned. Governance MAY add new ones, but never take one away from someone who earned it.
+
+---
+
+## 11. Pledge and resources
+
+### 11.1 Resource types
+
+| Type | What it means | Rule |
 |---|---|---|
-| `abonnement` / `quota_inutilise` | Le daemon détecte le quota restant avant remise à zéro et lance des alvéoles avec l'agent du contributeur, sur son propre compte | L'humain reprend la main dès qu'il revient |
-| `abonnement` / `pourcentage` ou `heures` | Une part du temps d'agent est dédiée | Plafond déclaré et respecté localement |
-| `api_byok` | Clé API locale, avec un plafond en euros réparti selon le pledge | La clé ne quitte jamais la machine |
-| `gpu_local` | Modèles ouverts, sur une plage horaire | Alvéoles filtrées selon la capacité déclarée |
-| `don` | Argent donné à une ruche, via un prestataire de paiement | Seul flux où une commission est permise (§18.5) |
+| `abonnement` / `quota_inutilise` | The daemon detects the quota left before the reset and runs cells with the contributor's agent, on the contributor's own account | The human takes back control as soon as they return |
+| `abonnement` / `pourcentage` or `heures` | A share of agent time is dedicated | Declared cap, enforced locally |
+| `api_byok` | Local API key, with a cap in euros split according to the pledge | The key never leaves the machine |
+| `gpu_local` | Open models, during a time slot | Cells filtered according to the declared capacity |
+| `don` | Money given to a hive, through a payment provider | The only flow where a commission is allowed (§18.5) |
 
-### 11.2 Règles
+### 11.2 Rules
 
-- Le plugin DOIT faire respecter localement les plafonds du pledge. Le coordinateur n'a pas à leur faire confiance.
-- Le coordinateur NE DOIT JAMAIS demander, recevoir ou stocker un identifiant.
-- **Mode strict par fournisseur.** Le plugin embarque un profil par fournisseur d'IA, qui reflète ses conditions d'utilisation. Quand un usage n'est pas clairement permis, le mode strict le désactive par défaut (§20).
-- Aucune commission NE DOIT être prélevée sur une ressource d'abonnement.
+- The plugin MUST enforce the pledge caps locally. The coordinator does not have to trust them.
+- The coordinator MUST NEVER ask for, receive or store a credential.
+- **Strict mode per provider.** The plugin ships with one profile per AI provider, reflecting that provider's terms of use. When a use is not clearly allowed, strict mode disables it by default (§20).
+- A commission MUST NOT be taken on a subscription resource.
 
 ---
 
-## 12. Ordonnancement et phéromones
+## 12. Scheduling and pheromones
 
-À chaque demande de travail, le coordinateur choisit d'abord une branche, puis une alvéole dans cette branche.
+On each work request, the coordinator first picks a branch, then a cell within that branch.
 
-**Le choix de la branche** utilise un échantillonnage de Thompson :
+**Picking the branch** uses Thompson sampling:
 
 ```
-pour chaque branche b ouverte :
-    θ_b ~ Beta(α_b, β_b)        # α : alvéoles mises en miel, β : rejets et échecs, pondérés par le coût
+for each open branch b:
+    θ_b ~ Beta(α_b, β_b)        # α: cells turned to honey, β: rejections and failures, weighted by cost
     score_b = θ_b × w_orientation(b) × w_pool(b) × w_miel(b) × w_ratio(ruche)
-choisir la branche de score maximal
+pick the branch with the highest score
 ```
 
-**Le choix de l'alvéole** se fait dans la branche retenue, parmi les alvéoles libres, en commençant par les plus profondes.
+**Picking the cell** happens within the chosen branch, among open cells, starting with the deepest ones.
 
-Les règles suivantes s'appliquent :
+The following rules apply:
 
-- Les phéromones (α, β) s'évaporent de 5 % par heure *(paramètre)*. Une branche qui stagne s'éteint, une branche qui progresse attire.
-- **Plancher anti-famine.** Aucune branche ouverte ne reçoit moins de 5 % des attributions de sa ruche *(paramètre)*, quelles que soient l'orientation et les phéromones.
-- `w_miel` vaut 1 par défaut. Il augmente quand le porteur dépense du miel pour une branche (§18.1).
-- **Plafond d'orientation.** L'orientation, le pool et le miel dépensé, combinés, ne peuvent pas diriger plus de 70 % des abeilles d'une ruche vers une seule branche (§17).
-
----
-
-## 13. La mémoire de ruche
-
-- Chaque ruche a un **tableau noir** en ajout seul, organisé en trois types d'entrées : `decouverte`, `impasse` et `question`. Chaque entrée est signée et reliée à un résultat.
-- Un résultat rejeté ou abandonné DEVRAIT déclarer ses impasses. Personne ne refait deux fois une piste morte.
-- Les capsules (§4.3) sont compilées depuis le tableau noir. La compilation est elle-même une tâche d'IA, vérifiée en V2 par échantillonnage.
-- Le tableau noir est public, sauf pour une ruche privée de l'offre Entreprise.
+- Pheromones (α, β) evaporate by 5% per hour *(parameter)*. A branch that stalls fades out, a branch that progresses attracts.
+- **Anti-starvation floor.** No open branch receives less than 5% of its hive's assignments *(parameter)*, whatever the orientation and the pheromones.
+- `w_miel` is 1 by default. It increases when the hive owner spends honey on a branch (§18.1).
+- **Orientation cap.** Orientation, the pool and honey spent, combined, cannot direct more than 70% of a hive's bees to a single branch (§17).
 
 ---
 
-## 14. Gouvernance
+## 13. Hive memory
 
-### 14.1 Les rôles
+- Each hive has an append-only **board**, organized into three types of entries: `decouverte`, `impasse` and `question`. Each entry is signed and linked to a result.
+- A rejected or abandoned result SHOULD declare its dead ends. No one follows a dead lead twice.
+- Capsules (§4.3) are compiled from the board. The compilation is itself an AI task, verified in V2 by sampling.
+- The board is public, except for a private hive under the Enterprise offer.
 
-| Rôle | Qui | Mandat |
+---
+
+## 14. Governance
+
+### 14.1 Roles
+
+| Role | Who | Term |
 |---|---|---|
-| **Fondateur** | L'auteur du protocole | Permanent, avec des pouvoirs bornés |
-| **Conseil** | 7 sièges : le fondateur (siège permanent) et 6 élus | 1 an |
-| **Porteurs** | Les créateurs de ruches | Le temps de leur ruche |
-| **Contributeurs** | Tout détenteur d'une clé ayant produit du miel | — |
+| **Founder** | The author of the protocol | Permanent, with limited powers |
+| **Council** | 7 seats: the founder (permanent seat) and 6 elected members | 1 year |
+| **Hive owners** | The creators of hives | The lifetime of their hive |
+| **Contributors** | Anyone holding a key that has produced honey | — |
 
-### 14.2 Phase 1 : le pilote
+### 14.2 Phase 1: the pilot
 
-Elle dure 12 mois après le lancement public.
+It lasts 12 months after the public launch.
 
-- Le fondateur exerce seul les pouvoirs du conseil.
-- Chaque décision est publiée au registre (§14.6), avec sa raison.
-- La date de fin de la phase 1 est inscrite au registre dès le premier jour. Elle NE PEUT PAS être repoussée sans un vote des contributeurs à la majorité de 2/3 du poids électoral.
+- The founder alone exercises the powers of the council.
+- Each decision is published in the registry (§14.6), with its reason.
+- The end date of phase 1 is written in the registry from day one. It MUST NOT be pushed back without a contributor vote with a 2/3 majority of voting weight.
 
-### 14.3 Phase 2 : le conseil
+### 14.3 Phase 2: the council
 
-**L'élection.**
+**The election.**
 
-- Les 6 sièges élus sont renouvelés chaque année.
-- Le poids de vote d'un contributeur est la racine carrée du miel qu'il a gagné sur les 12 derniers mois.
-- Ce poids est plafonné à 1 % du poids total. Cela évite que les plus gros contributeurs capturent le conseil.
+- The 6 elected seats are renewed every year.
+- A contributor's voting weight is the square root of the honey they earned over the last 12 months.
+- This weight is capped at 1% of the total weight. This prevents the largest contributors from capturing the council.
 
-**Qui décide quoi.**
+**Who decides what.**
 
-| Décision | Qui décide |
+| Decision | Who decides |
 |---|---|
-| Modifier la charte | Le fondateur **et** 5 voix sur 7 au conseil |
-| Admettre une ruche (conformité) | Le conseil à la majorité simple, ou par délégation à un comité de revue |
-| Modifier un paramètre (*paramètre*) | Le conseil à la majorité simple |
-| Nouvelle version mineure de la spec | Le conseil à la majorité simple |
-| Nouvelle version majeure de la spec | Le conseil à 5/7, plus un vote des contributeurs à la majorité simple |
-| Allouer le pool fondateur | Le fondateur seul (§16) |
-| Orienter une branche | Le porteur, le fondateur ou le conseil (§17) |
-| Mettre une ruche en pause | Le porteur, le fondateur ou le conseil, avec publication immédiate de la raison |
+| Amend the charter | The founder **and** 5 votes out of 7 on the council |
+| Admit a hive (compliance) | The council by simple majority, or by delegation to a review committee |
+| Change a parameter (*parameter*) | The council by simple majority |
+| New minor version of the spec | The council by simple majority |
+| New major version of the spec | The council by 5/7, plus a contributor vote by simple majority |
+| Allocate the founder pool | The founder alone (§16) |
+| Orient a branch | The hive owner, the founder or the council (§17) |
+| Pause a hive | The hive owner, the founder or the council, with the reason published immediately |
 
-### 14.4 Le veto du fondateur
+### 14.4 The founder's veto
 
-- Le fondateur PEUT opposer un veto à toute décision du conseil, et à toute ruche, pour trois motifs seulement : violation de la charte, risque de sécurité, menace pour l'existence du réseau.
-- Chaque veto DOIT être publié avec son motif.
-- Le conseil PEUT lever un veto à 6 voix sur 7, c'est-à-dire tous les élus.
+- The founder MAY veto any council decision, and any hive, on three grounds only: violation of the charter, security risk, threat to the existence of the network.
+- Each veto MUST be published with its grounds.
+- The council MAY lift a veto with 6 votes out of 7, that is, all the elected members.
 
-### 14.5 La charte
+### 14.5 The charter
 
-- La charte (§15) ne change qu'avec l'accord du fondateur **et** une majorité de 5/7 au conseil.
-- Les articles 1 à 3 et l'article 9 sont **intangibles** : ils ne peuvent être que renforcés.
+- The charter (§15) only changes with the founder's agreement **and** a 5/7 majority on the council.
+- Articles 1 to 3 and article 9 are **untouchable**: they can only be strengthened.
 
-### 14.6 Le registre des décisions
+### 14.6 The decision registry
 
-- Toute décision de gouvernance est un objet signé `osp.decision/0.1` : auteur, type, cible, motif, date.
-- Elle est ajoutée à un journal en ajout seul, dont les hashes sont chaînés comme dans un journal de transparence.
-- Le registre est public, téléchargeable et vérifiable par n'importe qui.
-
----
-
-## 15. Charte de la ruche — v0.1
-
-1. **Le bien commun d'abord.** Une ruche DOIT servir un objectif légitime et bénéfique, et ne pas nuire à autrui.
-2. **Pas d'armes, pas de surveillance de masse, pas de manipulation.** Aucune ruche pour concevoir des armes, surveiller ou ficher des personnes, ni manipuler des opinions ou des comportements.
-3. **Les identifiants restent chez leur propriétaire.** Aucune ruche ne peut demander de transmettre un mot de passe, un jeton ou une clé.
-4. **Résultats ouverts par défaut.** Les résultats sont publiés sous licence ouverte, sauf pour une ruche privée de l'offre Entreprise, déclarée comme telle.
-5. **Traçabilité totale.** Chaque gramme de miel et chaque décision sont publics et vérifiables.
-6. **Respect des conditions d'utilisation.** Une ruche ne doit pas pousser les contributeurs à violer les conditions de leurs fournisseurs d'IA.
-7. **Pouvoir publié.** Le fondateur, le conseil et les porteurs publient leurs décisions et leurs raisons.
-8. **Vie privée.** Aucune ruche ne traite de données personnelles sans base légale. Les capsules ne contiennent pas de données personnelles non nécessaires.
-9. **Le Commun ne recule jamais.** La part du Commun dans les parts de puissance (§18.2) ne peut qu'augmenter. La puissance de calcul doit profiter, petit à petit, à toute l'humanité.
+- Every governance decision is a signed `osp.decision/0.1` object: author, type, target, grounds, date.
+- It is added to an append-only log whose hashes are chained, as in a transparency log.
+- The registry is public, downloadable and verifiable by anyone.
 
 ---
 
-## 16. Le pool fondateur
+## 15. Hive charter — v0.1
 
-- Chaque pledge PEUT réserver une part de sa répartition au pool fondateur. L'interface propose 8 % par défaut. Le contributeur choisit librement entre 0 et 100 %, et ce choix est toujours affiché clairement.
-- Le fondateur alloue le pool à n'importe quelle ruche **active et conforme à la charte**, y compris ses propres ruches. Ses propres ruches portent alors le label « Ruche du fondateur ».
-- Allouer le pool à une ruche augmente son poids `w_pool` dans l'ordonnancement (§12), dans la limite du plafond d'orientation.
-- **Plafond.** Le pool ne peut pas dépasser 15 % de la capacité totale du réseau sur une semaine glissante *(paramètre)*. Au-delà, l'excédent retourne aux ruches choisies par chaque contributeur.
-- **Transparence.** Un rapport mensuel public détaille les allocations du pool par ruche.
+1. **The common good first.** A hive MUST serve a legitimate and beneficial goal, and must not harm others.
+2. **No weapons, no mass surveillance, no manipulation.** No hive may design weapons, monitor or profile people, or manipulate opinions or behavior.
+3. **Credentials stay with their owner.** No hive may ask anyone to hand over a password, a token or a key.
+4. **Results open by default.** Results are published under an open license, except for a private hive under the Enterprise offer, declared as such.
+5. **Full traceability.** Every gram of honey and every decision is public and verifiable.
+6. **Respect for terms of use.** A hive must not push contributors to violate the terms of their AI providers.
+7. **Published power.** The founder, the council and the hive owners publish their decisions and their reasons.
+8. **Privacy.** No hive processes personal data without a legal basis. Capsules do not contain personal data that is not needed.
+9. **The Commons never retreats.** The Commons' share of the power shares (§18.2) can only increase. Compute power must benefit, step by step, all of humanity.
 
 ---
 
-## 17. Orientation des branches
+## 16. The founder pool
 
-L'orientation est le moyen, pour un humain, de dire à l'essaim : « c'est par là ».
+- Each pledge MAY set aside part of its split for the founder pool. The interface suggests 8% by default. The contributor freely chooses between 0 and 100%, and this choice is always clearly shown.
+- The founder allocates the pool to any hive that is **active and compliant with the charter**, including their own hives. Their own hives then carry the label "Founder's hive".
+- Allocating the pool to a hive increases its `w_pool` weight in scheduling (§12), within the orientation cap.
+- **Cap.** The pool cannot exceed 15% of the network's total capacity over a rolling week *(parameter)*. Beyond that, the excess goes back to the hives chosen by each contributor.
+- **Transparency.** A public monthly report details the pool's allocations by hive.
 
-| Qui | Où | Multiplicateur maximal |
+---
+
+## 17. Branch orientation
+
+Orientation is the way for a human to tell the swarm: "this way".
+
+| Who | Where | Maximum multiplier |
 |---|---|---|
-| Le porteur | Sa ruche | × 3 |
-| Le fondateur | Toute ruche active | × 3, cumulable avec le pool |
-| Le conseil | Toute ruche active | × 3 |
+| The hive owner | Their hive | × 3 |
+| The founder | Any active hive | × 3, combinable with the pool |
+| The council | Any active hive | × 3 |
 
-Les règles suivantes s'appliquent :
+The following rules apply:
 
-- Une orientation est un objet `osp.decision/0.1` de type `orientation`, publié au registre avec son motif.
-- Elle **expire après 72 heures** *(paramètre)*, sauf renouvellement. Une direction se maintient activement.
-- Le multiplicateur `w_orientation` d'une branche est le produit des orientations actives, plafonné à × 5.
-- Le plafond de 70 % et le plancher de 5 % du §12 s'appliquent toujours.
-- Un porteur PEUT refuser une orientation du fondateur sur sa ruche. Le refus est publié, et le fondateur garde alors le pool et le veto comme leviers.
+- An orientation is an `osp.decision/0.1` object of type `orientation`, published in the registry with its grounds.
+- It **expires after 72 hours** *(parameter)*, unless renewed. A direction has to be actively maintained.
+- A branch's `w_orientation` multiplier is the product of the active orientations, capped at × 5.
+- The 70% cap and the 5% floor of §12 always apply.
+- A hive owner MAY refuse an orientation from the founder on their hive. The refusal is published, and the founder then keeps the pool and the veto as levers.
 
 ---
 
-## 18. Économie : le miel, les parts, les caravelles
+## 18. Economy: honey, shares, caravels
 
-L'économie a trois étages, du plus liquide au plus permanent.
+The economy has three tiers, from the most liquid to the most permanent.
 
-| | Miel | Parts de puissance | Le Commun |
+| | Honey | Power shares | The Commons |
 |---|---|---|---|
-| **Nature** | Monnaie de travail | Droit permanent sur la flotte | Parts détenues par tous |
-| **Comment on l'obtient** | Par du travail vérifié | Le miel cristallise en parts | 30 % de chaque émission de parts |
-| **Se dépense ?** | Oui, et il est alors brûlé | Non, il se garde à vie | Non |
-| **Ce que ça donne** | De la priorité et des heures de calcul | Une fraction de la capacité des caravelles, chaque mois | Une allocation de calcul pour chaque humain inscrit |
+| **Nature** | Work currency | Permanent right to the fleet | Shares held by everyone |
+| **How you get it** | Through verified work | Honey crystallizes into shares | 30% of every share issuance |
+| **Can it be spent?** | Yes, and it is then burned | No, it is kept for life | No |
+| **What it gives** | Priority and compute hours | A fraction of the caravels' capacity, every month | A compute allocation for every registered human |
 
-### 18.1 Le miel, monnaie de travail
+### 18.1 Honey, the work currency
 
-**Principe : une preuve de travail utile.** Chaque gramme émis correspond à du travail vérifié. Le Bitcoin dépense de l'énergie sur des calculs qui ne servent qu'à sécuriser son registre. Le miel, lui, n'existe que si l'essaim a produit quelque chose de vrai.
+**Principle: a proof of useful work.** Each gram issued corresponds to verified work. Bitcoin spends energy on computations whose only use is to secure its ledger. Honey, on the other hand, only exists if the swarm has produced something true.
 
-**Émission.** Le miel NE PEUT être émis que selon le §10.1. Il n'y a pas de pré-minage, pas de réserve cachée et pas d'émission discrétionnaire, pour personne.
+**Issuance.** Honey MUST NOT be issued other than under §10.1. There is no pre-mining, no hidden reserve and no discretionary issuance, for anyone.
 
-**Dépense.** Le miel dépensé est brûlé. Il sert à deux choses :
+**Spending.** Spent honey is burned. It is used for two things:
 
-1. obtenir de la priorité dans l'essaim pour ses propres ruches ou branches, via un multiplicateur `w_miel` dans l'ordonnancement (§12), sous le même plafond de 70 % ;
-2. acheter des heures de calcul sur les caravelles (§18.3), au tarif public exprimé en grammes par unité de travail.
+1. getting priority in the swarm for your own hives or branches, through a `w_miel` multiplier in scheduling (§12), under the same 70% cap;
+2. buying compute hours on the caravels (§18.3), at the public rate expressed in grams per work unit.
 
-**Limite.** Le miel n'achète jamais le quota d'abonnement d'un contributeur en particulier. L'essaim reste volontaire : dépenser du miel déplace la priorité, sans réquisitionner personne.
+**Limit.** Honey never buys any particular contributor's subscription quota. The swarm stays voluntary: spending honey shifts priority, without requisitioning anyone.
 
-**Indexation.** Le tarif est exprimé en **unités de travail** de référence (UT), c'est-à-dire un lot étalon de tâches V0, et non en euros. Au lancement, 1 g vaut 1 UT *(paramètre)*.
+**Indexing.** The rate is expressed in reference **work units** (WU), that is, a standard batch of V0 tasks, and not in euros. At launch, 1 g is worth 1 WU *(parameter)*.
 
 **Phases.**
 
-| Phase | Forme | Échange contre de l'argent | Condition pour y passer |
+| Phase | Form | Exchange for money | Condition to move to it |
 |---|---|---|---|
-| **1. Lancement** | Soldes inscrits dans le registre signé | Interdit | — |
-| **2. Ancrage** | Le hash du registre est publié sur une blockchain publique. Les soldes deviennent vérifiables par tous, sous forme de jetons non transférables. | Interdit | Décision du conseil |
-| **3. Option** | Jeton transférable émis par la fondation | Possible | Conformité au règlement MiCA (livre blanc, prestataire agréé), 5 voix sur 7 au conseil, vote des contributeurs. Et seulement si le calcul racheté vient des caravelles et d'API payées, jamais des abonnements. |
+| **1. Launch** | Balances written in the signed registry | Forbidden | — |
+| **2. Anchoring** | The registry hash is published on a public blockchain. Balances become verifiable by everyone, as non-transferable tokens. | Forbidden | Council decision |
+| **3. Option** | Transferable token issued by the Foundation | Possible | Compliance with the MiCA regulation (white paper, licensed provider), 5 votes out of 7 on the council, contributor vote. And only if the compute bought back comes from the caravels and from paid APIs, never from subscriptions. |
 
-Pourquoi avancer par phases ? Un jeton échangeable dès le départ aurait trois effets : il attirerait la spéculation avant la recherche, il ferait entrer le projet dans le champ du règlement européen MiCA, et il transformerait indirectement le quota d'abonnement des contributeurs en argent, ce qui viole les conditions des fournisseurs.
+Why move in phases? A token tradable from the start would have three effects: it would attract speculation before research, it would bring the project within the scope of the European MiCA regulation, and it would indirectly turn contributors' subscription quota into money, which violates the providers' terms.
 
-### 18.2 Les parts de puissance
+### 18.2 Power shares
 
-Une part de puissance est un droit **permanent** sur une fraction de la capacité de la flotte. C'est l'équivalent d'une action, payée en puissance de calcul plutôt qu'en argent.
+A power share is a **permanent** right to a fraction of the fleet's capacity. It is the equivalent of a stock share, paid in compute power rather than in money.
 
-**La cristallisation.**
+**Crystallization.**
 
-- À chaque gain de miel, 10 % cristallisent immédiatement en parts, à raison d'une part par gramme *(paramètres)*. Les 90 % restants restent du miel dépensable.
-- Le miel qui dort cristallise aussi : chaque année, 10 % du solde non dépensé se change en parts *(paramètre)*. Le miel qu'on garde ne se perd pas, il devient permanent.
+- With each honey gain, 10% crystallizes immediately into shares, at one share per gram *(parameters)*. The remaining 90% stays as spendable honey.
+- Idle honey crystallizes too: each year, 10% of the unspent balance turns into shares *(parameter)*. Honey you keep is not lost, it becomes permanent.
 
-**Le Commun.**
+**The Commons.**
 
-- Pour chaque part émise au profit d'un contributeur, 3/7 de part sont émises au profit du Commun. Le Commun détient ainsi en permanence 30 % de toutes les parts.
-- Cette proportion ne peut qu'augmenter (charte, article 9).
-- La capacité du Commun est répartie à parts égales entre tous les humains inscrits. C'est une **allocation cognitive universelle**, qui grandit avec la flotte.
-- Cette répartition exige une preuve de personne unique (prévue en v0.2). D'ici là, la capacité du Commun va aux ruches d'intérêt public choisies par le conseil.
+- For each share issued to a contributor, 3/7 of a share is issued to the Commons. The Commons thus permanently holds 30% of all shares.
+- This proportion can only increase (charter, article 9).
+- The Commons' capacity is split equally among all registered humans. It is a **universal cognitive allowance**, which grows with the fleet.
+- This split requires a proof of unique personhood (planned for v0.2). Until then, the Commons' capacity goes to public-interest hives chosen by the council.
 
-**L'allocation fondateur.**
+**The founder allocation.**
 
-- Le fondateur reçoit 2 % des parts émises pendant les 4 premières années.
-- Ces 2 % sont prélevés sur la part des contributeurs, jamais sur celle du Commun.
-- Le taux est fixé à la création, ne peut pas être modifié rétroactivement et est inscrit au registre.
-- Ces parts obéissent aux mêmes règles que toutes les autres.
+- The founder receives 2% of the shares issued during the first 4 years.
+- These 2% are taken from the contributors' portion, never from the Commons' portion.
+- The rate is set at creation, cannot be changed retroactively and is written in the registry.
+- These shares follow the same rules as all the others.
 
-**Les droits d'une part.**
+**The rights of a share.**
 
-- Une fraction de la capacité mensuelle de la flotte, proportionnelle au nombre de parts, utilisable par ses agents et ses ruches.
-- La capacité non utilisée dans le mois retourne au Commun : rien ne se perd.
-- Une voix à l'**Assemblée des parts**, qui élit une partie du conseil d'administration de la fondation (§18.3).
+- A fraction of the fleet's monthly capacity, proportional to the number of shares, usable by your agents and your hives.
+- Capacity not used within the month goes back to the Commons: nothing is lost.
+- A vote in the **Shares Assembly**, which elects part of the Foundation's board of directors (§18.3).
 
-**Les limites.**
+**The limits.**
 
-- Une part NE DOIT PAS être vendue, louée ni transférée.
-- Elle ne verse aucun dividende en argent.
-- Ces deux règles la rapprochent d'un droit d'usage plutôt que d'un instrument financier. Sa qualification juridique reste à valider (§22).
+- A share MUST NOT be sold, rented or transferred.
+- It pays no cash dividend.
+- These two rules make it closer to a right of use than to a financial instrument. Its legal classification still has to be validated (§22).
 
-**La répartition de la capacité d'une caravelle.**
+**How a caravel's capacity is split.**
 
-| Destinataire | Part de la capacité |
+| Recipient | Share of capacity |
 |---|---|
-| Communauté hôte | `h`, fixée à l'installation : au moins 10 %, et 50 % ou plus pour une caravelle cofinancée |
-| Détenteurs de parts, dont le Commun | 75 % du reste |
-| Ruches du réseau, via l'ordonnancement (§12) | 25 % du reste |
+| Host community | `h`, set at installation: at least 10%, and 50% or more for a co-funded caravel |
+| Share holders, including the Commons | 75% of the rest |
+| Network hives, through scheduling (§12) | 25% of the rest |
 
-Les pourcentages sont des *(paramètres)*.
+The percentages are *(parameters)*.
 
-### 18.3 La Fondation et les caravelles
+### 18.3 The Foundation and the caravels
 
-**Mission.** Mettre de la puissance de calcul décentralisée partout où les gens le souhaitent, et acheter, installer et entretenir des infrastructures souveraines pour le monde entier.
+**Mission.** Put decentralized compute power wherever people want it, and buy, install and maintain sovereign infrastructure for the whole world.
 
-**Les caravelles.** Une caravelle est un nœud de calcul physique : serveurs GPU, modèles ouverts, stockage. Elle appartient à la fondation, ou est copossédée avec une communauté hôte (école, bibliothèque, université, ville, coopérative, pays). Elle rejoint la flotte via OSP.
+**The caravels.** A caravel is a physical compute node: GPU servers, open models, storage. It belongs to the Foundation, or is co-owned with a host community (school, library, university, city, cooperative, country). It joins the fleet through OSP.
 
-**Les règles de souveraineté.**
+**The sovereignty rules.**
 
-- La communauté hôte fixe sa part réservée `h` à l'installation.
-- Les données locales restent locales.
-- La communauté peut déconnecter sa caravelle du réseau à tout moment.
-- Une caravelle ne fait tourner que des logiciels libres et des modèles ouverts, sans dépendance à un fournisseur unique.
+- The host community sets its reserved share `h` at installation.
+- Local data stays local.
+- The community can disconnect its caravel from the network at any time.
+- A caravel only runs free software and open models, with no dependency on a single vendor.
 
-**Les terres et les sites.** La fondation PEUT acquérir des terrains et des bâtiments pour y installer des caravelles : énergie, refroidissement, connectivité. Ces sites sont détenus pour la mission, ne peuvent pas être revendus pour un profit privé, et sont inscrits au registre.
+**Land and sites.** The Foundation MAY acquire land and buildings to install caravels: energy, cooling, connectivity. These sites are held for the mission, cannot be resold for private profit, and are written in the registry.
 
-**L'accès direct.** Chaque humain inscrit accède à sa part du Commun directement : sans intermédiaire commercial et sans filtrage arbitraire. Les seules limites sont la loi et la charte (§15), et chacune d'elles est publiée.
+**Direct access.** Every registered human accesses their share of the Commons directly: without a commercial intermediary and without arbitrary filtering. The only limits are the law and the charter (§15), and each of them is published.
 
-**Les équipages.** Ce sont des opérateurs locaux. La fondation les rémunère en euros, et ils gagnent aussi du miel.
+**The crews.** They are local operators. The Foundation pays them in euros, and they also earn honey.
 
-**Les laboratoires et les ateliers de la Fondation.** Le calcul n'est qu'une première étape. La fondation PEUT aussi créer des infrastructures physiques.
+**The Foundation's labs and workshops.** Compute is only a first step. The Foundation MAY also create physical infrastructure.
 
-- **Des laboratoires régulés**, financés par des dons, des États ou d'autres fondations : laboratoires humides (biologie, chimie) et laboratoires de physique et de matériaux. Ils font tourner les expériences proposées par la communauté et conçues avec l'essaim.
-- Ces laboratoires sont **supervisés par de vrais scientifiques et par les autorités compétentes**, avec des comités d'éthique et des règles strictes de biosécurité. Aucune expérience ne démarre sans leur accord, et la charte s'applique (article 2 : ni armes, ni recherche à double usage dangereuse).
-- **Des ateliers et des usines à prix coûtant** fabriquent du matériel conçu par la communauté, avec l'aide des IA et des robots de l'essaim. Ils le vendent à prix coûtant, pour augmenter le pouvoir d'achat de tous.
-- Les résultats et les plans sont ouverts par défaut (article 4), sauf quand la sécurité exige le contraire. Ce cas est alors publié et motivé.
+- **Regulated labs**, funded by donations, governments or other foundations: wet labs (biology, chemistry) and physics and materials labs. They run experiments proposed by the community and designed with the swarm.
+- These labs are **supervised by real scientists and by the competent authorities**, with ethics committees and strict biosafety rules. No experiment starts without their approval, and the charter applies (article 2: no weapons, no dangerous dual-use research).
+- **At-cost workshops and factories** make hardware designed by the community, with the help of the swarm's AIs and robots. They sell it at cost, to increase everyone's purchasing power.
+- Results and designs are open by default (article 4), unless safety requires otherwise. That case is then published, with its reasons.
 
-**Le financement.**
+**Funding.**
 
-- Dons, mécénat et subventions publiques.
-- Cofinancement par les communautés hôtes.
-- Au moins 50 % des commissions de la SAS *(paramètre)*.
-- Le miel brûlé ne rapporte pas d'argent : la fondation ne vend pas son calcul contre du miel, elle le distribue.
+- Donations, patronage and public grants.
+- Co-funding by host communities.
+- At least 50% of the SAS's commissions *(parameter)*.
+- Burned honey brings in no money: the Foundation does not sell its compute for honey, it distributes it.
 
-**La gouvernance.**
+**Governance.**
 
-- Le conseil d'administration de la fondation réunit : le fondateur (siège permanent), des représentants élus du conseil OSP, des représentants élus de l'Assemblée des parts, et des représentants des communautés hôtes.
-- Les comptes sont audités et un rapport public est publié chaque année.
+- The Foundation's board of directors brings together: the founder (permanent seat), elected representatives of the OSP council, elected representatives of the Shares Assembly, and representatives of the host communities.
+- The accounts are audited and a public report is published every year.
 
-**La forme juridique.** En France, la voie la plus simple est de démarrer en **fonds de dotation** : il se crée par simple déclaration en préfecture, avec une dotation initiale minimale de l'ordre de 15 000 € (à vérifier). Il pourra évoluer vers une fondation reconnue d'utilité publique quand sa dotation le permettra. Des entités sœurs à l'étranger viendront plus tard.
+**Legal form.** In France, the simplest path is to start as a **fonds de dotation** (endowment fund): it is created by a simple declaration at the prefecture, with a minimum initial endowment of around €15,000 (to be checked). It can later become a foundation recognized as being of public utility (fondation reconnue d'utilité publique) once its endowment allows. Sister entities abroad will come later.
 
-### 18.4 La croissance : parrainage, communautés, pionniers, boîte à problèmes
+### 18.4 Growth: referral, communities, pioneers, problem box
 
-Le réseau doit se répandre comme une traînée de poudre, sans jamais devenir une pyramide. Quatre mécanismes y contribuent.
+The network must spread like wildfire, without ever becoming a pyramid. Four mechanisms help with this.
 
-**Le parrainage.**
+**Referral.**
 
-- Chaque contributeur a un lien de parrainage.
-- Pendant les 12 mois qui suivent l'arrivée d'un filleul, le parrain reçoit un bonus égal à 5 % du miel que ce filleul gagne *(paramètres)*.
-- Ce bonus est **émis en plus** : il n'est jamais prélevé sur le filleul.
-- Le parrainage est à **un seul niveau**. Le parrain d'un parrain ne reçoit rien. Ce choix est **intangible** : un système à plusieurs niveaux serait une vente pyramidale, interdite en droit français.
-- Comme le bonus ne naît que de miel *vérifié*, de faux filleuls ne rapportent rien.
+- Each contributor has a referral link.
+- For the 12 months after a referee joins, the referrer receives a bonus equal to 5% of the honey that referee earns *(parameters)*.
+- This bonus is **issued on top**: it is never taken from the referee.
+- Referral has **a single level**. A referrer's referrer receives nothing. This choice is **untouchable**: a multi-level system would be a pyramid scheme, which is illegal under French law.
+- Since the bonus only comes from *verified* honey, fake referees bring in nothing.
 
-**Les codes de communauté.**
+**Community codes.**
 
-- Une communauté (association, école, ville, entreprise, serveur Discord…) crée un **essaim communautaire**, avec son propre code. Les membres le rejoignent avec ce code.
-- Une communauté PEUT proposer ses ruches en voie rapide, et ses membres PEUVENT les orienter (§17), dans les mêmes limites que les porteurs.
-- **Le Commun local** : chaque membre PEUT reverser, en opt-in, une part de ses parts nouvellement cristallisées (5 % suggérés) à des parts collectives de sa communauté. Ces parts financent ses propres projets. C'est la subsidiarité appliquée.
+- A community (association, school, city, company, Discord server…) creates a **community swarm**, with its own code. Members join it with this code.
+- A community MAY put its hives on a fast track, and its members MAY orient them (§17), within the same limits as hive owners.
+- **The local Commons**: each member MAY, on an opt-in basis, give part of their newly crystallized shares (5% suggested) to collective shares of their community. These shares fund the community's own projects. This is subsidiarity in practice.
 
-**Les pionniers.**
+**Pioneers.**
 
-- Les parts cristallisées pendant les 6 premiers mois après le lancement public sont multipliées par 2 *(paramètre)*.
-- Le multiplicateur décroît ensuite de façon linéaire jusqu'à 1 au 24e mois.
-- Le Commun reçoit toujours ses 3/7 sur les parts *après* multiplication : sa part de 30 % ne baisse jamais (charte, article 9).
-- C'est la gratitude du réseau envers ceux qui s'engagent dès maintenant, inscrite dans la règle dès le premier jour.
+- Shares crystallized during the first 6 months after the public launch are multiplied by 2 *(parameter)*.
+- The multiplier then decreases linearly down to 1 at month 24.
+- The Commons always receives its 3/7 on shares *after* multiplication: its 30% share never goes down (charter, article 9).
+- This is the network's gratitude to those who commit now, written into the rules from day one.
 
-**La boîte à problèmes.**
+**The problem box.**
 
-- Toute personne inscrite PEUT soumettre gratuitement un problème qu'elle voudrait voir l'essaim résoudre.
-- Les contributeurs le soutiennent avec leurs soutiens (§10.1).
-- Chaque mois, les problèmes les plus soutenus et conformes à la charte deviennent des ruches, financées par la capacité du Commun.
-- Ainsi, n'importe qui, même sans calcul à donner, peut mettre le monde au travail sur ce qui compte pour lui.
+- Any registered person MAY submit, for free, a problem they would like to see the swarm solve.
+- Contributors back it with their supports (§10.1).
+- Each month, the most supported problems that comply with the charter become hives, funded by the Commons' capacity.
+- This way, anyone, even with no compute to give, can put the world to work on what matters to them.
 
-### 18.5 Revenus *(informatif)*
+### 18.5 Revenue *(informative)*
 
-| Source | Mécanisme | Statut v0.1 |
+| Source | Mechanism | v0.1 status |
 |---|---|---|
-| Dons et primes | Commission de 5 à 8 % sur les flux monétaires vers les ruches | Prévue |
-| Kickswarm Entreprise | Ruches privées où une entreprise coordonne **ses propres** licences d'IA | Prévue |
-| Abonnements des contributeurs | **Aucune commission, jamais** | Interdit par §11.2 |
-| Reversement à la fondation | Au moins 50 % des commissions | Prévu |
+| Donations and bounties | 5 to 8% commission on money flows to hives | Planned |
+| Kickswarm Enterprise | Private hives where a company coordinates **its own** AI licenses | Planned |
+| Contributor subscriptions | **No commission, ever** | Forbidden by §11.2 |
+| Payment to the Foundation | At least 50% of commissions | Planned |
 
-### 18.6 Structure *(informatif)*
+### 18.6 Structure *(informative)*
 
-- **La Fondation**, à but non lucratif, détient la spec, la marque, le registre, la flotte et le Commun.
-- **La SAS Kickswarm** opère le coordinateur et l'offre Entreprise sous licence de la fondation, et lui reverse au moins 50 % de ses commissions. Le fondateur peut y être salarié et actionnaire. C'est là que se trouve son intérêt financier, séparé de la mission.
-- Ce montage est à valider avec un juriste.
+- **The Foundation**, a non-profit, holds the spec, the trademark, the registry, the fleet and the Commons.
+- **Kickswarm SAS** operates the coordinator and the Enterprise offer under license from the Foundation, and pays it at least 50% of its commissions. The founder can be an employee and a shareholder there. That is where the founder's financial interest lies, separate from the mission.
+- This structure has to be validated with a lawyer.
 
 ---
 
-## 19. Sécurité et abus
+## 19. Security and abuse
 
-Les calculs de probabilité et les défenses contre l'injection sont détaillés dans [docs/securite.md](../docs/securite.md).
+Probability calculations and defenses against injection are detailed in [docs/security.md](../docs/security.md).
 
-| Menace | Défense |
+| Threat | Defense |
 |---|---|
-| **Sybil** (faux comptes en masse) | Réputation de départ basse, V0 seulement pour les nouveaux, poids de vote en racine carrée et plafonné. Preuve de personne unique envisagée en v0.2. |
-| **Collusion** | Tirage au sort vérifiable, diversité des modèles, pièges, audit aléatoire. |
-| **Injection de prompt** dans les capsules | Capsules signées, traitées comme des données, sandbox sans accès personnel, liste blanche réseau. |
-| **Exfiltration** depuis la machine du contributeur | La sandbox n'a pas accès aux fichiers personnels. Le transcript ne sort que sur demande d'un jury. |
-| **Ruche malveillante** | Revue de conformité avant activation, pause d'urgence, veto, signalement par les contributeurs. |
-| **Coordinateur compromis** | Registre chaîné et vérifiable par tous, signatures de bout en bout, fédération en v0.3. |
-| **Résultat dangereux** (par exemple une faille découverte) | Divulgation responsable obligatoire, avec embargo géré par le porteur. |
-| **Accaparement** du miel ou des parts | Le miel n'est émis que par du travail vérifié, il est brûlé à la dépense et non échangeable en phases 1 et 2. Les parts sont non transférables, le Commun garde au moins 30 % et le poids de vote est en racine carrée et plafonné. |
-| **Faux humains** pour capter l'allocation du Commun | Pas d'allocation individuelle sans preuve de personne unique (v0.2). |
+| **Sybil** (fake accounts in bulk) | Low starting reputation, V0 only for newcomers, square-root and capped voting weight. Proof of unique personhood considered for v0.2. |
+| **Collusion** | Verifiable random draw, model diversity, trap cells, random audit. |
+| **Prompt injection** in capsules | Signed capsules, treated as data, sandbox with no personal access, network allowlist. |
+| **Exfiltration** from the contributor's machine | The sandbox has no access to personal files. The transcript only leaves at a jury's request. |
+| **Malicious hive** | Compliance review before activation, emergency pause, veto, reporting by contributors. |
+| **Compromised coordinator** | Chained registry verifiable by everyone, end-to-end signatures, federation in v0.3. |
+| **Dangerous result** (for example, a discovered vulnerability) | Mandatory responsible disclosure, with an embargo managed by the hive owner. |
+| **Hoarding** of honey or shares | Honey is only issued for verified work, it is burned when spent and cannot be exchanged in phases 1 and 2. Shares are non-transferable, the Commons keeps at least 30% and voting weight is square-root and capped. |
+| **Fake humans** to capture the Commons allocation | No individual allocation without proof of unique personhood (v0.2). |
 
 ---
 
-## 20. Conformité aux conditions des fournisseurs
+## 20. Compliance with provider terms
 
-- Le plugin maintient un profil par fournisseur d'IA. Ce profil liste les modes de contribution autorisés par défaut.
-- **Par défaut, le mode strict n'autorise que :**
-  - les modèles locaux ;
-  - les clés API du contributeur (BYOK) ;
-  - l'usage de l'agent du contributeur, par lui, sur son compte, pour des ruches d'intérêt public, sans revente.
-- Tout mode supplémentaire (par exemple le quota inutilisé en mode daemon) est activé fournisseur par fournisseur, après lecture de ses conditions. Le contributeur en est informé.
-- Kickswarm DEVRAIT chercher des partenariats officiels avec les fournisseurs.
+- The plugin keeps one profile per AI provider. This profile lists the contribution modes allowed by default.
+- **By default, strict mode only allows:**
+  - local models;
+  - the contributor's own API keys (BYOK);
+  - use of the contributor's agent, by the contributor, on their own account, for public-interest hives, with no resale.
+- Any additional mode (for example, unused quota in daemon mode) is enabled provider by provider, after reading that provider's terms. The contributor is informed.
+- Kickswarm SHOULD seek official partnerships with providers.
 
 ---
 
 ## 21. Interfaces
 
-### 21.1 Outils MCP exposés par le plugin
+### 21.1 MCP tools exposed by the plugin
 
-| Outil | Rôle |
+| Tool | Role |
 |---|---|
-| `swarm_join(ruche, pledge?)` | Rejoindre une ruche, éventuellement avec un pledge |
-| `swarm_next()` | Recevoir la prochaine alvéole signée, avec sa caste |
-| `swarm_submit(resultat)` | Soumettre un résultat ou un verdict signé |
-| `swarm_status()` | Voir ses abeilles, son quota restant, son miel, sa réputation |
-| `swarm_leave()` | Rappeler ses abeilles |
-| `hive_board(ruche, requete)` | Lire le tableau noir |
+| `swarm_join(ruche, pledge?)` | Join a hive, optionally with a pledge |
+| `swarm_next()` | Receive the next signed cell, with its caste |
+| `swarm_submit(resultat)` | Submit a signed result or verdict |
+| `swarm_status()` | See your bees, your remaining quota, your honey, your reputation |
+| `swarm_leave()` | Call back your bees |
+| `hive_board(ruche, requete)` | Read the board |
 
-### 21.2 API HTTP du coordinateur (v0.1)
+### 21.2 Coordinator HTTP API (v0.1)
 
 ```
-POST /v0/hives                     proposer une ruche
-GET  /v0/hives/{slug}              état de la ruche et du rayon
-POST /v0/work/claim                demander une alvéole (signé)
-POST /v0/work/submit               soumettre un résultat ou un verdict (signé)
-GET  /v0/board/{slug}              tableau noir
-GET  /v0/registry?since=…          registre public (décisions et miel)
-POST /v0/decisions                 publier une décision de gouvernance (signée)
+POST /v0/hives                     propose a hive
+GET  /v0/hives/{slug}              state of the hive and its comb
+POST /v0/work/claim                request a cell (signed)
+POST /v0/work/submit               submit a result or a verdict (signed)
+GET  /v0/board/{slug}              board
+GET  /v0/registry?since=…          public registry (decisions and honey)
+POST /v0/decisions                 publish a governance decision (signed)
 ```
 
-Toute requête qui modifie l'état DOIT être signée par la clé du contributeur.
+Every request that changes state MUST be signed with the contributor's key.
 
 ---
 
-## 22. Hors périmètre de v0.1 et questions ouvertes
+## 22. Out of scope for v0.1 and open questions
 
-**Hors périmètre :**
+**Out of scope:**
 
-- la fédération de coordinateurs ;
-- la preuve de personne unique ;
-- l'entraînement distribué de modèles ;
-- les paiements entre contributeurs.
+- coordinator federation;
+- proof of unique personhood;
+- distributed model training;
+- payments between contributors.
 
-**Questions ouvertes :**
+**Open questions:**
 
-1. Comment estimer le coût d'une alvéole avant de l'exécuter, de façon fiable ?
-2. Faut-il un taux de pièges variable selon la réputation de la gardienne ?
-3. Quelle grille de notation commune pour les découpages (§6.2) ?
-4. Comment gérer les ruches dont les résultats ont une valeur commerciale (licences, brevets) ?
-5. Quel partenariat proposer aux fournisseurs d'IA pour le quota inutilisé ?
-6. Quelle est la qualification juridique exacte du miel et des parts de puissance au regard de MiCA et du droit financier français ? Il faut un avis d'avocat avant le lancement.
-7. Les parts de puissance se transmettent-elles par succession ?
-8. Quel taux de cristallisation garde le miel assez liquide tout en faisant grandir les parts ?
-9. Comment fixer le tarif en UT des heures de caravelle quand le matériel évolue ?
+1. How can the cost of a cell be estimated reliably before running it?
+2. Should the trap cell rate vary with the guard's reputation?
+3. What common scoring grid should be used for splits (§6.2)?
+4. How should hives whose results have commercial value (licenses, patents) be handled?
+5. What partnership should be offered to AI providers for unused quota?
+6. What is the exact legal classification of honey and power shares under MiCA and French financial law? A lawyer's opinion is needed before launch.
+7. Can power shares be passed on through inheritance?
+8. What crystallization rate keeps honey liquid enough while still growing the shares?
+9. How should the WU rate for caravel hours be set as hardware evolves?
 
 ---
 
-## 23. Feuille de route de la spec
+## 23. Spec roadmap
 
-| Version | Contenu |
+| Version | Content |
 |---|---|
-| **v0.1** (ce document) | Objets, cycle de vie, castes, cinq verrous, miel et parts, gouvernance, charte, pool, orientation, fondation et caravelles |
-| **v0.2** | Retours de la première ruche phare, grille de découpage, preuve de personne unique (qui ouvre l'allocation du Commun), estimation des coûts, ancrage du registre sur une blockchain publique (phase 2 du miel) |
-| **v0.3** | Fédération de coordinateurs, registre répliqué, première caravelle |
-| **v1.0** | Spec stable, après 6 mois de production et un vote du conseil |
+| **v0.1** (this document) | Objects, lifecycle, castes, five locks, honey and shares, governance, charter, pool, orientation, Foundation and caravels |
+| **v0.2** | Feedback from the first flagship hive, splitting grid, proof of unique personhood (which opens the Commons allocation), cost estimation, anchoring the registry on a public blockchain (honey phase 2) |
+| **v0.3** | Coordinator federation, replicated registry, first caravel |
+| **v1.0** | Stable spec, after 6 months in production and a council vote |

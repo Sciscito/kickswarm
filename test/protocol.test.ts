@@ -6,18 +6,18 @@ import { canTransition, transition } from '../src/coordinator/lifecycle.js';
 import { Registry, verifyRegistry } from '../src/coordinator/registry.js';
 import { chooseCandidate, sampleBeta, seededRng } from '../src/coordinator/scheduler.js';
 
-test('JSON canonique : clés triées, imbrication, undefined omis', () => {
+test('canonical JSON: sorted keys, nesting, undefined omitted', () => {
   assert.equal(canonicalize({ b: 1, a: { d: [1, 'x'], c: null }, z: undefined }), '{"a":{"c":null,"d":[1,"x"]},"b":1}');
   assert.throws(() => canonicalize({ x: Number.NaN }));
 });
 
-test('hash : identique quel que soit l’ordre des clés, et sans la signature', () => {
+test('hash: identical whatever the key order, and without the signature', () => {
   assert.equal(hashOf({ a: 1, b: 2 }), hashOf({ b: 2, a: 1 }));
   assert.equal(hashOf({ a: 1, sig: 'xyz' }), hashOf({ a: 1 }));
   assert.match(hashOf({ a: 1 }), /^sha256:[0-9a-f]{64}$/);
 });
 
-test('signatures : identité hybride post-quantique par défaut ; valide, altérée, mauvais signataire', () => {
+test('signatures: hybrid post-quantum identity by default; valid, altered, wrong signer', () => {
   const alice = generateIdentity();
   const bob = generateIdentity();
   assert.match(alice.id, /^pq1:[A-Za-z0-9_-]{43}$/);
@@ -28,7 +28,7 @@ test('signatures : identité hybride post-quantique par défaut ; valide, altér
   assert.equal(verifyObject({ type: 'test' }, alice.id), false);
 });
 
-test('cycle de vie : transitions permises et interdites (§5)', () => {
+test('lifecycle: allowed and forbidden transitions (§5)', () => {
   assert.equal(canTransition('libre', 'reservee'), true);
   assert.equal(canTransition('en_verification', 'miel'), true);
   assert.equal(canTransition('miel', 'libre'), false);
@@ -36,10 +36,10 @@ test('cycle de vie : transitions permises et interdites (§5)', () => {
   const rec = { state: 'rejetee' as const } as { state: Parameters<typeof transition>[0]['state'] };
   transition(rec, 'libre');
   assert.equal(rec.state, 'libre');
-  assert.throws(() => transition(rec, 'miel'), /Transition interdite/);
+  assert.throws(() => transition(rec, 'miel'), /Forbidden transition/);
 });
 
-test('registre : chaînage vérifiable, toute altération détectée', () => {
+test('registry: verifiable hash chain, any alteration detected', () => {
   const reg = new Registry();
   reg.append('a', { x: 1 });
   reg.append('b', { y: 2 });
@@ -50,7 +50,7 @@ test('registre : chaînage vérifiable, toute altération détectée', () => {
   assert.equal(verifyRegistry(falsifie).ok, false);
 });
 
-test('ordonnancement : Beta dans [0,1], orientation et profondeur respectées', () => {
+test('scheduling: Beta in [0,1], orientation and depth respected', () => {
   const rng = seededRng(42);
   for (let i = 0; i < 200; i++) {
     const x = sampleBeta(1.5, 3, rng);
@@ -70,8 +70,8 @@ test('ordonnancement : Beta dans [0,1], orientation et profondeur respectées', 
       rng,
     })!;
     compte[c.chemin.split('.')[0]!]!++;
-    if (c.chemin.startsWith('1')) assert.equal(c.chemin, '1.1', 'la plus profonde de la branche d’abord');
+    if (c.chemin.startsWith('1')) assert.equal(c.chemin, '1.1', 'the deepest of the branch first');
   }
-  assert.ok(compte['2']! > compte['1']! * 2, `l’orientation ×5 doit dominer (${JSON.stringify(compte)})`);
-  assert.ok(compte['1']! > 0, 'le plancher anti-famine laisse vivre l’autre branche');
+  assert.ok(compte['2']! > compte['1']! * 2, `the ×5 orientation must dominate (${JSON.stringify(compte)})`);
+  assert.ok(compte['1']! > 0, 'the anti-starvation floor keeps the other branch alive');
 });

@@ -39,7 +39,7 @@ node dist/cli.js demo live
 
 Open **http://127.0.0.1:7777/hive**. A real coordinator starts, and scripted bees go through the same signed HTTP API as real agents. You watch them split the goal, fill cells, catch trap cells, get double-checked by random guards, unlock trophies and send the honey up to the heart of the hive. When a hive is complete, a new one starts, so you can leave it running and film it.
 
-To watch a **real AI** work on a hive, start the trial and open a Claude Code session in the folder it prepares (step by step, in French: [docs/essai.md](docs/essai.md)):
+To watch a **real AI** work on a hive, start the trial and open a Claude Code session in the folder it prepares (step by step: [docs/trial.md](docs/trial.md)):
 
 ```bash
 node dist/cli.js trial
@@ -161,9 +161,9 @@ The founding documents are in French for now.
 
 - [spec/OSP-v0.1.md](spec/OSP-v0.1.md): the protocol, economy, governance, charter and Foundation
 - [docs/whitepaper.md](docs/whitepaper.md): the white paper
-- [docs/securite.md](docs/securite.md): the mathematics of verification and the defenses against injection
-- [docs/lancement.md](docs/lancement.md): the launch plan, channels and contact pipeline
-- [docs/hebergement.md](docs/hebergement.md): where to host the coordinator for free
+- [docs/security.md](docs/security.md): the mathematics of verification and the defenses against injection
+- [docs/launch.md](docs/launch.md): the launch plan, channels and contact pipeline
+- [docs/hosting.md](docs/hosting.md): where to host the coordinator for free
 - [docs/film/film.html](docs/film/film.html) and [docs/visuels/](docs/visuels/): the launch film and the poster series
 
 ## Contributing

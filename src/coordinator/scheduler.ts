@@ -1,9 +1,9 @@
-// Ordonnancement (§12) : échantillonnage de Thompson par branche, pondéré par l'orientation,
-// avec un plancher anti-famine, puis l'alvéole libre la plus profonde de la branche.
+// Scheduling (§12): Thompson sampling per branch, weighted by the orientation,
+// with an anti-starvation floor, then the deepest free cell of the branch.
 
 export type Rng = () => number;
 
-/** Générateur déterministe (mulberry32), pour les tests et la démo. */
+/** Deterministic generator (mulberry32), for tests and the demo. */
 export function seededRng(seed: number): Rng {
   let a = seed >>> 0;
   return () => {
@@ -21,7 +21,7 @@ function gaussian(rng: Rng): number {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-/** Loi Gamma(k, 1) par la méthode de Marsaglia et Tsang. */
+/** Gamma(k, 1) distribution by the Marsaglia-Tsang method. */
 function sampleGamma(k: number, rng: Rng): number {
   if (k < 1) return sampleGamma(k + 1, rng) * Math.pow(Math.max(rng(), 1e-12), 1 / k);
   const d = k - 1 / 3;
@@ -45,7 +45,7 @@ export function sampleBeta(alpha: number, beta: number, rng: Rng): number {
   return x / (x + y);
 }
 
-/** Branche d'une alvéole : premier segment de son chemin (`0` pour le cœur). */
+/** Branch of a cell: first segment of its path (`0` for the heart). */
 export function brancheOf(chemin: string): string {
   return chemin.split('.')[0] ?? chemin;
 }

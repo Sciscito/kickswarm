@@ -48,7 +48,7 @@ node dist/cli.js demo live
 The verifier runs code sent by strangers, and the plugin runs on contributors' machines. Security issues are taken very seriously.
 
 - **Do not open a public issue for a vulnerability.** Report it privately to the maintainers. A dedicated security contact will be published before the public launch; until then, use GitHub's private vulnerability reporting on the repository.
-- Read [docs/securite.md](docs/securite.md) for the threat model, the mathematics of verification and the defenses against injection.
+- Read [docs/security.md](docs/security.md) for the threat model, the mathematics of verification and the defenses against injection.
 
 ## Ground rules
 

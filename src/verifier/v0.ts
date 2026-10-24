@@ -49,7 +49,7 @@ export interface MutationReport {
   tues: number;
   total: number;
   score: number;
-  /** Un mutant survivant, pour aider à renforcer les tests. */
+  /** A surviving mutant, to help strengthen the tests. */
   survivant?: string;
 }
 
@@ -64,9 +64,9 @@ export interface VerifReport {
 
 export interface VerifOptions {
   sandbox?: string;
-  /** Les tests cachés de l'alvéole, sortis du coffre du coordinateur. */
+  /** The cell's hidden tests, taken out of the coordinator's vault. */
   caches?: TestCase[];
-  /** Pour une ouvrière ou une gardienne, qui ne voient jamais les tests cachés : tout le reste seulement. */
+  /** For a worker or a guard, who never see the hidden tests: everything else only. */
   sansCaches?: boolean;
 }
 
@@ -245,7 +245,7 @@ export function validateProprietes(props: Propriete[] | undefined): void {
   }
 }
 
-/** Lève une erreur si le critère n'est pas un critère V0 exécutable par ce vérificateur. */
+/** Throws if the criterion is not a V0 criterion this verifier can run. */
 export function validateCritere(critere: CritereFini): void {
   if (!critere || critere.classe !== 'V0') throw new Error('The MVP only supports verification class V0');
   if (critere.timeout_ms !== undefined && !(critere.timeout_ms > 0 && critere.timeout_ms <= MAX_TIMEOUT_MS)) {
@@ -332,7 +332,7 @@ function runWasm(fichiers: Record<string, string>, input: string, timeoutMs: num
       workerData: { fichiers, input, runner: WASM_RUNNER, timeoutMs, memoireMo: WASM_MEMORY_MB, sortieMax: MAX_OUTPUT },
       // A safety net around the engine's own limits: the thread itself is bounded and killed if late.
       resourceLimits: { maxOldGenerationSizeMb: WASM_MEMORY_MB * 2 },
-      env: {},
+      // No env stripping here: the code under test runs inside QuickJS and never sees process.env.
     });
     const timer = setTimeout(() => finish({ stdout: '', stderr: '', timedOut: true }), timeoutMs + 3000);
     worker.once('message', (m: { stdout: string; stderr: string; timedOut: boolean }) => finish(m));
@@ -436,7 +436,7 @@ interface Suite {
   timeout: number;
 }
 
-/** Graine d'une propriété : dérivée du hash du livrable, donc impossible à viser à l'avance. */
+/** Seed of a property: derived from the deliverable's hash, so impossible to target in advance. */
 function seedFor(livrableHash: string, nom: string): number {
   return parseInt(sha256(`${livrableHash}:${nom}`).slice(7, 15), 16);
 }
@@ -526,7 +526,7 @@ async function pool<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): P
   return out;
 }
 
-/** Score de mutation d'une suite contre une implémentation : la part des mutants qu'elle détecte. */
+/** Mutation score of a suite against an implementation: the share of mutants it catches. */
 async function mutationScore(suite: Suite, implementation: Livrable, fichiers: string[] | undefined, opts: VerifOptions, version?: number): Promise<MutationReport> {
   const ms = mutants(implementation, { max: MAX_MUTANTS, fichiers, version });
   if (!ms.length) return { tues: 0, total: 0, score: 1 };
@@ -572,12 +572,12 @@ export async function verifierV0(critere: CritereFini, livrable: Livrable, opts:
 }
 
 /**
- * Force des tests d'une alvéole (§3.2) : la référence doit passer tous les tests, et les tests
- * doivent détecter au moins `scoreMin` de ses mutants. Sinon, les tests sont trop faibles pour valider quoi que ce soit.
+ * Strength of a cell's tests (§3.2): the reference must pass every test, and the tests
+ * must catch at least `scoreMin` of its mutants. Otherwise, the tests are too weak to validate anything.
  *
- * Une référence où le moteur ne trouve rien à muter ne permet pas de mesurer : elle est acceptée sans
- * mesure, comme une alvéole sans référence (que l'éclaireuse aurait pu fournir à la place), sauf si
- * la mesure est exigée (`exigerMesure`, quand les références sont obligatoires).
+ * A reference in which the engine finds nothing to mutate cannot be measured: it is accepted without
+ * measuring, like a cell with no reference (which the scout could have supplied instead), unless
+ * the measurement is required (`exigerMesure`, when references are mandatory).
  */
 export async function adequation(
   critere: CritereV0,
@@ -599,7 +599,7 @@ export async function adequation(
   return { ok, motif, tests: base.tests, duree_ms: Date.now() - started, sandbox: base.sandbox, mutation };
 }
 
-/** `tests-de-tests@1` : le livrable `tests.json` doit passer sur la vraie cible et tuer ses mutants. */
+/** `tests-de-tests@1`: the `tests.json` deliverable must pass on the real target and kill its mutants. */
 async function verifierTestsDeTests(critere: CritereTestsDeTests, livrable: Livrable, opts: VerifOptions): Promise<VerifReport> {
   const started = Date.now();
   const fail = (motif: string, extra: Partial<VerifReport> = {}): VerifReport => ({ ok: false, motif, tests: [], duree_ms: Date.now() - started, sandbox: 'none', ...extra });

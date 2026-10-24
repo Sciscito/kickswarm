@@ -21,7 +21,7 @@ import { join } from 'node:path';
 type Texte = { content: Array<{ type: string; text: string }>; isError?: boolean };
 const texte = (r: unknown) => (r as Texte).content.map((c) => c.text).join('\n');
 
-test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche avance', async () => {
+test('MCP plugin + HTTP API: an agent joins, splits, delivers, and the hive moves forward', async () => {
   const fondateur = generateIdentity();
   const coord = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0 }, rng: seededRng(3) });
   const http = createCoordinatorServer(coord);
@@ -33,16 +33,16 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
     await porteur.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'Mini-bibliothèque' }), RACINE);
     await porteur.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'Conforme à la charte'));
 
-    // Sécurité de l'API : signature falsifiée et rejeu refusés.
+    // API security: forged signature and replay refused.
     const req = makeRequete(fondateur, 'claim');
     const falsifiee = { ...req, contributeur: generateIdentity().id };
     const r1 = await fetch(`${url}/v0/work/claim`, { method: 'POST', body: JSON.stringify(falsifiee) });
     assert.equal(r1.status, 401);
     await fetch(`${url}/v0/work/release`, { method: 'POST', body: JSON.stringify(signObject({ ...makeRequete(fondateur, 'release') }, fondateur)) });
 
-    // Un agent branché sur le plugin.
+    // An agent plugged into the plugin.
     const abeille = generateIdentity();
-    const mcp = new Client({ name: 'agent-de-test', version: '1.0.0' });
+    const mcp = new Client({ name: 'test-agent', version: '1.0.0' });
     const [cote1, cote2] = InMemoryTransport.createLinkedPair();
     const home = mkdtempSync(join(tmpdir(), 'osp-journal-'));
     const journal = new JournalLocal(home);
@@ -70,7 +70,7 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
     assert.match(ouvriere, /Worker bee/);
     const module = /named `([^`]+)`/.exec(ouvriere)![1]!;
 
-    // Un livrable faux n'est même pas envoyé : le plugin teste d'abord en local.
+    // A wrong deliverable is not even sent: the plugin tests locally first.
     const faux = (await mcp.callTool({ name: 'swarm_submit', arguments: { fichiers: { [module]: 'export const x = 1;' } } })) as Texte;
     assert.equal(faux.isError, true);
     assert.match(texte(faux), /Nothing was sent/);
@@ -78,15 +78,15 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
     const ok = texte(await mcp.callTool({ name: 'swarm_submit', arguments: { fichiers: { [module]: SOLUTIONS[module]! } } }));
     assert.match(ok, /en_verification/);
     assert.match(texte(await mcp.callTool({ name: 'swarm_status', arguments: {} })), /Reputation/);
-    assert.match(texte(await mcp.callTool({ name: 'hive_board', arguments: {} })), /empty/, 'rien n’est encore validé ni rejeté');
+    assert.match(texte(await mcp.callTool({ name: 'hive_board', arguments: {} })), /empty/, 'nothing is validated or rejected yet');
 
-    // Le journal local a tout noté : ce qu'on a demandé à l'IA, et tout ce qu'elle a envoyé.
+    // The local journal recorded everything: what the AI was asked, and everything it sent.
     const natures = journal.dernieres(100).map((e) => e.nature);
-    for (const n of ['rejoint', 'consigne', 'decoupage', 'controle_local', 'livraison']) assert.ok(natures.includes(n), `journal : ${n}`);
+    for (const n of ['rejoint', 'consigne', 'decoupage', 'controle_local', 'livraison']) assert.ok(natures.includes(n), `journal: ${n}`);
     const consigne = journal.dernieres(100).find((e) => e.nature === 'consigne' && (e.donnees as { caste: string }).caste === 'ouvriere')!;
-    assert.match((consigne.donnees as { consignes: string }).consignes, /Worker bee/, 'la consigne complète est conservée');
+    assert.match((consigne.donnees as { consignes: string }).consignes, /Worker bee/, 'the full instructions are kept');
     const livraison = journal.dernieres(100).find((e) => e.nature === 'livraison')!;
-    assert.equal((livraison.donnees as { fichiers: Record<string, string> }).fichiers[module], SOLUTIONS[module], 'le code envoyé est conservé tel quel');
+    assert.equal((livraison.donnees as { fichiers: Record<string, string> }).fichiers[module], SOLUTIONS[module], 'the code sent is kept as is');
     assert.deepEqual(journal.verifier(), { ok: true });
     const vue = texte(await mcp.callTool({ name: 'swarm_journal', arguments: { n: 10 } }));
     assert.match(vue, /delivered cell/);
@@ -99,7 +99,7 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
   }
 });
 
-test('plugin gardienne : le verdict part scellé, reste sur disque, et se révèle tout seul quand l’autre gardienne s’est engagée', async () => {
+test('guard plugin: the verdict goes out sealed, stays on disk, and reveals itself once the other guard has committed', async () => {
   const fondateur = generateIdentity();
   const [lea, kenji, sami] = [generateIdentity(), generateIdentity(), generateIdentity()];
   const coord = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0 }, rng: seededRng(3) });
@@ -112,7 +112,7 @@ test('plugin gardienne : le verdict part scellé, reste sur disque, et se révè
   const mod = (a.alveole.critere_fini as CritereV0).module!;
   const livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   await coord.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
-  // Les autres alvéoles sont occupées : la seule tâche à prendre est une vérification.
+  // The other cells are taken: the only task left is a verification.
   for (const bee of [lea, sami]) {
     for (let i = 0; i < 30; i++) {
       const g = coord.claim(makeRequete(bee, 'claim'))!;
@@ -144,16 +144,16 @@ test('plugin gardienne : le verdict part scellé, reste sur disque, et se révè
     const premiere = texte(await A.mcp.callTool({ name: 'swarm_next', arguments: {} }));
     assert.match(premiere, /Drawn as a guard/);
     assert.match(premiere, /Your verdict is sealed: only its hash was sent/);
-    assert.equal(new Scelles(fichier).tous.length, 1, 'le verdict scellé, sel compris, est gardé sur disque');
+    assert.equal(new Scelles(fichier).tous.length, 1, 'the sealed verdict, salt included, is kept on disk');
 
     const seconde = texte(await B.mcp.callTool({ name: 'swarm_next', arguments: {} }));
-    // B ouvre la révélation et révèle aussitôt ; le plugin de A peut avoir révélé juste avant lui.
-    assert.match(seconde, /Verdict recorded: (en_verification|miel)/, 'la seconde gardienne ouvre la révélation et révèle aussitôt');
+    // B opens the reveal and reveals at once; A's plugin may have revealed just before.
+    assert.match(seconde, /Verdict recorded: (en_verification|miel)/, 'the second guard opens the reveal and reveals at once');
 
-    // Le plugin de A révèle en tâche de fond, sans attendre que son IA rappelle un outil.
+    // A's plugin reveals in the background, without waiting for its AI to call a tool again.
     const fini = () => coord.hiveView('maths').progression.miel === 1 && new Scelles(fichier).tous.length === 0;
     for (let i = 0; i < 100 && !fini(); i++) await new Promise((r) => setTimeout(r, 30));
-    assert.equal(coord.hiveView('maths').progression.miel, 1, 'les deux verdicts révélés : l’alvéole devient du miel');
+    assert.equal(coord.hiveView('maths').progression.miel, 1, 'both verdicts revealed: the cell becomes honey');
     assert.equal(new Scelles(fichier).tous.length, 0);
     const natures = A.journal.dernieres(50).map((e) => e.nature);
     assert.ok(natures.includes('engagement') && natures.includes('verdict'), natures.join(', '));

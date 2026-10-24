@@ -2,7 +2,7 @@ import type { ContributorId } from '../protocol/types.js';
 import type { Params } from './params.js';
 import type { Registry } from './registry.js';
 
-/** Compte d'un contributeur : miel dépensable, parts de puissance, réputation (§10, §18). */
+/** A contributor's account: spendable honey, power shares, reputation (§10, §18). */
 export interface Account {
   miel: number;
   parts: number;
@@ -10,7 +10,7 @@ export interface Account {
   miel_gagne: number;
 }
 
-/** Le Commun : les parts détenues par tous (§18.2). */
+/** The Commons: the shares held by everyone (§18.2). */
 export const COMMUN = 'commun';
 export type AccountId = ContributorId | typeof COMMUN;
 
@@ -29,7 +29,7 @@ export class Ledger {
     private readonly now: () => number,
   ) {}
 
-  /** Compte à modifier : il est créé s'il n'existe pas. À n'appeler que dans une commande. */
+  /** Account to modify: created if it does not exist. Call only inside a command. */
   get(id: AccountId): Account {
     let a = this.accounts[id];
     if (!a) {
@@ -39,7 +39,7 @@ export class Ledger {
     return a;
   }
 
-  /** Lecture pure : ne crée rien. Une simple consultation ne doit jamais modifier l'état. */
+  /** Pure read: creates nothing. A mere lookup must never change the state. */
   peek(id: AccountId): Account {
     return { ...(this.accounts[id] ?? this.fresh(id)) };
   }
@@ -49,9 +49,9 @@ export class Ledger {
   }
 
   /**
-   * Verse du miel gagné. 10 % cristallisent en parts (§18.2) ; pour chaque part du
-   * contributeur, 3/7 de part vont au Commun ; pendant 4 ans, 2 % des parts côté
-   * contributeur vont au fondateur.
+   * Pays out earned honey. 10% crystallizes into shares (§18.2); for each share of the
+   * contributor, 3/7 of a share goes to the Commons; for 4 years, 2% of the contributor-side
+   * shares go to the founder.
    */
   award(id: ContributorId, grammes: number, raison: string, ruche?: string): void {
     if (grammes <= 0) return;

@@ -11,26 +11,26 @@ import {
 import { canonicalize } from './canonical.js';
 import type { ContributorId } from './types.js';
 
-// Identités et signatures, avec agilité cryptographique (OSP v0.2, P0-5).
+// Identities and signatures, with cryptographic agility (OSP v0.2, P0-5).
 //
-//  - `pq1:`  identité hybride Ed25519 + ML-DSA-65 (FIPS 204). La signature n'est valide que si
-//            les DEUX signatures le sont : il faudrait casser à la fois la courbe elliptique et le
-//            réseau euclidien. C'est l'identité par défaut des contributeurs.
-//  - `slh1:` SLH-DSA-SHA2-128f (FIPS 205), dont la sécurité repose uniquement sur la fonction de
-//            hachage. Le choix le plus conservateur qui existe : il sert au coordinateur et aux sceaux du registre.
-//  - `ed25519:` l'identité historique, encore acceptée, mais vulnérable à un ordinateur quantique.
+//  - `pq1:`  hybrid Ed25519 + ML-DSA-65 identity (FIPS 204). The signature is valid only if
+//            BOTH signatures are: one would have to break both the elliptic curve and the
+//            lattice. This is the default identity for contributors.
+//  - `slh1:` SLH-DSA-SHA2-128f (FIPS 205), whose security rests only on the hash
+//            function. The most conservative choice there is: it serves the coordinator and the registry seals.
+//  - `ed25519:` the historical identity, still accepted, but vulnerable to a quantum computer.
 //
-// Un identifiant post-quantique est l'empreinte (sha256) de ses clés publiques : il reste court.
-// La signature transporte les clés publiques, vérifiées contre cette empreinte, et le type exact
-// de chaque clé est contrôlé, ce qui interdit toute substitution d'algorithme.
+// A post-quantum identifier is the fingerprint (sha256) of its public keys: it stays short.
+// The signature carries the public keys, checked against this fingerprint, and the exact type
+// of each key is checked, which rules out any algorithm substitution.
 
 export type Algo = 'pq1' | 'slh1' | 'ed25519';
 
 export interface Identity {
   id: ContributorId;
-  /** Clé privée principale : Ed25519 (`pq1`, `ed25519`) ou SLH-DSA (`slh1`). */
+  /** Main private key: Ed25519 (`pq1`, `ed25519`) or SLH-DSA (`slh1`). */
   privateKeyPem: string;
-  /** Clé privée ML-DSA-65, pour les identités hybrides `pq1`. */
+  /** ML-DSA-65 private key, for hybrid `pq1` identities. */
   pqPrivateKeyPem?: string;
 }
 
@@ -49,7 +49,7 @@ export function isContributorId(value: unknown): value is ContributorId {
   return typeof value === 'string' && algoOf(value) !== null;
 }
 
-/** Vrai si l'identité résiste à un ordinateur quantique. */
+/** True if the identity resists a quantum computer. */
 export function isPostQuantum(id: string): boolean {
   const a = algoOf(id);
   return a === 'pq1' || a === 'slh1';
@@ -57,7 +57,7 @@ export function isPostQuantum(id: string): boolean {
 
 function rawEd(pub: KeyObject): Buffer {
   const jwk = pub.export({ format: 'jwk' });
-  if (!jwk.x) throw new Error('Clé publique Ed25519 illisible');
+  if (!jwk.x) throw new Error('Unreadable Ed25519 public key');
   return unb64(jwk.x);
 }
 const spki = (pub: KeyObject) => pub.export({ type: 'spki', format: 'der' });
@@ -91,7 +91,7 @@ function privateKey(pemText: string): KeyObject {
   return key;
 }
 
-/** Signe des octets avec une identité, au format de son algorithme. */
+/** Signs bytes with an identity, in the format of its algorithm. */
 export function signBytes(data: Buffer, identity: Identity): string {
   const algo = algoOf(identity.id);
   if (algo === 'ed25519') return b64(cryptoSign(null, data, privateKey(identity.privateKeyPem)));
@@ -100,17 +100,17 @@ export function signBytes(data: Buffer, identity: Identity): string {
     return `slh1.${b64(cryptoSign(null, data, k))}.${b64(spki(createPublicKey(k)))}`;
   }
   if (algo === 'pq1') {
-    if (!identity.pqPrivateKeyPem) throw new Error('Identité hybride sans sa clé ML-DSA');
+    if (!identity.pqPrivateKeyPem) throw new Error('Hybrid identity without its ML-DSA key');
     const ed = privateKey(identity.privateKeyPem);
     const pq = privateKey(identity.pqPrivateKeyPem);
     return ['pq1', cryptoSign(null, data, ed), cryptoSign(null, data, pq), rawEd(createPublicKey(ed)), spki(createPublicKey(pq))]
       .map((x) => (typeof x === 'string' ? x : b64(x)))
       .join('.');
   }
-  throw new Error(`Identité inconnue : ${identity.id}`);
+  throw new Error(`Unknown identity: ${identity.id}`);
 }
 
-/** Vérifie une signature contre un identifiant ; toute anomalie (format, empreinte, type de clé) vaut refus. */
+/** Checks a signature against an identifier; any anomaly (format, fingerprint, key type) means refusal. */
 export function verifyBytes(data: Buffer, sig: string, signer: string): boolean {
   try {
     const algo = algoOf(signer);
@@ -137,7 +137,7 @@ export function verifyBytes(data: Buffer, sig: string, signer: string): boolean 
       const edPub = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: b64(edRaw) }, format: 'jwk' });
       const pqPub = createPublicKey({ key: pqDer, format: 'der', type: 'spki' });
       if ((pqPub.asymmetricKeyType as string) !== PQ) return false;
-      // Les DEUX signatures doivent être valides.
+      // BOTH signatures must be valid.
       return cryptoVerify(null, data, edPub, unb64(sEd)) && cryptoVerify(null, data, pqPub, unb64(sPq));
     }
     return false;
@@ -146,7 +146,7 @@ export function verifyBytes(data: Buffer, sig: string, signer: string): boolean 
   }
 }
 
-/** Signe la forme canonique de l'objet, champ `sig` exclu, et renvoie une copie signée. */
+/** Signs the canonical form of the object, `sig` field excluded, and returns a signed copy. */
 export function signObject<T extends object>(obj: T, identity: Identity): T & { sig: string } {
   const { sig: _old, ...rest } = obj as Record<string, unknown>;
   return { ...(rest as T), sig: signBytes(Buffer.from(canonicalize(rest), 'utf8'), identity) };

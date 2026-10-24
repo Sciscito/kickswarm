@@ -1,14 +1,14 @@
-// La fiabilité des gardiennes (OSP v0.2, §4.1 et §5.3), dans le modèle de Dawid et Skene :
-// - sensibilité s : la probabilité de rejeter un résultat faux ;
-// - spécificité c : la probabilité de valider un résultat juste.
-// Chacune suit une loi Beta(a, b) : un a priori, plus les observations, avec un oubli progressif.
-// On décide sur la borne basse (le quantile à 5 %) : une nouvelle venue chanceuse reste prudemment
-// pesée tant qu'elle n'a pas fait ses preuves.
+// Guard reliability (OSP v0.2, §4.1 and §5.3), in the Dawid-Skene model:
+// - sensitivity s: the probability of rejecting a false result;
+// - specificity c: the probability of validating a correct result.
+// Each follows a Beta(a, b) distribution: a prior, plus the observations, with gradual forgetting.
+// We decide on the lower bound (the 5% quantile): a lucky newcomer stays cautiously
+// weighted until they have proven themselves.
 //
-// Le test séquentiel de Wald (§4.2) additionne, pour chaque « valide », log(c / (1 − s)) à la
-// log-cote du résultat ; on valide quand P(faux) passe sous α*.
+// Wald's sequential test (§4.2) adds, for each "valid", log(c / (1 − s)) to the
+// result's log-odds; we validate when P(false) drops below α*.
 
-/** Observations d'une gardienne, au-delà de l'a priori (déjà amorties par l'oubli). */
+/** A guard's observations, beyond the prior (already damped by forgetting). */
 export interface Fiabilite {
   s_ok: number;
   s_ko: number;
@@ -17,19 +17,19 @@ export interface Fiabilite {
 }
 
 export interface ParamsFiabilite {
-  /** A priori de la sensibilité : Beta(a, b). */
+  /** Prior of the sensitivity: Beta(a, b). */
   prior_sensibilite: [number, number];
-  /** A priori de la spécificité : Beta(a, b). */
+  /** Prior of the specificity: Beta(a, b). */
   prior_specificite: [number, number];
-  /** Quantile utilisé pour décider (la borne basse). */
+  /** Quantile used to decide (the lower bound). */
   quantile_fiabilite: number;
-  /** Chaque nouvelle observation multiplie les anciennes par ce facteur. */
+  /** Each new observation multiplies the old ones by this factor. */
   oubli_fiabilite: number;
 }
 
 export const VIERGE: Fiabilite = { s_ok: 0, s_ko: 0, c_ok: 0, c_ko: 0 };
 
-/** Log de la fonction Gamma (approximation de Lanczos, g = 7, précision ~1e-15). */
+/** Log of the Gamma function (Lanczos approximation, g = 7, precision ~1e-15). */
 export function lnGamma(x: number): number {
   const g = [
     0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905,
@@ -43,7 +43,7 @@ export function lnGamma(x: number): number {
   return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
 }
 
-/** Fraction continue de la fonction Beta incomplète (Lentz modifié). */
+/** Continued fraction of the incomplete Beta function (modified Lentz). */
 function betaFraction(x: number, a: number, b: number): number {
   const TINY = 1e-300;
   let c = 1;
@@ -73,7 +73,7 @@ function betaFraction(x: number, a: number, b: number): number {
   return h;
 }
 
-/** Fonction Beta incomplète régularisée I_x(a, b) : la fonction de répartition de Beta(a, b). */
+/** Regularized incomplete Beta function I_x(a, b): the cumulative distribution function of Beta(a, b). */
 export function betaRepartition(x: number, a: number, b: number): number {
   if (x <= 0) return 0;
   if (x >= 1) return 1;
@@ -81,7 +81,7 @@ export function betaRepartition(x: number, a: number, b: number): number {
   return x < (a + 1) / (a + b + 2) ? (front * betaFraction(x, a, b)) / a : 1 - (front * betaFraction(1 - x, b, a)) / b;
 }
 
-/** Quantile de Beta(a, b), par dichotomie (60 pas : précision bien meilleure que 1e-12). */
+/** Quantile of Beta(a, b), by bisection (60 steps: precision far better than 1e-12). */
 export function betaQuantile(p: number, a: number, b: number): number {
   let lo = 0;
   let hi = 1;
@@ -93,10 +93,10 @@ export function betaQuantile(p: number, a: number, b: number): number {
   return (lo + hi) / 2;
 }
 
-/** Arrondi qui rend les calculs reproductibles d'une machine à l'autre, au-delà du dernier bit. */
+/** Rounding that makes computations reproducible from one machine to another, beyond the last bit. */
 const net = (x: number) => Math.round(x * 1e9) / 1e9;
 
-/** Bornes basses de la sensibilité et de la spécificité. */
+/** Lower bounds of the sensitivity and the specificity. */
 export function bornes(f: Fiabilite, p: ParamsFiabilite): { s: number; c: number } {
   const [sa, sb] = p.prior_sensibilite;
   const [ca, cb] = p.prior_specificite;
@@ -106,13 +106,13 @@ export function bornes(f: Fiabilite, p: ParamsFiabilite): { s: number; c: number
   };
 }
 
-/** Poids d'un « valide » dans le test de Wald : log(c / (1 − s)), en nats, sur les bornes basses. */
+/** Weight of a "valid" in the Wald test: log(c / (1 − s)), in nats, on the lower bounds. */
 export function poidsValide(f: Fiabilite, p: ParamsFiabilite): number {
   const { s, c } = bornes(f, p);
   return net(Math.log(c / (1 - s)));
 }
 
-/** Une observation : la gardienne a eu raison (ok) ou tort face à un résultat faux (s) ou juste (c). */
+/** An observation: the guard was right (ok) or wrong against a false (s) or correct (c) result. */
 export function observer(f: Fiabilite, quoi: 's' | 'c', ok: boolean, oubli: number): void {
   f.s_ok = net(f.s_ok * oubli);
   f.s_ko = net(f.s_ko * oubli);

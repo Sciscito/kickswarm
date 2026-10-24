@@ -2,17 +2,17 @@ import { createHash } from 'node:crypto';
 import type { Hash } from './types.js';
 
 /**
- * JSON canonique (RFC 8785, JCS) : clés triées par unités UTF-16, pas d'espaces,
- * nombres au format ECMAScript. Les champs `undefined` sont omis.
+ * Canonical JSON (RFC 8785, JCS): keys sorted by UTF-16 code units, no whitespace,
+ * numbers in ECMAScript format. `undefined` fields are omitted.
  */
 export function canonicalize(value: unknown): string {
-  if (value === undefined) throw new Error('Valeur undefined interdite dans un objet OSP');
+  if (value === undefined) throw new Error('Undefined value not allowed in an OSP object');
   if (value === null || typeof value !== 'object') {
     if (typeof value === 'number' && !Number.isFinite(value)) {
-      throw new Error('Nombre non fini interdit dans un objet OSP');
+      throw new Error('Non-finite number not allowed in an OSP object');
     }
     if (typeof value === 'bigint' || typeof value === 'function' || typeof value === 'symbol') {
-      throw new Error(`Type ${typeof value} interdit dans un objet OSP`);
+      throw new Error(`Type ${typeof value} not allowed in an OSP object`);
     }
     return JSON.stringify(value);
   }
@@ -26,12 +26,12 @@ export function sha256(text: string): Hash {
   return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`;
 }
 
-/** Engagement sur une valeur secrète (tests cachés, référence) : on publie le hash, on révèle plus tard. */
+/** Commitment to a secret value (hidden tests, reference): the hash is published, the value revealed later. */
 export function commitment(value: unknown): Hash {
   return sha256(canonicalize(value));
 }
 
-/** Identifiant d'un objet OSP : hash de sa forme canonique, champ `sig` exclu (§4.1). */
+/** Identifier of an OSP object: hash of its canonical form, `sig` field excluded (§4.1). */
 export function hashOf(obj: object): Hash {
   const { sig: _sig, ...rest } = obj as Record<string, unknown>;
   return sha256(canonicalize(rest));

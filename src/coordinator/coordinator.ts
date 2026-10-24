@@ -34,7 +34,7 @@ import { logit, observer, poidsValide, VIERGE, type Fiabilite } from './fiabilit
 import { brancheOf, chooseCandidate, type Rng } from './scheduler.js';
 import { PAR_RUCHE, type Trophee, type TropheeId } from './trophees.js';
 
-/** Erreur de protocole, avec le code HTTP à renvoyer. */
+/** Protocol error, with the HTTP status to return. */
 export class OspError extends Error {
   constructor(
     message: string,
@@ -58,21 +58,21 @@ export interface CellRecord {
   profondeur: number;
   enfants: Hash[];
   bail?: Bail;
-  /** Gardiennes tirées pour le résultat en attente, qui ne se sont pas encore engagées (baux actifs). */
+  /** Guards drawn for the pending result, who have not committed yet (active leases). */
   gardiennes: Bail[];
-  /** Gardiennes qui ont déjà validé le résultat en attente. */
+  /** Guards who have already validated the pending result. */
   verdicts: ContributorId[];
-  /** OSP v0.2 P0-4 : log-cote du résultat en attente (test de Wald), et nombre de verdicts révélés. */
+  /** OSP v0.2 P0-4: log-odds of the pending result (Wald test), and number of revealed verdicts. */
   cote?: number;
   nb_verdicts?: number;
   rejets: number;
-  /** §5 : après trop de rejets, l'alvéole repart en découpage. */
+  /** §5: after too many rejections, the cell goes back to splitting. */
   redecouper: boolean;
-  /** Résultat ou découpage qui attend sa vérification. */
+  /** Result or split awaiting its verification. */
   en_attente?: Hash;
   resultat_valide?: Hash;
   validee_par?: ContributorId[];
-  /** Score de mutation de ses tests contre une référence (OSP v0.2, §3.2), s'il a été mesuré. */
+  /** Mutation score of its tests against a reference (OSP v0.2, §3.2), if it was measured. */
   force_tests?: number;
 }
 
@@ -91,7 +91,7 @@ interface HiveRecord {
   racine: Hash;
   branches: Record<string, { succes: number; echecs: number }>;
   orientations: Orientation[];
-  /** Miel gagné dans cette ruche, par contributeur (pour le bonus du cœur). */
+  /** Honey earned in this hive, per contributor (for the heart bonus). */
   contributions: Record<string, number>;
 }
 
@@ -101,39 +101,39 @@ interface ResultRecord {
   rapport: VerifReport;
   statut: 'en_verification' | 'valide' | 'rejete';
   soumis_a: number;
-  /** OSP v0.2 P0-3 : mutants de ce livrable que les contrôles des gardiennes rejettent, du plus subtil au moins subtil. */
+  /** OSP v0.2 P0-3: mutants of this deliverable that the guards' checks reject, from most to least subtle. */
   mutants: Array<{ livrable: Livrable; echecs: number }>;
-  /** OSP v0.2 P0-4 : sans conclusion (trop de verdicts, ou trop d'attente), le porteur arbitre. */
+  /** OSP v0.2 P0-4: without a conclusion (too many verdicts, or too long a wait), the hive owner arbitrates. */
   escalade?: boolean;
 }
 
 interface DecompRecord {
   decomposition: Decomposition;
   statut: 'en_attente' | 'adoptee' | 'refusee';
-  /** Score de mutation mesuré pour chaque enfant (null : pas de référence fournie). */
+  /** Mutation score measured for each child (null: no reference provided). */
   force_tests: Array<number | null>;
 }
 
 /**
- * OSP v0.2 P0-3 : un piège est un mutant de la vraie livraison en attente sur l'alvéole,
- * confié à la place de celle-ci. Il occupe une place de gardienne, comme un vrai résultat.
+ * OSP v0.2 P0-3: a trap is a mutant of the real delivery pending on the cell,
+ * handed out in its place. It takes a guard slot, like a real result.
  */
 interface Piege {
   livrable: Livrable;
   alveole: Hash;
-  /** Le vrai résultat dont il est le mutant. */
+  /** The real result it is a mutant of. */
   vraie: Hash;
   attribue_a: ContributorId;
   expire: number;
-  /** P1-3 : l'engagement de la gardienne, comme pour un vrai résultat. */
+  /** P1-3: the guard's commitment, as for a real result. */
   engagement?: Hash;
 }
 
-/** P1-3 : une gardienne engagée sur un résultat, dont le verdict reste scellé. */
+/** P1-3: a guard committed on a result, whose verdict stays sealed. */
 interface Engagement {
   par: ContributorId;
   engagement: Hash;
-  /** Fin de la fenêtre de révélation (elle ne court que lorsque la révélation est ouverte). */
+  /** End of the reveal window (it only runs once the reveal is open). */
   expire: number;
 }
 
@@ -154,27 +154,27 @@ interface State {
   results: Record<string, ResultRecord>;
   decompositions: Record<string, DecompRecord>;
   pieges: Record<string, Piege>;
-  /** P1-3 : verdicts scellés, par résultat. */
+  /** P1-3: sealed verdicts, per result. */
   engagements: Record<string, Engagement[]>;
-  /** P0-4 : fiabilité de chaque gardienne (sensibilité et spécificité, lois Beta). */
+  /** P0-4: reliability of each guard (sensitivity and specificity, Beta distributions). */
   fiabilite: Record<string, Fiabilite>;
   board: Record<string, BoardEntry[]>;
   accounts: Record<string, Account>;
   nonces: Record<string, number>;
   trophees: Record<string, Trophee[]>;
   compteurs: Record<string, { alveoles: number; verifications: number }>;
-  /** Ordre d'arrivée des contributeurs, pour le trophée Pionnier. */
+  /** Arrival order of contributors, for the Pioneer trophy. */
   contributeurs: string[];
 }
 
-/** Les commandes qui modifient l'état. Chacune est inscrite en entier au registre (OSP v0.2, §6.1). */
+/** The commands that change the state. Each one is written in full to the registry (OSP v0.2, §6.1). */
 export type CommandeType =
   | 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'engageVerdict' | 'submitVerdict';
 
 /**
- * Le contenu d'une entrée `commande` : les objets signés reçus, plus tout ce qui n'est pas
- * déterministe (l'heure, les tirages, les signatures du coordinateur, les rapports du vérificateur)
- * et le hash de l'état obtenu. C'est assez pour rejouer toute l'histoire à l'identique.
+ * The content of a `commande` entry: the signed objects received, plus everything that is not
+ * deterministic (the time, the draws, the coordinator's signatures, the verifier's reports)
+ * and the hash of the resulting state. That is enough to replay the whole history identically.
  */
 export interface CommandeDonnees {
   type: CommandeType;
@@ -183,16 +183,16 @@ export interface CommandeDonnees {
   alea: number[];
   signatures: string[];
   verifs: VerifReport[];
-  /** Secrets révélés pendant la commande (tests cachés, références), par engagement. */
+  /** Secrets revealed during the command (hidden tests, references), by commitment. */
   secrets?: Record<string, unknown>;
-  /** P1-3 : la balise d'aléa public dont découlent les tirages de cette commande. */
+  /** P1-3: the public randomness beacon this command's draws follow from. */
   balise?: Balise;
-  /** P0-3 : tirages secrets (les pièges), hors balise publique ; publiés avec la commande, après l'embargo. */
+  /** P0-3: secret draws (the traps), outside the public beacon; published with the command, after the embargo. */
   alea_secret?: number[];
   etat: Hash;
 }
 
-/** La balise annoncée au lancement : son réseau, sa clé, et le décalage en tours. */
+/** The beacon announced at launch: its network, its key, and the offset in rounds. */
 export type BaliseAnnoncee = BaliseInfo & { decalage: number };
 
 interface ReplayStep {
@@ -204,23 +204,23 @@ interface ReplayStep {
   secrets: Record<string, unknown>;
 }
 
-/** Le rejeu ne reproduit pas l'histoire inscrite au registre. */
+/** The replay does not reproduce the history written in the registry. */
 export class ReplayDivergence extends Error {}
 
 export type Verifier = (critere: Cell['critere_fini'], livrable: Livrable, opts?: VerifOptions) => Promise<VerifReport>;
 
 export interface CoordinatorOptions {
   fondateur: ContributorId;
-  /** Dossier de persistance (état + registre). Sans dossier, tout reste en mémoire. */
+  /** Persistence folder (state + registry). Without a folder, everything stays in memory. */
   dataDir?: string;
   params?: Partial<Params>;
   rng?: Rng;
   now?: () => number;
-  /** Vérificateur automatique, remplaçable pour les tests. */
+  /** Automatic verifier, replaceable for tests. */
   verifier?: Verifier;
-  /** P1-3 : la balise d'aléa public (drand). Sans elle, le coordinateur tire lui-même ses aléas. */
+  /** P1-3: the public randomness beacon (drand). Without it, the coordinator draws its own random numbers. */
   balise?: SourceBalise;
-  /** Mode audit : on rejoue un registre existant, avec les identités publiques qu'il annonce. */
+  /** Audit mode: replays an existing registry, with the public identities it announces. */
   replay?: { coordinateur: ContributorId; pieges: ContributorId; balise?: BaliseAnnoncee };
 }
 
@@ -269,7 +269,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,39}$/;
 const DEFAULT_BUDGET = { tokens_max: 200_000, duree_max_s: 1800 };
 const MAX_IMPASSES = 20;
 
-/** Un flottant uniforme sur [0, 1), 53 bits tirés du générateur cryptographique. */
+/** A uniform float on [0, 1), 53 bits drawn from the cryptographic generator. */
 function aleaCrypto(): number {
   const b = randomBytes(7);
   return (b.readUIntBE(0, 6) * 32 + (b[6]! >>> 3)) / 2 ** 53;
@@ -296,21 +296,21 @@ export class Coordinator {
   private readonly baseNow: () => number;
   private readonly verifier: Verifier;
   private readonly occupees = new Set<Hash>();
-  /** Pendant une commande : l'heure figée, et ce qu'il faut inscrire pour pouvoir la rejouer. */
+  /** During a command: the frozen time, and what must be recorded to replay it. */
   private clock: number | null = null;
   private recording: { alea: number[]; alea_secret: number[]; signatures: string[]; secrets: Record<string, unknown> } | null = null;
   private replayCtx: { alea: number[]; alea_secret: number[]; signatures: string[]; secrets: Record<string, unknown> } | null = null;
-  /** P0-3 : l'aléa secret des pièges (cryptographique, jamais tiré de la balise publique). */
+  /** P0-3: the secret randomness of traps (cryptographic, never drawn from the public beacon). */
   private readonly baseRngSecret: Rng;
-  /** P0-3 : chaque tirage de piège, avec le taux annoncé : de quoi vérifier statistiquement les taux. */
+  /** P0-3: every trap draw, with the announced rate: enough to check the rates statistically. */
   readonly journalPieges: Array<{ taux: number; piege: boolean }> = [];
   private readonly rangsSoumission = new Map<string, number>();
-  /** Le coffre : tests cachés et références, par engagement. Privé, hors de l'état et du registre. */
+  /** The vault: hidden tests and references, by commitment. Private, outside the state and the registry. */
   private coffre: Record<string, unknown> = {};
   private replayNext: ReplayStep | null = null;
   private dernierSceau = 0;
   private commandesSansSceau = 0;
-  /** Pendant une demande tirée avec la balise : les tirages en découlent, et sont notés. */
+  /** During a request drawn with the beacon: the draws follow from it, and are recorded. */
   private tirageBalise: { rng: Rng; balise: Balise; tirages: number[] } | null = null;
 
   private readonly now = (): number => this.clock ?? this.baseNow();
@@ -323,7 +323,7 @@ export class Coordinator {
     }
     if (this.replayCtx) {
       const v = this.replayCtx.alea.shift();
-      if (v === undefined) throw new ReplayDivergence('Tirage aléatoire absent du registre');
+      if (v === undefined) throw new ReplayDivergence('Random draw missing from the registry');
       return v;
     }
     const v = this.baseRng();
@@ -332,14 +332,14 @@ export class Coordinator {
   };
 
   /**
-   * P0-3 : l'aléa des pièges. Une gardienne peut recalculer ses tirages drand ; si le piège en
-   * découlait, elle saurait d'avance qu'elle en reçoit un. Il vient donc d'un aléa secret,
-   * inscrit avec la commande et publié seulement après l'embargo.
+   * P0-3: the randomness of traps. A guard can recompute their drand draws; if the trap followed
+   * from them, they would know in advance that they are getting one. So it comes from secret randomness,
+   * recorded with the command and published only after the embargo.
    */
   private readonly rngSecret: Rng = () => {
     if (this.replayCtx) {
       const v = this.replayCtx.alea_secret.shift();
-      if (v === undefined) throw new ReplayDivergence('Tirage secret absent du registre');
+      if (v === undefined) throw new ReplayDivergence('Secret draw missing from the registry');
       return v;
     }
     const v = this.baseRngSecret();
@@ -348,16 +348,16 @@ export class Coordinator {
   };
 
   constructor(private readonly options: CoordinatorOptions) {
-    if (!isContributorId(options.fondateur)) throw new Error('Identifiant du fondateur invalide');
+    if (!isContributorId(options.fondateur)) throw new Error('Invalid founder identifier');
     this.params = { ...DEFAULT_PARAMS, ...options.params };
-    // Un registre qui n'annonce pas de version du moteur de mutation a été écrit avec la version 1.
+    // A registry that announces no mutation engine version was written with version 1.
     if (options.replay && options.params?.moteur_mutation === undefined) this.params.moteur_mutation = 1;
-    // Un aléa cryptographique : les tirages passés sont publics, ils ne doivent pas permettre de deviner les suivants.
+    // Cryptographic randomness: past draws are public, they must not allow guessing the next ones.
     this.baseRng = options.rng ?? aleaCrypto;
     this.baseRngSecret = options.rng ?? aleaCrypto;
     this.baseNow = options.now ?? Date.now;
     this.verifier = options.verifier ?? verifierV0;
-    if (options.replay && options.dataDir) throw new Error('Le mode audit travaille en mémoire, sans dossier de données');
+    if (options.replay && options.dataDir) throw new Error('Audit mode works in memory, without a data folder');
 
     const dir = options.dataDir;
     if (dir) mkdirSync(dir, { recursive: true });
@@ -374,7 +374,7 @@ export class Coordinator {
       this.identite = keys.coordinateur;
       this.identitePieges = keys.pieges;
     } else {
-      // Le coordinateur signe en SLH-DSA : une sécurité qui ne repose que sur la fonction de hachage.
+      // The coordinator signs with SLH-DSA: security that rests only on the hash function.
       this.identite = generateIdentity('slh1');
       this.identitePieges = generateIdentity('slh1');
       if (keysFile) writeFileSync(keysFile, JSON.stringify({ coordinateur: this.identite, pieges: this.identitePieges }, null, 2), 'utf8');
@@ -384,10 +384,10 @@ export class Coordinator {
     if (stateFile && existsSync(stateFile)) {
       this.state = JSON.parse(readFileSync(stateFile, 'utf8')) as State;
       if (this.state.fondateur !== options.fondateur) {
-        throw new Error('Ce dossier de données appartient à un autre fondateur');
+        throw new Error('This data folder belongs to another founder');
       }
     } else {
-      // Une seule lecture de l'horloge pour le lancement : l'état et l'entrée du registre doivent concorder.
+      // A single clock read for the launch: the state and the registry entry must agree.
       this.clock = this.baseNow();
       this.state = {
         fondateur: options.fondateur,
@@ -408,7 +408,7 @@ export class Coordinator {
       };
       const balise = this.baliseAnnoncee();
       this.registry.append('lancement', {
-        // En rejeu, les paramètres tels que le registre les annonce : un paramètre ajouté depuis ne change pas l'entrée.
+        // On replay, the parameters as the registry announces them: a parameter added since then does not change the entry.
         fondateur: options.fondateur, coordinateur: this.identite.id, pieges: this.identitePieges.id,
         params: options.replay && options.params ? options.params : this.params, ...(balise ? { balise } : {}),
       });
@@ -418,20 +418,20 @@ export class Coordinator {
     this.normalizeState();
     this.ledger = new Ledger(this.params, options.fondateur, this.state.lancement, this.registry, () => this.now());
     this.ledger.accounts = this.state.accounts;
-    // L'état sur disque doit être exactement celui qu'annonce la dernière commande du registre.
+    // The state on disk must be exactly the one the registry's last command announces.
     const derniere = [...this.registry.entries].reverse().find((e) => e.nature === 'commande');
     if (derniere && (derniere.donnees as CommandeDonnees).etat !== this.stateHash()) {
-      throw new Error('État local incohérent avec le registre : lance « kickswarm audit » pour reconstruire et comprendre');
+      throw new Error('Local state inconsistent with the registry: run "kickswarm audit" to rebuild and understand');
     }
     this.save();
   }
 
   /**
-   * Scelle le registre (OSP v0.2, P0-5) : le coordinateur signe en SLH-DSA le hash de la dernière entrée.
-   * Comme ce hash enchaîne toute l'histoire, un seul sceau authentifie tout ce qui le précède.
+   * Seals the registry (OSP v0.2, P0-5): the coordinator signs the hash of the last entry with SLH-DSA.
+   * Since that hash chains the whole history, a single seal authenticates everything before it.
    */
   sceller(): void {
-    if (this.options.replay) throw new Error('Un coordinateur en mode audit ne scelle pas : il importe les sceaux');
+    if (this.options.replay) throw new Error('A coordinator in audit mode does not seal: it imports the seals');
     const tete = this.registry.entries[this.registry.entries.length - 1];
     if (!tete || tete.nature === 'sceau') return;
     const sceau = signObject({ type: 'osp.sceau/0.1' as const, coordinateur: this.identite.id, seq: tete.seq, tete: tete.hash }, this.identite);
@@ -446,14 +446,14 @@ export class Coordinator {
     if (du) this.sceller();
   }
 
-  /** Mode audit : reprend un sceau du registre original, après en avoir vérifié la signature. */
+  /** Audit mode: takes a seal from the original registry, after checking its signature. */
   importSceau(date: string, sceau: { type: string; coordinateur: string; seq: number; tete: string; sig?: string }): void {
-    if (!this.options.replay) throw new Error('Import de sceau réservé au mode audit');
+    if (!this.options.replay) throw new Error('Seal import is reserved for audit mode');
     const tete = this.registry.entries[this.registry.entries.length - 1];
     if (sceau.type !== 'osp.sceau/0.1' || sceau.coordinateur !== this.identite.id || !tete || sceau.seq !== tete.seq || sceau.tete !== tete.hash) {
-      throw new ReplayDivergence(`Sceau incohérent avec le registre à l'entrée #${tete?.seq}`);
+      throw new ReplayDivergence(`Seal inconsistent with the registry at entry #${tete?.seq}`);
     }
-    if (!verifyObject(sceau, this.identite.id)) throw new ReplayDivergence('Signature du sceau invalide');
+    if (!verifyObject(sceau, this.identite.id)) throw new ReplayDivergence('Invalid seal signature');
     this.clock = Date.parse(date);
     try {
       this.registry.append('sceau', sceau);
@@ -462,7 +462,7 @@ export class Coordinator {
     }
   }
 
-  /** Le dernier sceau du registre, s'il y en a un. */
+  /** The registry's last seal, if there is one. */
   dernierSceauInscrit(): { seq: number; sceau: unknown } | undefined {
     for (let i = this.registry.entries.length - 1; i >= 0; i--) {
       const e = this.registry.entries[i]!;
@@ -472,9 +472,9 @@ export class Coordinator {
   }
 
   /**
-   * Ce que le coordinateur publie en temps réel (P0-3) : le contenu du registre jusqu'à l'horizon,
-   * avec l'état qui en découle, et la tête réelle du registre, avec son dernier sceau. La tête engage
-   * tout ce qui est encore sous embargo : un observateur qui la note voit toute réécriture ultérieure.
+   * What the coordinator publishes in real time (P0-3): the registry content up to the horizon,
+   * with the state that follows from it, and the actual registry head, with its last seal. The head
+   * commits to everything still under embargo: an observer who notes it sees any later rewrite.
    */
   etatPublie(): { seq: number; etat: Hash | null; tete: { seq: number; hash: Hash } | null; sceau: { seq: number; sceau: unknown } | null } {
     const seq = this.horizon();
@@ -490,17 +490,17 @@ export class Coordinator {
     return { seq, etat, tete: t ? { seq: t.seq, hash: t.hash } : null, sceau: this.dernierSceauInscrit() ?? null };
   }
 
-  /** Empreinte de l'état complet : ce que les auditeurs comparent. */
+  /** Fingerprint of the complete state: what auditors compare. */
   stateHash(): Hash {
     return sha256(canonicalize(this.state));
   }
 
-  /** Pour la revérification d'un audit : le critère de fin d'une alvéole. */
+  /** For an audit's re-verification: a cell's done criterion. */
   critereOf(cellId: Hash): Cell['critere_fini'] | undefined {
     return this.state.cells[cellId]?.cell.critere_fini;
   }
 
-  /** Pour la revérification d'un audit : le livrable d'un résultat et le critère qu'il doit passer. */
+  /** For an audit's re-verification: a result's deliverable and the criterion it must pass. */
   resultForReverify(resultId: Hash): { critere: Cell['critere_fini']; livrable: Livrable } | undefined {
     const rr = this.state.results[resultId];
     const rec = rr ? this.state.cells[rr.resultat.alveole] : undefined;
@@ -508,11 +508,11 @@ export class Coordinator {
   }
 
   /**
-   * Rejoue une commande inscrite au registre (mode audit). Le coordinateur reproduit alors
-   * exactement les mêmes entrées : toute différence est une divergence.
+   * Replays a command written in the registry (audit mode). The coordinator then reproduces
+   * exactly the same entries: any difference is a divergence.
    */
   async replayCommande(c: CommandeDonnees): Promise<void> {
-    if (!this.options.replay) throw new Error('Rejeu réservé à un coordinateur créé en mode audit');
+    if (!this.options.replay) throw new Error('Replay is reserved for a coordinator created in audit mode');
     this.replayNext = {
       at: c.at, alea: [...(c.alea ?? [])], alea_secret: [...(c.alea_secret ?? [])], signatures: [...(c.signatures ?? [])], verifs: c.verifs ?? [], secrets: c.secrets ?? {},
     };
@@ -531,7 +531,7 @@ export class Coordinator {
         case 'submitDecomposition': await this.submitDecomposition(e.decomposition); break;
         case 'engageVerdict': this.engagerVerdict(e.engagement); break;
         case 'submitVerdict': await this.submitVerdict(e.verdict); break;
-        default: throw new ReplayDivergence(`Commande inconnue : ${String(c.type)}`);
+        default: throw new ReplayDivergence(`Unknown command: ${String(c.type)}`);
       }
     } finally {
       this.replayNext = null;
@@ -539,13 +539,13 @@ export class Coordinator {
   }
 
   /**
-   * Exécute une commande comme une transaction : l'état et le registre reviennent en arrière si
-   * elle échoue ; si elle réussit, elle est inscrite au registre avec tout ce qu'il faut pour la rejouer.
+   * Runs a command as a transaction: the state and the registry roll back if
+   * it fails; if it succeeds, it is written to the registry with everything needed to replay it.
    */
   private run<T>(type: CommandeType, entree: Record<string, unknown>, verifs: VerifReport[], fn: () => T): T {
     const replay = this.replayNext;
     this.replayNext = null;
-    if (this.options.replay && !replay) throw new Error('Coordinateur en mode audit : il ne fait que rejouer le registre');
+    if (this.options.replay && !replay) throw new Error('Coordinator in audit mode: it only replays the registry');
     const at = replay ? replay.at : this.baseNow();
     this.clock = at;
     this.replayCtx = replay ? { alea: [...replay.alea], alea_secret: [...replay.alea_secret], signatures: [...replay.signatures], secrets: replay.secrets } : null;
@@ -555,9 +555,9 @@ export class Coordinator {
     this.registry.begin();
     try {
       const out = fn();
-      // Tirés avec la balise, les aléas sont recalculés et non repris : on ne contrôle que les signatures.
+      // Drawn with the beacon, the random numbers are recomputed, not taken over: only the signatures are checked.
       if (this.replayCtx && ((!this.tirageBalise && this.replayCtx.alea.length) || this.replayCtx.alea_secret.length || this.replayCtx.signatures.length)) {
-        throw new ReplayDivergence('Le rejeu a consommé moins de tirages ou de signatures que l’original');
+        throw new ReplayDivergence('The replay consumed fewer draws or signatures than the original');
       }
       const alea = this.tirageBalise ? this.tirageBalise.tirages : replay ? replay.alea : this.recording!.alea;
       const alea_secret = replay ? replay.alea_secret : this.recording!.alea_secret;
@@ -585,39 +585,39 @@ export class Coordinator {
     }
   }
 
-  /** La balise annoncée au lancement, en direct comme au rejeu. */
+  /** The beacon announced at launch, live as on replay. */
   baliseAnnoncee(): BaliseAnnoncee | undefined {
     if (this.options.replay) return this.options.replay.balise;
     return this.options.balise ? { ...this.options.balise.info, decalage: this.params.balise_decalage } : undefined;
   }
 
   /**
-   * Prendre du travail, avec un tirage que personne ne contrôle (P1-3) : la demande signée à
-   * l'instant `ts` est tirée avec le tour drand tourA(ts) + décalage, qui n'existait pas encore
-   * quand le contributeur a signé. Sans balise configurée, c'est un claim ordinaire.
+   * Take work, with a draw nobody controls (P1-3): the request signed at
+   * time `ts` is drawn with drand round tourA(ts) + offset, which did not exist yet
+   * when the contributor signed. Without a configured beacon, it is an ordinary claim.
    */
   async reclamer(r: Requete): Promise<Assignment | null> {
     const src = this.options.balise;
     if (!src) return this.claim(r);
-    if (r?.type !== 'osp.requete/0.1' || r.action !== 'claim') throw new OspError('Requête claim attendue');
-    if (!isContributorId(r.contributeur) || !verifyObject(r, r.contributeur)) throw new OspError('Signature de la requête invalide', 401);
+    if (r?.type !== 'osp.requete/0.1' || r.action !== 'claim') throw new OspError('Expected a claim request');
+    if (!isContributorId(r.contributeur) || !verifyObject(r, r.contributeur)) throw new OspError('Invalid request signature', 401);
     if (typeof r.ts !== 'number' || Math.abs(this.baseNow() - r.ts) > this.params.fenetre_balise_ms) {
-      throw new OspError('Ton horloge est trop éloignée de celle du coordinateur pour un tirage équitable : synchronise-la', 401);
+      throw new OspError("Your clock is too far from the coordinator's for a fair draw: synchronize it", 401);
     }
     let b: Balise;
     try {
       b = await src.get(tourA(src.info, r.ts) + this.params.balise_decalage);
     } catch (e) {
-      throw new OspError(`Balise d'aléa indisponible : ${(e as Error).message}`, 503);
+      throw new OspError(`Randomness beacon unavailable: ${(e as Error).message}`, 503);
     }
     return this.claimAvecBalise(r, b);
   }
 
   private claimAvecBalise(r: Requete, b: Balise): Assignment | null {
     const info = this.baliseAnnoncee();
-    if (!info) throw new ReplayDivergence('Balise utilisée sans avoir été annoncée au lancement');
-    if (b.round !== tourA(info, r.ts) + info.decalage) throw new ReplayDivergence(`Tour de balise ${b.round} contraire à la règle (attendu ${tourA(info, r.ts) + info.decalage})`);
-    if (!verifierBalise(info, b)) throw new ReplayDivergence(`Balise du tour ${b.round} invalide`);
+    if (!info) throw new ReplayDivergence('Beacon used without being announced at launch');
+    if (b.round !== tourA(info, r.ts) + info.decalage) throw new ReplayDivergence(`Beacon round ${b.round} breaks the rule (expected ${tourA(info, r.ts) + info.decalage})`);
+    if (!verifierBalise(info, b)) throw new ReplayDivergence(`Invalid beacon for round ${b.round}`);
     const tirage = { rng: rngDepuis(graine(b, hashOf(r))), balise: b, tirages: [] as number[] };
     this.tirageBalise = tirage;
     try {
@@ -630,45 +630,45 @@ export class Coordinator {
     }
   }
 
-  /** Révèle un secret du coffre et l'inscrit dans la commande ; au rejeu, le reprend et vérifie l'engagement. */
+  /** Reveals a secret from the vault and records it in the command; on replay, takes it back and checks the commitment. */
   private reveal(hash: Hash): unknown {
     if (this.replayCtx) {
       const v = this.replayCtx.secrets[hash];
-      if (v === undefined || commitment(v) !== hash) throw new ReplayDivergence('Secret révélé absent ou contraire à son engagement');
+      if (v === undefined || commitment(v) !== hash) throw new ReplayDivergence('Revealed secret missing or not matching its commitment');
       return v;
     }
     const v = this.coffre[hash];
-    if (v === undefined) throw new OspError('Secret absent du coffre de ce coordinateur', 500);
+    if (v === undefined) throw new OspError("Secret missing from this coordinator's vault", 500);
     this.recording!.secrets[hash] = v;
     return v;
   }
 
-  /** Les tests cachés d'une alvéole, sortis du coffre, pour le vérificateur. */
+  /** A cell's hidden tests, taken out of the vault, for the verifier. */
   private cachesFor(rec: CellRecord): TestCase[] | undefined {
     const c = rec.cell.critere_fini;
     if (c.verificateur !== 'tests-js@1' || !c.tests_caches_hash) return undefined;
     const v = this.coffre[c.tests_caches_hash] as TestCase[] | undefined;
-    if (!v) throw new OspError('Les tests cachés de cette alvéole ne sont pas dans le coffre de ce coordinateur', 503);
+    if (!v) throw new OspError("This cell's hidden tests are not in this coordinator's vault", 503);
     return v;
   }
 
-  /** Vérifie que chaque secret correspond à l'engagement publié dans le critère. */
+  /** Checks that each secret matches the commitment published in the criterion. */
   private checkSecrets(spec: CellSpec, secret: Secrets | undefined, label: string): void {
     const c = spec.critere_fini;
     if (c.verificateur !== 'tests-js@1') {
-      if (secret?.tests_caches || secret?.reference) throw new OspError(`${label} : ce type de critère n'a pas de secrets`);
+      if (secret?.tests_caches || secret?.reference) throw new OspError(`${label}: this type of criterion has no secrets`);
       return;
     }
     if (c.tests_caches_hash) {
-      if (!secret?.tests_caches) throw new OspError(`${label} : les tests cachés annoncés n'ont pas été envoyés`);
-      try { validateTests(secret.tests_caches, 'hidden tests'); } catch (e) { throw new OspError(`${label} : ${(e as Error).message}`); }
-      if (commitment(secret.tests_caches) !== c.tests_caches_hash) throw new OspError(`${label} : les tests cachés ne correspondent pas à leur engagement`);
-    } else if (secret?.tests_caches) throw new OspError(`${label} : envoie l'engagement tests_caches_hash avec les tests cachés`);
+      if (!secret?.tests_caches) throw new OspError(`${label}: the announced hidden tests were not sent`);
+      try { validateTests(secret.tests_caches, 'hidden tests'); } catch (e) { throw new OspError(`${label}: ${(e as Error).message}`); }
+      if (commitment(secret.tests_caches) !== c.tests_caches_hash) throw new OspError(`${label}: the hidden tests do not match their commitment`);
+    } else if (secret?.tests_caches) throw new OspError(`${label}: send the tests_caches_hash commitment with the hidden tests`);
     if (c.reference_hash) {
-      if (!secret?.reference) throw new OspError(`${label} : la référence annoncée n'a pas été envoyée`);
-      try { validateLivrable(secret.reference); } catch (e) { throw new OspError(`${label} : référence invalide : ${(e as Error).message}`); }
-      if (commitment(secret.reference) !== c.reference_hash) throw new OspError(`${label} : la référence ne correspond pas à son engagement`);
-    } else if (secret?.reference) throw new OspError(`${label} : envoie l'engagement reference_hash avec la référence`);
+      if (!secret?.reference) throw new OspError(`${label}: the announced reference was not sent`);
+      try { validateLivrable(secret.reference); } catch (e) { throw new OspError(`${label}: invalid reference: ${(e as Error).message}`); }
+      if (commitment(secret.reference) !== c.reference_hash) throw new OspError(`${label}: the reference does not match its commitment`);
+    } else if (secret?.reference) throw new OspError(`${label}: send the reference_hash commitment with the reference`);
   }
 
   private storeSecrets(secrets: Array<Secrets | undefined>): void {
@@ -684,13 +684,13 @@ export class Coordinator {
     }
   }
 
-  /** Signe au nom du coordinateur ; au rejeu, reprend la signature inscrite et la vérifie. */
+  /** Signs on behalf of the coordinator; on replay, takes the recorded signature and checks it. */
   private sign<T extends object>(obj: T, who: Identity): T & { sig: string } {
     if (this.replayCtx) {
       const sig = this.replayCtx.signatures.shift();
-      if (sig === undefined) throw new ReplayDivergence('Signature attendue absente du registre');
+      if (sig === undefined) throw new ReplayDivergence('Expected signature missing from the registry');
       const signed = { ...obj, sig } as T & { sig: string };
-      if (!verifyObject(signed, who.id)) throw new ReplayDivergence('Signature du coordinateur invalide au rejeu');
+      if (!verifyObject(signed, who.id)) throw new ReplayDivergence('Invalid coordinator signature on replay');
       return signed;
     }
     const signed = signObject(obj, who);
@@ -702,23 +702,23 @@ export class Coordinator {
     return this.state.fondateur;
   }
 
-  // ---------------------------------------------------------------- ruches
+  // ---------------------------------------------------------------- hives
 
   proposeHive(ruche: Hive, racine: CellSpec, secrets?: Secrets): HiveView {
-    if (!this.replayNext) this.checkSecrets(racine, secrets, 'Cœur de la ruche');
+    if (!this.replayNext) this.checkSecrets(racine, secrets, 'Heart of the hive');
     const out = this.run('proposeHive', { ruche, racine }, [], () => this.doProposeHive(ruche, racine));
     if (!this.options.replay) this.storeSecrets([secrets]);
     return out;
   }
 
   private doProposeHive(ruche: Hive, racine: CellSpec): HiveView {
-    if (ruche?.type !== 'osp.hive/0.1') throw new OspError('Objet ruche attendu (osp.hive/0.1)');
-    if (!isContributorId(ruche.porteur)) throw new OspError('Porteur invalide');
-    if (!verifyObject(ruche, ruche.porteur)) throw new OspError('Signature de la ruche invalide', 401);
-    if (!SLUG_RE.test(ruche.slug)) throw new OspError('Slug invalide : 3 à 40 caractères, minuscules, chiffres et tirets');
-    if (this.state.hives[ruche.slug]) throw new OspError(`La ruche « ${ruche.slug} » existe déjà`, 409);
-    if (!ruche.nom || !ruche.objectif) throw new OspError('Une ruche a besoin d’un nom et d’un objectif');
-    if (ruche.classe_verif_defaut !== 'V0') throw new OspError('Le MVP ne gère que la classe de vérification V0');
+    if (ruche?.type !== 'osp.hive/0.1') throw new OspError('Expected a hive object (osp.hive/0.1)');
+    if (!isContributorId(ruche.porteur)) throw new OspError('Invalid hive owner');
+    if (!verifyObject(ruche, ruche.porteur)) throw new OspError('Invalid hive signature', 401);
+    if (!SLUG_RE.test(ruche.slug)) throw new OspError('Invalid slug: 3 to 40 characters, lowercase letters, digits and hyphens');
+    if (this.state.hives[ruche.slug]) throw new OspError(`The hive "${ruche.slug}" already exists`, 409);
+    if (!ruche.nom || !ruche.objectif) throw new OspError('A hive needs a name and a goal');
+    if (ruche.classe_verif_defaut !== 'V0') throw new OspError('The MVP only supports verification class V0');
     this.validateSpec(racine);
 
     const hive: HiveRecord = {
@@ -770,7 +770,7 @@ export class Coordinator {
     };
   }
 
-  /** Instantané complet d'une ruche pour la vue en direct : alvéoles, abeilles au travail, classement, journal. */
+  /** Complete snapshot of a hive for the live view: cells, bees at work, leaderboard, log. */
   liveView(slug: string): LiveView {
     const hive = this.hiveOrThrow(slug);
     const now = this.now();
@@ -788,7 +788,7 @@ export class Coordinator {
       .sort((a, b) => b.grammes - a.grammes)
       .slice(0, 20);
 
-    // Le journal public s'arrête à l'horizon de l'embargo (P0-3).
+    // The public log stops at the embargo horizon (P0-3).
     const journal = this.registry.entries
       .slice(0, this.horizon() + 1)
       .filter((e) => {
@@ -813,7 +813,7 @@ export class Coordinator {
         profondeur: c.profondeur,
         rejets: c.rejets,
         abeille: actif(c.bail),
-        // Une gardienne qui a reçu un piège apparaît comme les autres : la vue publique ne trahit rien.
+        // A guard who received a trap appears like the others: the public view gives nothing away.
         gardiennes: [
           ...c.gardiennes.filter((g) => g.expire > now).map((g) => g.par),
           ...this.engagesSur(c.en_attente).map((e) => e.par),
@@ -827,7 +827,7 @@ export class Coordinator {
     };
   }
 
-  /** Le tableau noir public, sans l'identifiant du résultat source : une gardienne le comparerait à son ticket (P0-3). */
+  /** The public board, without the source result's identifier: a guard would compare it with their ticket (P0-3). */
   board(slug: string): Array<Omit<BoardEntry, 'source'>> {
     this.hiveOrThrow(slug);
     return (this.state.board[slug] ?? []).map(({ source: _source, ...e }) => e);
@@ -846,25 +846,25 @@ export class Coordinator {
     return rec?.resultat_valide ? this.state.results[rec.resultat_valide]?.livrable : undefined;
   }
 
-  // ---------------------------------------------------------------- gouvernance
+  // ---------------------------------------------------------------- governance
 
   decide(d: Decision): { decision: Hash } {
     return this.run('decide', { decision: d }, [], () => this.doDecide(d));
   }
 
   private doDecide(d: Decision): { decision: Hash } {
-    if (d?.type !== 'osp.decision/0.1') throw new OspError('Objet décision attendu (osp.decision/0.1)');
-    if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Signature de la décision invalide', 401);
-    if (!d.motif?.trim()) throw new OspError('Toute décision doit être motivée (principe 5)');
+    if (d?.type !== 'osp.decision/0.1') throw new OspError('Expected a decision object (osp.decision/0.1)');
+    if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Invalid decision signature', 401);
+    if (!d.motif?.trim()) throw new OspError('Every decision must state its reason (principle 5)');
     const id = hashOf(d);
     const estFondateur = d.auteur === this.state.fondateur;
 
     switch (d.nature) {
       case 'approbation_ruche':
       case 'refus_ruche': {
-        if (!estFondateur) throw new OspError('Pendant la phase pilote (§14.2), seul le fondateur admet les ruches', 403);
+        if (!estFondateur) throw new OspError('During the pilot phase (§14.2), only the founder admits hives', 403);
         const hive = this.hiveOrThrow(d.cible);
-        if (hive.statut !== 'proposee') throw new OspError(`La ruche est déjà ${hive.statut}`, 409);
+        if (hive.statut !== 'proposee') throw new OspError(`The hive is already ${hive.statut}`, 409);
         hive.statut = d.nature === 'approbation_ruche' ? 'active' : 'refusee';
         if (hive.statut === 'active') this.grant(hive.ruche.porteur, 'hive_owner', hive.ruche.slug);
         break;
@@ -874,7 +874,7 @@ export class Coordinator {
         const hive = this.hiveOrThrow(d.cible);
         this.requirePorteurOuFondateur(hive, d.auteur);
         const [de, vers]: [HiveStatus, HiveStatus] = d.nature === 'pause' ? ['active', 'en_pause'] : ['en_pause', 'active'];
-        if (hive.statut !== de) throw new OspError(`Impossible : la ruche est ${hive.statut}`, 409);
+        if (hive.statut !== de) throw new OspError(`Impossible: the hive is ${hive.statut}`, 409);
         hive.statut = vers;
         break;
       }
@@ -884,21 +884,21 @@ export class Coordinator {
         this.requirePorteurOuFondateur(hive, d.auteur);
         const m = d.params?.multiplicateur ?? this.params.orientation_max;
         if (!(m >= 1 && m <= this.params.orientation_max)) {
-          throw new OspError(`Le multiplicateur d'orientation doit être entre 1 et ${this.params.orientation_max}`);
+          throw new OspError(`The orientation multiplier must be between 1 and ${this.params.orientation_max}`);
         }
         const existe = this.cellsOf(slug).some((c) => brancheOf(c.cell.chemin) === branche);
-        if (!existe) throw new OspError(`Branche inconnue : ${branche}`, 404);
+        if (!existe) throw new OspError(`Unknown branch: ${branche}`, 404);
         hive.orientations.push({ branche, multiplicateur: m, expire: this.now() + this.params.orientation_duree_ms, auteur: d.auteur, decision: id });
         break;
       }
       case 'approbation_decoupage':
       case 'refus_decoupage': {
         const dr = this.state.decompositions[d.cible];
-        if (!dr) throw new OspError('Découpage inconnu', 404);
+        if (!dr) throw new OspError('Unknown split', 404);
         const rec = this.cellOrThrow(dr.decomposition.alveole);
         const hive = this.hiveOrThrow(rec.cell.ruche);
-        if (d.auteur !== hive.ruche.porteur) throw new OspError('Seul le porteur approuve les découpages des premiers niveaux (§6.3)', 403);
-        if (dr.statut !== 'en_attente' || rec.en_attente !== d.cible) throw new OspError('Ce découpage n’attend pas de décision', 409);
+        if (d.auteur !== hive.ruche.porteur) throw new OspError('Only the hive owner approves splits at the first levels (§6.3)', 403);
+        if (dr.statut !== 'en_attente' || rec.en_attente !== d.cible) throw new OspError('This split is not awaiting a decision', 409);
         if (d.nature === 'approbation_decoupage') this.applyDecomposition(rec, d.cible);
         else {
           dr.statut = 'refusee';
@@ -913,27 +913,27 @@ export class Coordinator {
       }
       case 'arbitrage_valide':
       case 'arbitrage_rejet': {
-        // OSP v0.2 §4.4 : sans conclusion des gardiennes, le porteur tranche, publiquement et motivé.
+        // OSP v0.2 §4.4: when the guards reach no conclusion, the hive owner decides, publicly and with a stated reason.
         const rr = this.state.results[d.cible];
-        if (!rr) throw new OspError('Résultat inconnu', 404);
+        if (!rr) throw new OspError('Unknown result', 404);
         const rec = this.cellOrThrow(rr.resultat.alveole);
         this.requirePorteurOuFondateur(this.hiveOrThrow(rec.cell.ruche), d.auteur);
-        if (!rr.escalade || rec.state !== 'en_verification' || rec.en_attente !== d.cible) throw new OspError('Ce résultat n’attend pas d’arbitrage', 409);
+        if (!rr.escalade || rec.state !== 'en_verification' || rec.en_attente !== d.cible) throw new OspError('This result is not awaiting arbitration', 409);
         if (d.nature === 'arbitrage_valide') this.validate(rec, d.cible, rec.verdicts.slice(), true);
         else this.rejectResult(rec, d.cible, `Arbitrage du porteur : ${d.motif}`);
         break;
       }
       default:
-        throw new OspError(`Nature de décision inconnue : ${String((d as Decision).nature)}`);
+        throw new OspError(`Unknown decision nature: ${String((d as Decision).nature)}`);
     }
     this.registry.append('decision', { id, ...d });
     return { decision: id };
   }
 
-  // ---------------------------------------------------------------- travail
+  // ---------------------------------------------------------------- work
 
   claim(r: Requete): Assignment | null {
-    if (this.options.balise && !this.replayNext) throw new OspError('Ce coordinateur tire au sort avec la balise publique : passe par reclamer()', 400);
+    if (this.options.balise && !this.replayNext) throw new OspError('This coordinator draws lots with the public beacon: go through reclamer()', 400);
     return this.run('claim', { requete: r }, [], () => this.doClaim(r));
   }
 
@@ -942,15 +942,15 @@ export class Coordinator {
     this.expire();
     const who = r.contributeur;
     if (this.leasesOf(who) >= this.params.abeilles_max) {
-      throw new OspError(`Maximum ${this.params.abeilles_max} abeilles simultanées par contributeur`, 429);
+      throw new OspError(`At most ${this.params.abeilles_max} simultaneous bees per contributor`, 429);
     }
     if (r.ruche !== undefined) this.hiveOrThrow(r.ruche);
     const hives = Object.values(this.state.hives).filter((h) => h.statut === 'active' && (r.ruche === undefined || h.ruche.slug === r.ruche));
     const slugs = new Set(hives.map((h) => h.ruche.slug));
     const cells = Object.values(this.state.cells).filter((c) => slugs.has(c.cell.ruche));
 
-    // Verrous 1 et 2 (§9.2) : des gardiennes distinctes, tirées au sort, jamais l'auteur ; autant que
-    // le test de Wald en demande (OSP v0.2 P0-4), jamais moins que le plancher.
+    // Locks 1 and 2 (§9.2): distinct guards, drawn by lot, never the author; as many as
+    // the Wald test requires (OSP v0.2 P0-4), never fewer than the floor.
     const aVerifier = cells.filter((c) => {
       if (c.state !== 'en_verification' || !c.en_attente) return false;
       const rr = this.state.results[c.en_attente];
@@ -966,8 +966,8 @@ export class Coordinator {
       const rec = aVerifier[Math.floor(this.rng() * aVerifier.length)]!;
       const rr = this.state.results[rec.en_attente!]!;
       const expire = this.leaseEnd(rec);
-      // Verrou 4 (§9.4, OSP v0.2 P0-3) : à la place du vrai résultat, un mutant de celui-ci, avec un
-      // taux propre à chaque gardienne. Même alvéole, même place, même bail : rien ne le distingue.
+      // Lock 4 (§9.4, OSP v0.2 P0-3): instead of the real result, a mutant of it, at a
+      // rate specific to each guard. Same cell, same slot, same lease: nothing tells it apart.
       if (this.piegeable(rr)) {
         const taux = this.tauxPieges(who);
         const piege = this.rngSecret() < taux;
@@ -979,7 +979,7 @@ export class Coordinator {
     }
     if (!libres.length) return null;
 
-    // On tire d'abord une ruche, puis une branche par Thompson (§12).
+    // First draw a hive, then a branch by Thompson sampling (§12).
     const ruchesLibres = [...new Set(libres.map((c) => c.cell.ruche))].sort();
     const slug = ruchesLibres[Math.floor(this.rng() * ruchesLibres.length)]!;
     const hive = this.state.hives[slug]!;
@@ -1007,7 +1007,7 @@ export class Coordinator {
   private doStart(r: Requete): { etat: CellState } {
     this.checkRequete(r, 'start');
     const rec = this.cellOrThrow(r.alveole);
-    if (rec.bail?.par !== r.contributeur) throw new OspError('Tu ne détiens pas le bail de cette alvéole', 403);
+    if (rec.bail?.par !== r.contributeur) throw new OspError('You do not hold the lease on this cell', 403);
     if (rec.state === 'reservee') transition(rec, 'en_cours');
     return { etat: rec.state };
   }
@@ -1043,18 +1043,18 @@ export class Coordinator {
     const replay = this.replayNext;
     const verifs = replay ? replay.verifs : await this.verifyResult(res, livrable);
     const [rapport, ...mutants] = verifs;
-    if (!rapport) throw new ReplayDivergence('Rapport de vérification absent du registre');
+    if (!rapport) throw new ReplayDivergence('Verification report missing from the registry');
     return this.run('submitResult', { resultat: res, livrable }, verifs, () => this.doSubmitResult(res, livrable, rapport, mutants));
   }
 
   /**
-   * Contrôles sans effet, puis vérification automatique, hors de la transaction. Si le livrable
-   * passe, on prépare de quoi fabriquer des pièges (P0-3) : ses mutants, passés aux seuls contrôles
-   * que rejouent les gardiennes. Ceux qu'elles rejettent pourront leur être confiés à la place du vrai.
+   * Side-effect-free checks, then automatic verification, outside the transaction. If the deliverable
+   * passes, we prepare what is needed to make traps (P0-3): its mutants, run through only the checks
+   * that the guards re-run. Those they reject can be handed to them in place of the real one.
    */
   private async verifyResult(res: Result, livrable: Livrable): Promise<VerifReport[]> {
     const rec = this.checkResult(res, livrable);
-    if (this.occupees.has(rec.id)) throw new OspError('Une vérification est déjà en cours pour cette alvéole', 409);
+    if (this.occupees.has(rec.id)) throw new OspError('A verification is already in progress for this cell', 409);
     this.occupees.add(rec.id);
     try {
       const rapport = await this.verifier(rec.cell.critere_fini, livrable, { caches: this.cachesFor(rec) });
@@ -1074,19 +1074,19 @@ export class Coordinator {
   }
 
   private checkResult(res: Result, livrable: Livrable): CellRecord {
-    if (res?.type !== 'osp.result/0.1') throw new OspError('Objet résultat attendu (osp.result/0.1)');
-    if (!isContributorId(res.auteur) || !verifyObject(res, res.auteur)) throw new OspError('Signature du résultat invalide', 401);
-    if (this.state.results[hashOf(res)]) throw new OspError('Résultat déjà soumis', 409);
+    if (res?.type !== 'osp.result/0.1') throw new OspError('Expected a result object (osp.result/0.1)');
+    if (!isContributorId(res.auteur) || !verifyObject(res, res.auteur)) throw new OspError('Invalid result signature', 401);
+    if (this.state.results[hashOf(res)]) throw new OspError('Result already submitted', 409);
     const rec = this.cellOrThrow(res.alveole);
-    if (rec.bail?.par !== res.auteur) throw new OspError('Tu ne détiens pas le bail de cette alvéole', 403);
-    if (rec.bail.caste !== res.caste) throw new OspError(`Ta caste pour cette alvéole est « ${rec.bail.caste} »`, 409);
-    if (rec.state !== 'reservee' && rec.state !== 'en_cours') throw new OspError(`L'alvéole est ${rec.state}`, 409);
+    if (rec.bail?.par !== res.auteur) throw new OspError('You do not hold the lease on this cell', 403);
+    if (rec.bail.caste !== res.caste) throw new OspError(`Your caste for this cell is "${rec.bail.caste}"`, 409);
+    if (rec.state !== 'reservee' && rec.state !== 'en_cours') throw new OspError(`The cell is ${rec.state}`, 409);
     try {
       validateLivrable(livrable);
     } catch (e) {
       throw new OspError((e as Error).message);
     }
-    if (hashOf(livrable) !== res.livrable) throw new OspError('Le hash du livrable ne correspond pas au résultat signé');
+    if (hashOf(livrable) !== res.livrable) throw new OspError('The deliverable hash does not match the signed result');
     return rec;
   }
 
@@ -1096,14 +1096,14 @@ export class Coordinator {
     rapport: VerifReport,
     essais: VerifReport[],
   ): { statut: 'rejete' | 'en_verification' | 'miel'; resultat: Hash; rapport: VerifReport } {
-    // L'état a pu changer pendant la vérification : on recontrôle, dans la transaction.
+    // The state may have changed during verification: check again, inside the transaction.
     const rec = this.checkResult(res, livrable);
     if (rec.state === 'reservee') transition(rec, 'en_cours');
     const id = hashOf(res);
-    // Les mutants sont recalculés à l'identique (le moteur est déterministe) ; seuls les rapports viennent de l'exécution.
+    // The mutants are recomputed identically (the engine is deterministic); only the reports come from execution.
     const candidats = essais.length ? mutants(livrable, { max: this.params.pieges_essais, version: this.params.moteur_mutation }) : [];
-    if (essais.length > candidats.length) throw new ReplayDivergence('Plus de rapports de mutants que de mutants');
-    // Un bon piège se charge et passe une partie des tests : seule une vraie vérification le démasque.
+    if (essais.length > candidats.length) throw new ReplayDivergence('More mutant reports than mutants');
+    // A good trap loads and passes some of the tests: only a real verification exposes it.
     const pieges = essais
       .map((r, i) => ({ livrable: candidats[i]!.livrable, echecs: r.ok ? 0 : r.tests.filter((t) => !t.ok).length }))
       .filter((m) => m.echecs > 0)
@@ -1146,19 +1146,19 @@ export class Coordinator {
   }
 
   /**
-   * Hors de la transaction : les secrets correspondent-ils à leurs engagements, et les tests de chaque
-   * enfant qui fournit une référence sont-ils assez forts (score de mutation, OSP v0.2 §3.2) ?
+   * Outside the transaction: do the secrets match their commitments, and are the tests of each
+   * child that provides a reference strong enough (mutation score, OSP v0.2 §3.2)?
    */
   private async checkDecomposition(d: Decomposition, secrets: Array<Secrets | undefined>): Promise<VerifReport[]> {
     this.decompositionBasics(d);
     const reports: VerifReport[] = [];
     for (const [i, child] of d.enfants.entries()) {
-      const label = `Enfant ${i + 1} (« ${child.objectif.slice(0, 50)} »)`;
+      const label = `Child ${i + 1} ("${child.objectif.slice(0, 50)}")`;
       this.checkSecrets(child, secrets[i], label);
       const c = child.critere_fini;
       if (c.verificateur !== 'tests-js@1') continue;
       if (!c.reference_hash) {
-        if (this.params.reference_obligatoire) throw new OspError(`${label} : une implémentation de référence est exigée pour mesurer la force des tests`);
+        if (this.params.reference_obligatoire) throw new OspError(`${label}: a reference implementation is required to measure the strength of the tests`);
         continue;
       }
       const r = await adequation(c, secrets[i]?.tests_caches ?? [], secrets[i]!.reference!, {
@@ -1166,39 +1166,39 @@ export class Coordinator {
         moteurMutation: this.params.moteur_mutation,
         exigerMesure: this.params.reference_obligatoire,
       });
-      if (!r.ok) throw new OspError(`${label} : ${r.motif}`);
+      if (!r.ok) throw new OspError(`${label}: ${r.motif}`);
       reports.push(r);
     }
     return reports;
   }
 
-  /** Les contrôles du découpage qui ne demandent aucun calcul lourd. */
+  /** The split checks that need no heavy computation. */
   private decompositionBasics(d: Decomposition): CellRecord {
-    if (d?.type !== 'osp.decomposition/0.1') throw new OspError('Objet découpage attendu (osp.decomposition/0.1)');
-    if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Signature du découpage invalide', 401);
-    if (this.state.decompositions[hashOf(d)]) throw new OspError('Découpage déjà soumis', 409);
+    if (d?.type !== 'osp.decomposition/0.1') throw new OspError('Expected a split object (osp.decomposition/0.1)');
+    if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Invalid split signature', 401);
+    if (this.state.decompositions[hashOf(d)]) throw new OspError('Split already submitted', 409);
     const rec = this.cellOrThrow(d.alveole);
-    if (rec.bail?.par !== d.auteur || rec.bail.caste !== 'eclaireuse') throw new OspError('Tu n’es pas l’éclaireuse de cette alvéole', 403);
-    if (rec.state !== 'reservee' && rec.state !== 'en_cours') throw new OspError(`L'alvéole est ${rec.state}`, 409);
+    if (rec.bail?.par !== d.auteur || rec.bail.caste !== 'eclaireuse') throw new OspError('You are not the scout of this cell', 403);
+    if (rec.state !== 'reservee' && rec.state !== 'en_cours') throw new OspError(`The cell is ${rec.state}`, 409);
     const n = Array.isArray(d.enfants) ? d.enfants.length : 0;
     if (n < this.params.enfants_min || n > this.params.enfants_max) {
-      throw new OspError(`Un découpage compte entre ${this.params.enfants_min} et ${this.params.enfants_max} enfants`);
+      throw new OspError(`A split has between ${this.params.enfants_min} and ${this.params.enfants_max} children`);
     }
-    if (rec.profondeur + 1 > this.params.profondeur_max) throw new OspError('Profondeur maximale atteinte (§6.4)');
+    if (rec.profondeur + 1 > this.params.profondeur_max) throw new OspError('Maximum depth reached (§6.4)');
     d.enfants.forEach((e) => this.validateSpec(e));
     return rec;
   }
 
   private doSubmitDecomposition(d: Decomposition, verifs: VerifReport[]): { statut: 'en_attente_porteur' | 'adopte'; decoupage: Hash; enfants: Hash[] } {
-    // L'état a pu changer pendant la mesure des tests : on recontrôle, dans la transaction.
+    // The state may have changed while the tests were measured: check again, inside the transaction.
     const rec = this.decompositionBasics(d);
     const id = hashOf(d);
     const n = d.enfants.length;
-    // Un score de mutation par enfant qui annonce une référence, dans l'ordre.
+    // One mutation score per child that announces a reference, in order.
     const avecRef = d.enfants.filter((e) => e.critere_fini.verificateur === 'tests-js@1' && e.critere_fini.reference_hash).length;
-    if (verifs.length !== avecRef || verifs.some((r) => !r.ok || !r.mutation)) throw new OspError('Mesure de la force des tests manquante ou insuffisante');
+    if (verifs.length !== avecRef || verifs.some((r) => !r.ok || !r.mutation)) throw new OspError('Test strength measurement missing or insufficient');
     let k = 0;
-    // Une référence sans rien à muter n'a pas de mesure : comme un enfant sans référence.
+    // A reference with nothing to mutate has no measurement: like a child without a reference.
     const force_tests = d.enfants.map((e) => {
       if (e.critere_fini.verificateur !== 'tests-js@1' || !e.critere_fini.reference_hash) return null;
       const m = verifs[k++]!.mutation!;
@@ -1220,24 +1220,24 @@ export class Coordinator {
   }
 
   /**
-   * Première moitié d'un verdict (OSP v0.2, P1-3) : la gardienne publie le hash de son verdict,
-   * qui reste scellé. Les verdicts ne se révèlent que lorsque toutes les gardiennes du résultat
-   * se sont engagées : personne ne peut copier une autre ni s'aligner sur elle.
+   * First half of a verdict (OSP v0.2, P1-3): the guard publishes the hash of their verdict,
+   * which stays sealed. Verdicts are revealed only once all the guards of the result
+   * have committed: nobody can copy another one or align with them.
    */
   engagerVerdict(e: EngagementVerdict): { statut: 'engage'; revelation: boolean } {
     return this.run('engageVerdict', { engagement: e }, [], () => this.doEngagerVerdict(e));
   }
 
   private doEngagerVerdict(e: EngagementVerdict): { statut: 'engage'; revelation: boolean } {
-    if (e?.type !== 'osp.engagement/0.1') throw new OspError('Objet engagement attendu (osp.engagement/0.1)');
-    if (!isContributorId(e.gardienne) || !verifyObject(e, e.gardienne)) throw new OspError('Signature de l’engagement invalide', 401);
-    if (typeof e.engagement !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(e.engagement)) throw new OspError('Engagement invalide : sha256 attendu');
+    if (e?.type !== 'osp.engagement/0.1') throw new OspError('Expected a commitment object (osp.engagement/0.1)');
+    if (!isContributorId(e.gardienne) || !verifyObject(e, e.gardienne)) throw new OspError('Invalid commitment signature', 401);
+    if (typeof e.engagement !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(e.engagement)) throw new OspError('Invalid commitment: expected sha256');
     this.expire();
 
     const piege = this.state.pieges[e.resultat];
     if (piege) {
-      if (piege.attribue_a !== e.gardienne) throw new OspError('Ce résultat ne t’a pas été attribué', 403);
-      if (piege.engagement) throw new OspError('Tu t’es déjà engagée sur ce résultat', 409);
+      if (piege.attribue_a !== e.gardienne) throw new OspError('This result was not assigned to you', 403);
+      if (piege.engagement) throw new OspError('You have already committed on this result', 409);
       piege.engagement = e.engagement;
       piege.expire = this.leaseEnd(this.cellOrThrow(piege.alveole));
       this.registry.append('engagement', { resultat: e.resultat, gardienne: e.gardienne, engagement: e.engagement });
@@ -1245,48 +1245,48 @@ export class Coordinator {
     }
 
     const rr = this.state.results[e.resultat];
-    if (!rr) throw new OspError('Résultat inconnu', 404);
+    if (!rr) throw new OspError('Unknown result', 404);
     const rec = this.cellOrThrow(rr.resultat.alveole);
-    if (rec.state !== 'en_verification' || rec.en_attente !== e.resultat) throw new OspError('Ce résultat n’attend plus de vérification', 409);
-    if (!rec.gardiennes.some((g) => g.par === e.gardienne)) throw new OspError('Tu n’es pas une gardienne tirée pour ce résultat', 403);
-    if (rr.resultat.auteur === e.gardienne) throw new OspError('On ne vérifie pas son propre travail (§7.3)', 403);
+    if (rec.state !== 'en_verification' || rec.en_attente !== e.resultat) throw new OspError('This result is no longer awaiting verification', 409);
+    if (!rec.gardiennes.some((g) => g.par === e.gardienne)) throw new OspError('You are not a guard drawn for this result', 403);
+    if (rr.resultat.auteur === e.gardienne) throw new OspError('You cannot verify your own work (§7.3)', 403);
     rec.gardiennes = rec.gardiennes.filter((g) => g.par !== e.gardienne);
     const liste = (this.state.engagements[e.resultat] ??= []);
     liste.push({ par: e.gardienne, engagement: e.engagement, expire: this.leaseEnd(rec) });
     this.registry.append('engagement', { resultat: e.resultat, gardienne: e.gardienne, engagement: e.engagement });
     const ouverte = this.revelationOuverte(rec, e.resultat);
-    // La fenêtre de révélation part du moment où elle s'ouvre, pour chacune.
+    // The reveal window starts when it opens, for each of them.
     if (ouverte) for (const x of liste) x.expire = this.leaseEnd(rec);
     return { statut: 'engage', revelation: ouverte };
   }
 
-  /** Toutes les places de gardienne ouvertes sur le résultat sont engagées : on peut révéler. */
+  /** All the guard slots open on the result have committed: the reveal can start. */
   private revelationOuverte(rec: CellRecord, resultat: Hash): boolean {
     const pieges = this.piegesSur(rec);
     return rec.gardiennes.length === 0 && pieges.every((p) => p.engagement) && this.engagesSur(resultat).length + pieges.length >= this.placesRequises(rec);
   }
 
-  // ---------------------------------------------------------------- P0-4 : test séquentiel de Wald
+  // ---------------------------------------------------------------- P0-4: Wald sequential test
 
-  /** La log-cote au-delà de laquelle P(faux) ≤ α*. */
+  /** The log-odds beyond which P(false) ≤ α*. */
   private seuilWald(): number {
     return logit(1 - this.params.alpha_faux);
   }
 
-  /** Le poids d'un « valide » de cette gardienne : log(c / (1 − s)) sur les bornes basses de sa fiabilité. */
+  /** The weight of a "valid" from this guard: log(c / (1 − s)) on the lower bounds of their reliability. */
   poids(id: ContributorId): number {
     return poidsValide(this.state.fiabilite[id] ?? VIERGE, this.params);
   }
 
-  /** Une observation de plus sur la fiabilité d'une gardienne, quand la vérité est connue. */
+  /** One more observation of a guard's reliability, when the truth is known. */
   private noter(id: ContributorId, quoi: 's' | 'c', ok: boolean): void {
     observer((this.state.fiabilite[id] ??= { ...VIERGE }), quoi, ok, this.params.oubli_fiabilite);
   }
 
   /**
-   * Les places de gardienne à pourvoir sur le résultat en attente : de quoi franchir le seuil de Wald
-   * avec des gardiennes de fiabilité inconnue (les plus prudemment pesées), et jamais moins que le
-   * plancher. Des gardiennes plus fiables concluent plus tôt ; les places en trop se referment.
+   * The guard slots to fill on the pending result: enough to cross the Wald threshold
+   * with guards of unknown reliability (the most cautiously weighted), and never fewer than the
+   * floor. More reliable guards conclude sooner; the extra slots close.
    */
   private placesRequises(rec: CellRecord): number {
     const rr = rec.en_attente ? this.state.results[rec.en_attente] : undefined;
@@ -1298,7 +1298,7 @@ export class Coordinator {
     return Math.max(0, Math.min(places, this.params.verdicts_max - (rec.nb_verdicts ?? 0)));
   }
 
-  /** Sans conclusion possible par les gardiennes, le résultat part en arbitrage chez le porteur (§4.4). */
+  /** When the guards cannot reach a conclusion, the result goes to the hive owner for arbitration (§4.4). */
   private escalader(rec: CellRecord, rr: ResultRecord, motif: string): void {
     rr.escalade = true;
     this.registry.append('escalade', { alveole: rec.id, chemin: rec.cell.chemin, resultat: rec.en_attente, motif });
@@ -1308,14 +1308,14 @@ export class Coordinator {
     return resultat ? (this.state.engagements[resultat] ?? []) : [];
   }
 
-  /** Seconde moitié d'un verdict : la révélation, qui doit correspondre à l'engagement. */
+  /** Second half of a verdict: the reveal, which must match the commitment. */
   async submitVerdict(v: Verdict): Promise<{ statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number }> {
     const replay = this.replayNext;
     const rejeu = replay ? (replay.verifs[0] ?? null) : await this.rejeuFor(v);
     return this.run('submitVerdict', { verdict: v }, rejeu ? [rejeu] : [], () => this.doSubmitVerdict(v, rejeu));
   }
 
-  /** Le rejet d'un résultat accepté par le vérificateur automatique déclenche un rejeu (§9.5, version MVP). */
+  /** Rejecting a result accepted by the automatic verifier triggers a re-run (§9.5, MVP version). */
   private async rejeuFor(v: Verdict): Promise<VerifReport | null> {
     if (v?.type !== 'osp.verdict/0.1' || v.decision !== 'rejete' || this.state.pieges[v.resultat]) return null;
     const rr = this.state.results[v.resultat];
@@ -1326,18 +1326,18 @@ export class Coordinator {
   }
 
   private doSubmitVerdict(v: Verdict, rejeu: VerifReport | null): { statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number } {
-    if (v?.type !== 'osp.verdict/0.1') throw new OspError('Objet verdict attendu (osp.verdict/0.1)');
-    if (!isContributorId(v.gardienne) || !verifyObject(v, v.gardienne)) throw new OspError('Signature du verdict invalide', 401);
-    if (!['valide', 'rejete', 'abstention'].includes(v.decision)) throw new OspError('Décision invalide');
-    if (typeof v.sel !== 'string' || !/^[0-9a-f]{64,}$/.test(v.sel)) throw new OspError('Sel du verdict absent ou trop court (32 octets en hexadécimal)');
+    if (v?.type !== 'osp.verdict/0.1') throw new OspError('Expected a verdict object (osp.verdict/0.1)');
+    if (!isContributorId(v.gardienne) || !verifyObject(v, v.gardienne)) throw new OspError('Invalid verdict signature', 401);
+    if (!['valide', 'rejete', 'abstention'].includes(v.decision)) throw new OspError('Invalid decision');
+    if (typeof v.sel !== 'string' || !/^[0-9a-f]{64,}$/.test(v.sel)) throw new OspError('Verdict salt missing or too short (32 bytes in hexadecimal)');
     this.expire();
     const h = hashOf(v);
 
     const piege = this.state.pieges[v.resultat];
     if (piege) {
-      if (piege.attribue_a !== v.gardienne) throw new OspError('Ce résultat ne t’a pas été attribué', 403);
-      if (!piege.engagement) throw new OspError('Engage-toi d’abord sur ton verdict (osp.engagement/0.1)', 409);
-      if (piege.engagement !== h) throw new OspError('Ce verdict ne correspond pas à ton engagement', 400);
+      if (piege.attribue_a !== v.gardienne) throw new OspError('This result was not assigned to you', 403);
+      if (!piege.engagement) throw new OspError('Commit to your verdict first (osp.engagement/0.1)', 409);
+      if (piege.engagement !== h) throw new OspError('This verdict does not match your commitment', 400);
       delete this.state.pieges[v.resultat];
       const ruche = this.state.cells[piege.alveole]?.cell.ruche;
       let correct: boolean | null = null;
@@ -1345,7 +1345,7 @@ export class Coordinator {
         correct = true;
         this.ledger.award(v.gardienne, this.params.bonus_piege, 'piège déjoué', ruche);
         this.ledger.reputation(v.gardienne, 'confirme');
-        // Un piège est un résultat faux dont on connaît la vérité : il mesure la sensibilité.
+        // A trap is a false result whose truth is known: it measures sensitivity.
         this.noter(v.gardienne, 's', true);
         this.registry.append('piege_dejoue', { gardienne: v.gardienne, alveole: piege.alveole });
         this.grant(v.gardienne, 'trap_hunter', ruche);
@@ -1359,32 +1359,32 @@ export class Coordinator {
     }
 
     const rr = this.state.results[v.resultat];
-    if (!rr) throw new OspError('Résultat inconnu', 404);
+    if (!rr) throw new OspError('Unknown result', 404);
     const rec = this.cellOrThrow(rr.resultat.alveole);
-    if (rr.resultat.auteur === v.gardienne) throw new OspError('On ne vérifie pas son propre travail (§7.3)', 403);
+    if (rr.resultat.auteur === v.gardienne) throw new OspError('You cannot verify your own work (§7.3)', 403);
     const liste = this.engagesSur(v.resultat);
     const eng = liste.find((e) => e.par === v.gardienne);
     if (!eng) {
       throw new OspError(
-        rec.gardiennes.some((g) => g.par === v.gardienne) ? 'Engage-toi d’abord sur ton verdict (osp.engagement/0.1)' : 'Aucun engagement de ta part sur ce résultat',
+        rec.gardiennes.some((g) => g.par === v.gardienne) ? 'Commit to your verdict first (osp.engagement/0.1)' : 'No commitment from you on this result',
         409,
       );
     }
-    if (eng.engagement !== h) throw new OspError('Ce verdict ne correspond pas à ton engagement', 400);
+    if (eng.engagement !== h) throw new OspError('This verdict does not match your commitment', 400);
     const enCours = rec.state === 'en_verification' && rec.en_attente === v.resultat;
     if (enCours && !this.revelationOuverte(rec, v.resultat)) {
-      throw new OspError('Révélation pas encore ouverte : d’autres gardiennes doivent encore s’engager', 425);
+      throw new OspError('Reveal not open yet: other guards still have to commit', 425);
     }
     const reste = liste.filter((e) => e !== eng);
     if (reste.length) this.state.engagements[v.resultat] = reste;
     else delete this.state.engagements[v.resultat];
-    // Le poids de ce « valide » dans le test de Wald, selon la fiabilité de la gardienne à cet instant.
+    // The weight of this "valid" in the Wald test, based on the guard's reliability at this moment.
     const poids = enCours && v.decision === 'valide' ? this.poids(v.gardienne) : undefined;
     this.registry.append('verdict', { resultat: v.resultat, gardienne: v.gardienne, decision: v.decision, motif: v.motif, engagement: h, ...(poids !== undefined ? { poids } : {}) });
 
     if (!enCours) {
-      // Révélation tardive : le résultat a été tranché pendant que ce verdict était scellé.
-      // On la juge quand même : se taire coûte plus cher que d'avoir eu tort.
+      // Late reveal: the result was settled while this verdict was sealed.
+      // It is judged anyway: staying silent costs more than having been wrong.
       if (v.decision === 'abstention') return { statut: rr.statut };
       const juste = (v.decision === 'rejete') === (rr.statut === 'rejete');
       this.ledger.reputation(v.gardienne, juste ? 'confirme' : 'renverse');
@@ -1394,7 +1394,7 @@ export class Coordinator {
     rec.nb_verdicts = (rec.nb_verdicts ?? 0) + 1;
 
     if (v.decision === 'valide') {
-      // Test de Wald (OSP v0.2 §4.2) : chaque « valide » ajoute log(c / (1 − s)) à la log-cote.
+      // Wald test (OSP v0.2 §4.2): each "valid" adds log(c / (1 − s)) to the log-odds.
       rec.verdicts.push(v.gardienne);
       rec.cote = Math.round(((rec.cote ?? logit(this.params.p_juste_initiale)) + poids!) * 1e9) / 1e9;
       if (rec.verdicts.length >= Math.max(1, this.params.gardiennes_v0) && rec.cote >= this.seuilWald()) {
@@ -1409,14 +1409,14 @@ export class Coordinator {
       return { statut: 'en_verification' };
     }
 
-    // Rejet d'un résultat que le vérificateur automatique avait accepté : on rejoue (§9.5, version MVP).
-    // En V0, le rejeu tranche : le résultat est faux, ou la gardienne s'est trompée.
-    if (!rejeu) throw new OspError('Rejeu manquant pour ce rejet', 500);
+    // Rejection of a result the automatic verifier had accepted: re-run it (§9.5, MVP version).
+    // In V0, the re-run decides: either the result is false, or the guard was wrong.
+    if (!rejeu) throw new OspError('Re-run missing for this rejection', 500);
     if (!rejeu.ok) {
       this.ledger.award(v.gardienne, this.params.bonus_faux_reel, 'faux résultat démasqué', rec.cell.ruche);
       this.ledger.reputation(v.gardienne, 'confirme');
       this.noter(v.gardienne, 's', true);
-      // Celles qui avaient validé un résultat faux sont renversées.
+      // Those who had validated a false result are overturned.
       for (const g of rec.verdicts) {
         this.ledger.reputation(g, 'renverse');
         this.noter(g, 's', false);
@@ -1431,12 +1431,12 @@ export class Coordinator {
     return { statut: 'en_verification', renverse: true };
   }
 
-  /** Trop de verdicts sans conclusion : le porteur arbitre. */
+  /** Too many verdicts without a conclusion: the hive owner arbitrates. */
   private escaladerSiEpuise(rec: CellRecord, rr: ResultRecord): void {
     if (!rr.escalade && (rec.nb_verdicts ?? 0) >= this.params.verdicts_max) this.escalader(rec, rr, `${rec.nb_verdicts} verdicts sans conclusion`);
   }
 
-  // ---------------------------------------------------------------- interne
+  // ---------------------------------------------------------------- internal
 
   private emitCell(ruche: string, spec: CellSpec, parent: CellRecord | null, chemin: string, profondeur: number): CellRecord {
     const cell = this.sign<Cell>(
@@ -1503,7 +1503,7 @@ export class Coordinator {
     rec.verdicts = [];
     delete rec.cote;
     delete rec.nb_verdicts;
-    // Les pièges pas encore engagés disparaissent avec le résultat, comme les places des vraies gardiennes.
+    // Traps not yet committed disappear with the result, like the real guards' slots.
     for (const [pid, p] of Object.entries(this.state.pieges)) if (p.vraie === resultId && !p.engagement) delete this.state.pieges[pid];
     const hive = this.state.hives[rec.cell.ruche]!;
     this.branchStats(hive, rec).echecs++;
@@ -1532,7 +1532,7 @@ export class Coordinator {
     delete rec.en_attente;
     rec.gardiennes = [];
     rec.verdicts = [];
-    // P0-4 : la probabilité que ce miel soit faux, d'après le test de Wald (publiée avec la validation).
+    // P0-4: the probability that this honey is false, according to the Wald test (published with the validation).
     const cote = rec.cote;
     delete rec.cote;
     delete rec.nb_verdicts;
@@ -1561,7 +1561,7 @@ export class Coordinator {
     this.registry.append('alveole_miel', {
       alveole: rec.id, chemin: rec.cell.chemin, resultat: resultId, auteur, gardiennes, grammes: g, ...wald, ...(arbitrage ? { arbitrage: true } : {}),
     });
-    // Les secrets de l'alvéole deviennent publics : chacun peut désormais revérifier sa validation.
+    // The cell's secrets become public: anyone can now re-verify its validation.
     const crit = rec.cell.critere_fini;
     if (crit.verificateur === 'tests-js@1' && (crit.tests_caches_hash || crit.reference_hash)) {
       this.registry.append('secrets_reveles', {
@@ -1592,32 +1592,32 @@ export class Coordinator {
         this.ledger.award(id as ContributorId, (this.params.bonus_coeur * g) / total, 'bonus du cœur', slug);
         this.grant(id as ContributorId, 'heart', slug);
       }
-      // Les soutiens (§10.1) arrivent après le MVP : le multiplicateur vaut 1 pour l'instant.
+      // Backing (§10.1) comes after the MVP: the multiplier is 1 for now.
       this.ledger.award(hive.ruche.porteur, total * this.params.part_porteur, 'porteur : ruche complétée', slug);
     }
     this.registry.append('ruche_terminee', { slug, miel_total: Math.round(total * 1000) / 1000 });
   }
 
   /**
-   * P0-3 : un piège, c'est le vrai livrable en attente avec un seul bug subtil, que les contrôles des
-   * gardiennes démasquent. Il prend une place de gardienne sur l'alvéole, comme le vrai résultat.
+   * P0-3: a trap is the real pending deliverable with a single subtle bug, which the guards'
+   * checks expose. It takes a guard slot on the cell, like the real result.
    */
   private makeTrap(who: ContributorId, rec: CellRecord, rr: ResultRecord, expire: number): Assignment {
     const m = rr.mutants[Math.floor(this.rngSecret() * rr.mutants.length)]!;
-    // Un identifiant aussi opaque que celui d'un vrai résultat.
+    // An identifier as opaque as a real result's.
     const id = sha256(canonicalize({ type: 'osp.piege/0.2', vraie: rec.en_attente, gardienne: who, sel: [this.rngSecret(), this.rngSecret()] }));
     this.state.pieges[id] = { livrable: m.livrable, alveole: rec.id, vraie: rec.en_attente!, attribue_a: who, expire };
     return { ...this.assignment(rec, 'gardienne', expire), a_verifier: { id, livrable: m.livrable } };
   }
 
-  /** Un résultat peut servir de modèle à des pièges tant qu'il a des mutants et que sa soumission est sous embargo. */
+  /** A result can serve as a model for traps as long as it has mutants and its submission is under embargo. */
   private piegeable(rr: ResultRecord): boolean {
     return rr.mutants.length > 0 && this.now() - rr.soumis_a < this.params.embargo_max_ms;
   }
 
   /**
-   * P0-3 : le taux de pièges d'une gardienne. Élevé pour une nouvelle venue, il baisse avec sa
-   * réputation sans descendre sous le plancher : c'est le moyen le moins cher de mesurer chacune.
+   * P0-3: a guard's trap rate. High for a newcomer, it decreases with their
+   * reputation without going below the floor: it is the cheapest way to measure each one.
    */
   tauxPieges(who: ContributorId): number {
     const t = this.params.taux_pieges;
@@ -1627,16 +1627,16 @@ export class Coordinator {
     return Math.min(1, Math.max(Math.min(t, this.params.taux_pieges_min), p));
   }
 
-  /** Les pièges encore ouverts sur le résultat en attente d'une alvéole : chacun y occupe une place. */
+  /** The traps still open on a cell's pending result: each one takes a slot there. */
   private piegesSur(rec: CellRecord): Piege[] {
     return rec.en_attente ? Object.values(this.state.pieges).filter((p) => p.alveole === rec.id && p.vraie === rec.en_attente) : [];
   }
 
   /**
-   * OSP v0.2 P0-3 : la dernière entrée publiable du registre. Tant qu'un résultat attend ses
-   * gardiennes, sa soumission et tout ce qui suit restent sous embargo : sinon une gardienne
-   * comparerait le livrable reçu au livrable publié, et reconnaîtrait un piège. La tête du
-   * registre (son hash, ses sceaux) reste publique : rien de ce qui est sous embargo ne peut changer.
+   * OSP v0.2 P0-3: the last publishable registry entry. As long as a result awaits its
+   * guards, its submission and everything after it stay under embargo: otherwise a guard
+   * would compare the deliverable received with the published one, and recognize a trap. The registry
+   * head (its hash, its seals) stays public: nothing under embargo can change.
    */
   horizon(): number {
     const entries = this.registry.entries;
@@ -1648,7 +1648,7 @@ export class Coordinator {
     return h;
   }
 
-  /** Rang de la première entrée d'une soumission (`resultat_soumis`), retrouvé dans le registre puis gardé en mémoire. */
+  /** Index of a submission's first entry (`resultat_soumis`), found in the registry then kept in memory. */
   private debutSoumission(id: string): number {
     const connu = this.rangsSoumission.get(id);
     if (connu !== undefined && this.registry.entries[connu]?.nature === 'resultat_soumis') return connu;
@@ -1710,14 +1710,14 @@ export class Coordinator {
         for (const g of rec.gardiennes) if (g.expire <= now) this.ledger.reputation(g.par, 'bail_expire');
         rec.gardiennes = rec.gardiennes.filter((g) => g.expire > now);
       }
-      // P0-4 : un résultat qui attend trop longtemps ses gardiennes (petite ruche, gardiennes absentes) part en arbitrage.
+      // P0-4: a result that waits too long for its guards (small hive, absent guards) goes to arbitration.
       const rr = rec.state === 'en_verification' && rec.en_attente ? this.state.results[rec.en_attente] : undefined;
       if (rr && rr.statut === 'en_verification' && !rr.escalade && now - rr.soumis_a > this.params.escalade_ms) {
         this.escalader(rec, rr, 'attente trop longue des gardiennes');
       }
     }
-    // P1-3 : un verdict scellé qu'on ne révèle pas à temps coûte plus cher que le pire verdict révélé.
-    // La fenêtre ne court que si la révélation est ouverte (ou si le résultat a été tranché entre-temps).
+    // P1-3: a sealed verdict not revealed in time costs more than the worst revealed verdict.
+    // The window only runs if the reveal is open (or if the result was settled in the meantime).
     for (const [resultat, liste] of Object.entries(this.state.engagements)) {
       const rr = this.state.results[resultat];
       const rec = rr ? this.state.cells[rr.resultat.alveole] : undefined;
@@ -1732,7 +1732,7 @@ export class Coordinator {
     }
     for (const [id, p] of Object.entries(this.state.pieges)) {
       if (p.expire > now) continue;
-      // Exactement comme pour un vrai résultat : bail expiré, ou verdict scellé jamais révélé.
+      // Exactly as for a real result: expired lease, or sealed verdict never revealed.
       if (p.engagement) {
         this.ledger.reputation(p.attribue_a, 'non_revele');
         this.registry.append('engagement_expire', { resultat: id, gardienne: p.attribue_a });
@@ -1750,7 +1750,7 @@ export class Coordinator {
       if (c.bail?.par === who) n++;
       n += c.gardiennes.filter((g) => g.par === who).length;
     }
-    // Un verdict scellé n'occupe plus d'abeille : vrai résultat ou piège, c'est compté pareil.
+    // A sealed verdict no longer takes a bee: real result or trap, it is counted the same way.
     for (const p of Object.values(this.state.pieges)) if (p.attribue_a === who && !p.engagement) n++;
     return n;
   }
@@ -1760,30 +1760,30 @@ export class Coordinator {
   }
 
   private checkRequete(r: Requete, action: Requete['action']): void {
-    if (r?.type !== 'osp.requete/0.1' || r.action !== action) throw new OspError(`Requête ${action} attendue`);
-    if (!isContributorId(r.contributeur) || !verifyObject(r, r.contributeur)) throw new OspError('Signature de la requête invalide', 401);
-    if (typeof r.ts !== 'number' || Math.abs(this.now() - r.ts) > this.params.fenetre_requete_ms) throw new OspError('Requête expirée : vérifie l’horloge', 401);
+    if (r?.type !== 'osp.requete/0.1' || r.action !== action) throw new OspError(`Expected a ${action} request`);
+    if (!isContributorId(r.contributeur) || !verifyObject(r, r.contributeur)) throw new OspError('Invalid request signature', 401);
+    if (typeof r.ts !== 'number' || Math.abs(this.now() - r.ts) > this.params.fenetre_requete_ms) throw new OspError('Request expired: check your clock', 401);
     const key = `${r.contributeur}:${r.nonce}`;
-    if (!r.nonce || this.state.nonces[key] !== undefined) throw new OspError('Requête rejouée', 409);
+    if (!r.nonce || this.state.nonces[key] !== undefined) throw new OspError('Replayed request', 409);
     this.state.nonces[key] = r.ts;
   }
 
   private validateSpec(spec: CellSpec): void {
     if (!spec || typeof spec.objectif !== 'string' || !spec.objectif.trim() || spec.objectif.length > 2000) {
-      throw new OspError('Chaque alvéole a besoin d’un objectif (2 000 caractères maximum)');
+      throw new OspError('Every cell needs a goal (2,000 characters maximum)');
     }
-    if (typeof spec.capsule !== 'string' || spec.capsule.length > 100_000) throw new OspError('Capsule invalide (100 000 caractères maximum)');
-    if (typeof spec.atomique !== 'boolean') throw new OspError('Le champ « atomique » doit être un booléen');
+    if (typeof spec.capsule !== 'string' || spec.capsule.length > 100_000) throw new OspError('Invalid capsule (100,000 characters maximum)');
+    if (typeof spec.atomique !== 'boolean') throw new OspError('The "atomique" field must be a boolean');
     try {
       validateCritere(spec.critere_fini);
     } catch (e) {
-      throw new OspError(`Critère de fin invalide pour « ${spec.objectif.slice(0, 60)} » : ${(e as Error).message}`);
+      throw new OspError(`Invalid done criterion for "${spec.objectif.slice(0, 60)}": ${(e as Error).message}`);
     }
   }
 
   private requirePorteurOuFondateur(hive: HiveRecord, auteur: ContributorId): void {
     if (auteur !== hive.ruche.porteur && auteur !== this.state.fondateur) {
-      throw new OspError('Réservé au porteur de la ruche ou au fondateur', 403);
+      throw new OspError('Reserved for the hive owner or the founder', 403);
     }
   }
 
@@ -1802,7 +1802,7 @@ export class Coordinator {
     }
   }
 
-  /** Attribue un trophée (§10.5), une fois pour toutes ou une fois par ruche, et l'inscrit au registre. */
+  /** Awards a trophy (§10.5), once and for all or once per hive, and writes it to the registry. */
   private grant(id: ContributorId, trophee: TropheeId, ruche?: string): void {
     const liste = (this.state.trophees[id] ??= []);
     const cible = PAR_RUCHE.has(trophee) ? ruche : undefined;
@@ -1816,7 +1816,7 @@ export class Coordinator {
     return ++c[cle];
   }
 
-  /** Remet à niveau un état écrit par une version précédente. */
+  /** Upgrades a state written by an earlier version. */
   private normalizeState(): void {
     this.state.trophees ??= {};
     this.state.compteurs ??= {};
@@ -1851,13 +1851,13 @@ export class Coordinator {
 
   private hiveOrThrow(slug: string): HiveRecord {
     const h = this.state.hives[slug];
-    if (!h) throw new OspError(`Ruche inconnue : ${slug}`, 404);
+    if (!h) throw new OspError(`Unknown hive: ${slug}`, 404);
     return h;
   }
 
   private cellOrThrow(id: Hash | undefined): CellRecord {
     const c = id ? this.state.cells[id] : undefined;
-    if (!c) throw new OspError('Alvéole inconnue', 404);
+    if (!c) throw new OspError('Unknown cell', 404);
     return c;
   }
 

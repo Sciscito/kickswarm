@@ -1,11 +1,11 @@
-// Verrouillage des primitives, injecté dans chaque lanceur avant de charger le code testé.
+// Lockdown of the built-ins, injected into every runner before the code under test is loaded.
 //
-// Sans lui, un livrable pourrait, au moment de son chargement, réécrire Array.prototype.push,
-// Object.prototype.toJSON ou Array.prototype.every : le lanceur, ou l'expression d'une propriété,
-// utiliserait ensuite ces versions truquées, et des échecs deviendraient des réussites.
-// On gèle donc toutes les primitives standard (prototypes compris) et on verrouille leurs noms
-// globaux. Comme dans SES, les noms hérités qu'un code ordinaire réaffecte sur ses propres objets
-// (toString, name, message, constructor…) restent réaffectables sur les instances.
+// Without it, a deliverable could, while it loads, rewrite Array.prototype.push,
+// Object.prototype.toJSON or Array.prototype.every: the runner, or a property's expression,
+// would then use these rigged versions, and failures would turn into passes.
+// So every standard built-in is frozen (prototypes included) and their global names are
+// locked. As in SES, the inherited names that ordinary code reassigns on its own objects
+// (toString, name, message, constructor…) stay reassignable on instances.
 
 const GLOBALS = [
   'Object', 'Function', 'Array', 'Number', 'Boolean', 'String', 'Symbol', 'BigInt', 'Date', 'RegExp', 'Promise', 'Proxy', 'Reflect',
@@ -58,7 +58,7 @@ export const LOCKDOWN = `{
     const d = GOPD(globalThis, n);
     if (d && d.configurable) DP(globalThis, n, { value: globalThis[n], writable: false, enumerable: d.enumerable, configurable: false });
   }
-  // Les prototypes qu'aucun nom global ne désigne : générateurs, fonctions asynchrones, itérateurs.
+  // The prototypes no global name points to: generators, async functions, iterators.
   for (const x of [function* () {}, async function () {}, async function* () {}, [][Symbol.iterator](), new Map()[Symbol.iterator](), new Set()[Symbol.iterator](), ''[Symbol.iterator](), 'a'.matchAll(/a/g)]) {
     harden(GPO(x));
   }

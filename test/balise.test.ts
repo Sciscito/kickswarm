@@ -10,7 +10,7 @@ import { hashOf } from '../src/protocol/canonical.js';
 import { generateIdentity, newNonce, signObject } from '../src/protocol/identity.js';
 import type { Hash, Requete } from '../src/protocol/types.js';
 
-// Un vrai tour du réseau drand quicknet (League of Entropy), relevé pendant le développement.
+// A real round of the drand quicknet network (League of Entropy), recorded during development.
 const VRAI: Balise = {
   round: 33343387,
   randomness: 'f1d7508803798a9cb2541ee66468524bebfe588cd4ef2936ca4a8d4f4c7917c0',
@@ -27,30 +27,30 @@ function rechain(entries: RegistryEntry[]): RegistryEntry[] {
   });
 }
 
-test('drand : un vrai tour du réseau public se vérifie hors ligne ; la moindre retouche est refusée', () => {
+test('drand: a real round of the public network verifies offline; the slightest alteration is refused', () => {
   assert.equal(verifierBalise(QUICKNET, VRAI), true);
-  assert.equal(verifierBalise(QUICKNET, { ...VRAI, round: VRAI.round + 1 }), false, 'signature présentée pour un autre tour');
+  assert.equal(verifierBalise(QUICKNET, { ...VRAI, round: VRAI.round + 1 }), false, 'signature presented for another round');
   const sig = Buffer.from(VRAI.signature, 'hex');
   sig[10] = sig[10]! ^ 1;
-  assert.equal(verifierBalise(QUICKNET, { ...VRAI, signature: sig.toString('hex') }), false, 'signature retouchée');
-  assert.equal(verifierBalise(QUICKNET, { ...VRAI, randomness: 'ab'.repeat(32) }), false, 'aléa qui ne découle pas de la signature');
-  assert.equal(verifierBalise(new BaliseLocale().info, VRAI), false, 'une autre clé de groupe');
+  assert.equal(verifierBalise(QUICKNET, { ...VRAI, signature: sig.toString('hex') }), false, 'altered signature');
+  assert.equal(verifierBalise(QUICKNET, { ...VRAI, randomness: 'ab'.repeat(32) }), false, 'randomness that does not derive from the signature');
+  assert.equal(verifierBalise(new BaliseLocale().info, VRAI), false, 'another group key');
 });
 
-test('règle du tour : au moment où le contributeur signe, l’aléa de son tirage n’existe pas encore', () => {
+test('round rule: when the contributor signs, the randomness for their draw does not exist yet', () => {
   for (const ts of [Date.now(), Date.now() + 1234, Date.now() - 2999]) {
     const r = tourA(QUICKNET, ts) + 3;
-    assert.ok(publication(QUICKNET, r) > ts + 2 * QUICKNET.periode * 1000 - 1, 'le tour visé est publié au moins 6 s après la signature');
+    assert.ok(publication(QUICKNET, r) > ts + 2 * QUICKNET.periode * 1000 - 1, 'the target round is published at least 6 s after the signature');
   }
 });
 
-test('drand en direct : le prochain tour est récupéré et vérifié (si le réseau est joignable)', async (t) => {
+test('live drand: the next round is fetched and verified (if the network is reachable)', async (t) => {
   const d = new DrandHttp();
   try {
     const b = await d.get(tourA(QUICKNET, Date.now()) + 1);
     assert.equal(verifierBalise(QUICKNET, b), true);
   } catch {
-    t.skip('réseau drand injoignable depuis cette machine');
+    t.skip('drand network unreachable from this machine');
   }
 });
 
@@ -64,7 +64,7 @@ async function rucheTiree() {
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   for (let tour = 0; tour < 300 && c.hiveView('maths').statut !== 'terminee'; tour++) {
     const action = await abeilleScriptee(c, bees[tour % 3]!);
-    if (action?.issue.includes('attente du porteur')) {
+    if (action?.issue.includes('waiting for the hive owner')) {
       const prop = c.registry.entries.filter((e) => e.nature === 'decoupage_propose').at(-1)!;
       c.decide(makeDecision(fondateur, 'approbation_decoupage', (prop.donnees as { id: string }).id, 'ok'));
     }
@@ -73,22 +73,22 @@ async function rucheTiree() {
   return { c, source };
 }
 
-test('balise : une ruche entière tirée avec la balise se rejoue tirage par tirage, et l’audit le confirme', async () => {
+test('beacon: a whole hive drawn with the beacon replays draw by draw, and the audit confirms it', async () => {
   const { c } = await rucheTiree();
   const claims = c.registry.entries.filter((e) => e.nature === 'commande' && (e.donnees as CommandeDonnees).type === 'claim');
   assert.ok(claims.length > 5);
-  assert.ok(claims.every((e) => (e.donnees as CommandeDonnees).balise), 'chaque demande de travail porte sa balise');
+  assert.ok(claims.every((e) => (e.donnees as CommandeDonnees).balise), 'every work request carries its beacon');
   const report = await auditRegistry(c.registry.entries, { etatAnnonce: c.stateHash() });
   for (const ch of report.controles) assert.ok(ch.ok, `${ch.nom}: ${ch.detail ?? ''}`);
   const b = report.controles.find((x) => x.nom === 'Random draws from a public beacon')!;
   assert.match(b.detail!, /BLS-verified round 2 rounds after the signed request/);
-  assert.match(b.detail!, /private beacon/, 'une balise de test est signalée comme telle');
+  assert.match(b.detail!, /private beacon/, 'a test beacon is flagged as such');
 });
 
-test('balise : tricher sur l’aléa, la balise ou son tour fait diverger le rejeu', async () => {
+test('beacon: cheating on the randomness, the beacon or its round makes the replay diverge', async () => {
   const { c, source } = await rucheTiree();
-  // Les sceaux SLH-DSA démasqueraient déjà toute retouche (le sceau suivant ne correspond plus) :
-  // on les retire pour vérifier que le rejeu, à lui seul, attrape aussi chaque triche sur l'aléa.
+  // The SLH-DSA seals would already expose any alteration (the next seal no longer matches):
+  // we remove them to check that the replay alone also catches every cheat on the randomness.
   const sansSceaux = rechain(c.registry.entries.filter((e) => e.nature !== 'sceau'));
   const i = sansSceaux.findIndex((e) => e.nature === 'commande' && ((e.donnees as CommandeDonnees).alea?.length ?? 0) > 0 && (e.donnees as CommandeDonnees).balise);
   const falsifier = async (f: (d: CommandeDonnees) => void) => {
@@ -97,26 +97,26 @@ test('balise : tricher sur l’aléa, la balise ou son tour fait diverger le rej
     return auditRegistry(rechain(forged));
   };
   const divergence = (r: Awaited<ReturnType<typeof auditRegistry>>) => r.controles.find((x) => x.nom.startsWith('Deterministic replay'))?.ok === false;
-  assert.ok(divergence(await falsifier((d) => { d.alea[0] = 0.0001; })), 'tirage inventé');
-  assert.ok(divergence(await falsifier((d) => { d.balise!.randomness = 'cd'.repeat(32); })), 'aléa de balise inventé : le rejeu diverge');
-  assert.equal((await falsifier((d) => { d.balise!.randomness = 'cd'.repeat(32); })).ok, false, 'aléa de balise inventé');
+  assert.ok(divergence(await falsifier((d) => { d.alea[0] = 0.0001; })), 'made-up draw');
+  assert.ok(divergence(await falsifier((d) => { d.balise!.randomness = 'cd'.repeat(32); })), 'made-up beacon randomness: the replay diverges');
+  assert.equal((await falsifier((d) => { d.balise!.randomness = 'cd'.repeat(32); })).ok, false, 'made-up beacon randomness');
   const autre = await source.get(c.registry.entries.length + 1000);
-  assert.equal((await falsifier((d) => { d.balise = autre; })).ok, false, 'une vraie balise, mais d’un autre tour');
+  assert.equal((await falsifier((d) => { d.balise = autre; })).ok, false, 'a real beacon, but from another round');
 
-  // Retirer la balise d'une demande : l'histoire reste cohérente, mais l'audit voit le tirage non public.
+  // Removing the beacon from a request: the history stays consistent, but the audit sees the non-public draw.
   const sans = await falsifier((d) => { delete d.balise; });
   const b = sans.controles.find((x) => x.nom === 'Random draws from a public beacon');
   assert.ok(b && !b.ok, JSON.stringify(sans.controles));
   assert.match(b.detail!, /drawn without the announced beacon/);
 });
 
-test('balise : pas de tirage hors balise, ni avec une horloge trop éloignée', async () => {
+test('beacon: no draw without the beacon, nor with a clock too far off', async () => {
   const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0 }, balise: new BaliseLocale(25) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
-  assert.throws(() => c.claim(makeRequete(bees[0]!, 'claim')), /balise publique/);
+  assert.throws(() => c.claim(makeRequete(bees[0]!, 'claim')), /public beacon/);
   const vieille = signObject<Requete>({ type: 'osp.requete/0.1', action: 'claim', contributeur: bees[0]!.id, ts: Date.now() - 10_000, nonce: newNonce() }, bees[0]!);
-  await assert.rejects(c.reclamer(vieille), /horloge est trop éloignée/);
+  await assert.rejects(c.reclamer(vieille), /clock is too far/);
   const a = await c.reclamer(makeRequete(bees[0]!, 'claim'));
   assert.equal(a?.caste, 'eclaireuse');
 });

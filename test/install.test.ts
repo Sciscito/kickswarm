@@ -7,7 +7,7 @@ import { configureCodex, configureGemini, launchPrompt, type PluginCommand } fro
 
 const plugin: PluginCommand = { command: 'C:\\Program Files\\nodejs\\node.exe', args: ['C:\\kick swarm\\dist\\cli.js', 'plugin'], env: { KICKSWARM_URL: 'http://127.0.0.1:7777' } };
 
-test('join : configuration Codex, idempotente, sans écraser le reste', () => {
+test('join: Codex configuration, idempotent, without overwriting the rest', () => {
   const home = mkdtempSync(join(tmpdir(), 'osp-home-'));
   try {
     mkdirSync(join(home, '.codex'));
@@ -15,7 +15,7 @@ test('join : configuration Codex, idempotente, sans écraser le reste', () => {
     configureCodex(plugin, home);
     configureCodex(plugin, home);
     const toml = readFileSync(join(home, '.codex', 'config.toml'), 'utf8');
-    assert.equal(toml.match(/\[mcp_servers\.kickswarm\]/g)?.length, 1, 'un seul bloc kickswarm');
+    assert.equal(toml.match(/\[mcp_servers\.kickswarm\]/g)?.length, 1, 'a single kickswarm block');
     assert.match(toml, /model = "o4"/);
     assert.match(toml, /\[mcp_servers\.autre\]/);
     assert.match(toml, /command = "C:\\\\Program Files\\\\nodejs\\\\node.exe"/);
@@ -25,7 +25,7 @@ test('join : configuration Codex, idempotente, sans écraser le reste', () => {
   }
 });
 
-test('join : configuration Gemini CLI fusionnée dans settings.json', () => {
+test('join: Gemini CLI configuration merged into settings.json', () => {
   const home = mkdtempSync(join(tmpdir(), 'osp-home-'));
   try {
     mkdirSync(join(home, '.gemini'));
@@ -40,7 +40,7 @@ test('join : configuration Gemini CLI fusionnée dans settings.json', () => {
   }
 });
 
-test('join : la consigne de lancement nomme la ruche et les outils', () => {
+test('join: the launch prompt names the hive and the tools', () => {
   const p = launchPrompt('math-toolkit');
   assert.match(p, /math-toolkit/);
   assert.match(p, /swarm_join/);

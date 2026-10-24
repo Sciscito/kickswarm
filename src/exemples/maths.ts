@@ -3,7 +3,7 @@ import type { Identity } from '../protocol/identity.js';
 import type { Caste, CellSpec, CritereV0 } from '../protocol/types.js';
 import { directAccess, scriptedBee, type BeeScript, type Outcome } from './scripted-bee.js';
 
-// Une ruche de démonstration : une mini-bibliothèque mathématique en trois fonctions.
+// A demo hive: a mini math library in three functions.
 
 export const SOLUTIONS: Record<string, string> = {
   'pgcd.mjs': 'export function pgcd(a, b) { return b === 0 ? Math.abs(a) : pgcd(b, a % b); }\n',
@@ -64,7 +64,7 @@ export const ENFANTS: CellSpec[] = [
   },
 ];
 
-/** Le script de la ruche « maths » pour les abeilles scriptées. */
+/** The script of the “maths” hive, for scripted bees. */
 export const MATHS_SCRIPT: BeeScript = { decompositions: { [RACINE.objectif]: ENFANTS }, solutions: SOLUTIONS, bugs: BUGS };
 
 export interface ActionAbeille {
@@ -75,25 +75,25 @@ export interface ActionAbeille {
 }
 
 const ISSUES: Record<Outcome, string> = {
-  decomposition_proposed: 'découpage proposé, en attente du porteur',
-  decomposition_adopted: 'découpage adopté',
-  delivered: 'livré',
-  rejected: 'rejeté',
-  assembled: 'assemblé',
-  assembly_rejected: 'assemblage rejeté',
-  sealed: 'verdict scellé, en attente des autres gardiennes',
-  verified: 'validé : miel',
-  confirmed: 'confirmé, en attente d’autres gardiennes',
-  fake_caught: 'faux résultat démasqué',
-  overturned: 'verdict renversé',
-  trap_caught: 'alvéole-piège déjouée',
-  trap_missed: 'piège validé à tort',
+  decomposition_proposed: 'split proposed, waiting for the hive owner',
+  decomposition_adopted: 'split adopted',
+  delivered: 'delivered',
+  rejected: 'rejected',
+  assembled: 'assembled',
+  assembly_rejected: 'assembly rejected',
+  sealed: 'verdict sealed, waiting for the other guards',
+  verified: 'validated: honey',
+  confirmed: 'confirmed, waiting for more guards',
+  fake_caught: 'fake result caught',
+  overturned: 'verdict overturned',
+  trap_caught: 'trap cell caught',
+  trap_missed: 'trap wrongly validated',
 };
 
-/** Une abeille scriptée sur la ruche « maths », branchée directement sur un coordinateur en mémoire. */
+/** A scripted bee on the “maths” hive, plugged straight into an in-memory coordinator. */
 export async function abeilleScriptee(c: Coordinator, bee: Identity, opts: { bug?: boolean } = {}): Promise<ActionAbeille | null> {
   const a = await scriptedBee(directAccess(c, bee), MATHS_SCRIPT, opts);
   if (!a) return null;
-  const detail = a.outcome === 'rejected' ? ` : ${a.motif}` : a.outcome === 'delivered' || a.outcome === 'assembled' ? ` (${a.motif}), en vérification` : '';
+  const detail = a.outcome === 'rejected' ? `: ${a.motif}` : a.outcome === 'delivered' || a.outcome === 'assembled' ? ` (${a.motif}), under verification` : '';
   return { caste: a.caste, chemin: a.chemin, issue: ISSUES[a.outcome] + detail, piege: a.outcome.startsWith('trap') || undefined };
 }

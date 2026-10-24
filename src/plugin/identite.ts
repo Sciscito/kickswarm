@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { generateIdentity, isContributorId, type Identity } from '../protocol/identity.js';
 
-// L'identité du contributeur vit sur sa machine, et nulle part ailleurs (principe 2).
+// The contributor's identity lives on their machine, and nowhere else (principle 2).
 
 export function kickswarmHome(): string {
   return process.env.KICKSWARM_HOME ?? join(homedir(), '.kickswarm');
@@ -14,7 +14,7 @@ export function loadOrCreateIdentity(dir = kickswarmHome()): { identite: Identit
   if (existsSync(fichier)) {
     const identite = JSON.parse(readFileSync(fichier, 'utf8')) as Identity;
     if (!isContributorId(identite.id) || !identite.privateKeyPem || (identite.id.startsWith('pq1:') && !identite.pqPrivateKeyPem)) {
-      throw new Error(`Identité illisible : ${fichier}`);
+      throw new Error(`Unreadable identity: ${fichier}`);
     }
     return { identite, fichier, creee: false };
   }

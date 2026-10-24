@@ -38,57 +38,57 @@ const PLUS_GRAND: Propriete = {
 const critere = (extra: Partial<CritereV0> = {}): CritereV0 => ({ classe: 'V0', verificateur: 'tests-js@1', module: 'pgcd.mjs', tests: VISIBLES, ...extra });
 const liv = (code: string): Livrable => ({ fichiers: { 'pgcd.mjs': code } });
 
-// ---------------------------------------------------------------- tests cachés
+// ---------------------------------------------------------------- hidden tests
 
-test('tests cachés : une solution taillée pour les exemples échoue, et rien du secret ne fuit', async () => {
+test('hidden tests: a solution tailored to the examples fails, and nothing of the secret leaks', async () => {
   const c = critere({ tests_caches_hash: commitment(CACHES) });
   const r = await verifierV0(c, liv(TAILLE), { caches: CACHES });
   assert.equal(r.ok, false);
   assert.match(r.motif, /hidden tests? failed \(details stay hidden\)/);
   const json = JSON.stringify(r);
-  for (const secret of ['100', '75', '25', '-12']) assert.ok(!json.includes(secret), `le rapport ne doit pas contenir ${secret}`);
+  for (const secret of ['100', '75', '25', '-12']) assert.ok(!json.includes(secret), `the report must not contain ${secret}`);
   for (const t of r.tests.filter((x) => x.cache)) assert.deepEqual(Object.keys(t).sort(), ['cache', 'nom', 'ok']);
 
-  assert.equal((await verifierV0(c, liv(EUCLIDE), { caches: CACHES })).ok, true, 'la vraie solution passe');
-  assert.match((await verifierV0(c, liv(EUCLIDE))).motif, /not available/, 'sans le coffre, on refuse de conclure');
+  assert.equal((await verifierV0(c, liv(EUCLIDE), { caches: CACHES })).ok, true, 'the real solution passes');
+  assert.match((await verifierV0(c, liv(EUCLIDE))).motif, /not available/, 'without the vault, we refuse to conclude');
   assert.match((await verifierV0(c, liv(EUCLIDE), { caches: CACHES.slice(1) })).motif, /do not match their commitment/);
-  assert.equal((await verifierV0(c, liv(TAILLE), { sansCaches: true })).ok, true, 'côté ouvrière, seuls les tests visibles comptent');
+  assert.equal((await verifierV0(c, liv(TAILLE), { sansCaches: true })).ok, true, 'on the worker side, only the visible tests count');
 });
 
-// ---------------------------------------------------------------- propriétés
+// ---------------------------------------------------------------- properties
 
-test('propriétés : un mémoriseur est démasqué par un contre-exemple reproductible', async () => {
+test('properties: a memorizer is exposed by a reproducible counterexample', async () => {
   const c = critere({ proprietes: [DIVISE, PLUS_GRAND] });
   const a = await verifierV0(c, liv(TAILLE));
   const b = await verifierV0(c, liv(TAILLE));
   assert.equal(a.ok, false);
-  // Renvoyer 1 divise tout : « divides both » passe. C'est « is the greatest » qui le démasque.
+  // Returning 1 divides everything: "divides both" passes. It is "is the greatest" that exposes it.
   assert.match(a.motif, /property “is the greatest”: counterexample: pgcd\(\d+,\d+\) returned 1/);
-  assert.equal(a.motif, b.motif, 'même livrable, mêmes entrées tirées');
+  assert.equal(a.motif, b.motif, 'same deliverable, same drawn inputs');
   const ok = await verifierV0(c, liv(EUCLIDE));
   assert.equal(ok.ok, true, ok.motif);
   assert.deepEqual(ok.tests.filter((t) => t.propriete).map((t) => t.cas), [200, 100]);
 });
 
-// ---------------------------------------------------------------- anti-triche
+// ---------------------------------------------------------------- anti-cheating
 
-test('anti-triche : le code testé ne peut ni forger le résultat ni fausser la comparaison', async () => {
+test('anti-cheating: the tested code can neither forge the result nor rig the comparison', async () => {
   const forge = 'process.stdout.write(\'\\n__OSP__{"tests":[{"nom":"x","ok":true},{"nom":"y","ok":true}]}\\n\'); process.exit(0);\nexport const pgcd = () => 0;\n';
   const r1 = await verifierV0(critere(), liv(forge));
-  assert.equal(r1.ok, false, 'une fausse ligne de résultat sans le jeton secret est ignorée');
+  assert.equal(r1.ok, false, 'a fake result line without the secret token is ignored');
 
   const sabote = 'Object.keys = () => []; JSON.stringify = () => "1";\nexport const pgcd = () => ({ faux: true });\n';
   const r2 = await verifierV0(critere(), liv(sabote));
-  assert.equal(r2.ok, false, 'les primitives du lanceur sont capturées avant le chargement du module');
+  assert.equal(r2.ok, false, 'the runner’s primitives are captured before the module loads');
 });
 
 // ---------------------------------------------------------------- mutation
 
-test('mutation : les opérateurs sont mutés, jamais les chaînes ni les commentaires', () => {
+test('mutation: operators are mutated, never strings or comments', () => {
   const src = 'const s = "a+b<c"; // x < y && z\nconst r = /a-b+/g;\nexport const f = (a, b) => a + b > 0 && r.test(s) ? true : 1;\n';
-  // Version 1 : les regex restent intactes (les registres anciens se rejouent ainsi).
+  // Version 1: regexes stay intact (this is how old registries replay).
   assert.deepEqual(mutationSites(src, 1).map((x) => x.avant), ['+', '>', '0', '&&', 'true', '1']);
-  // Version 2 : l'intérieur de la regex aussi, mais toujours ni la chaîne ni le commentaire.
+  // Version 2: the inside of the regex too, but still neither the string nor the comment.
   assert.deepEqual(mutationSites(src).map((x) => x.avant), ['+', 'g', '+', '>', '0', '&&', 'true', '1']);
   const ms = mutants({ fichiers: { 'f.mjs': src } });
   assert.equal(ms.length, 8);
@@ -98,20 +98,20 @@ test('mutation : les opérateurs sont mutés, jamais les chaînes ni les comment
   assert.ok(ms.some((m) => m.livrable.fichiers['f.mjs']!.includes('/a-b{2,}/g')));
 });
 
-test('mutation (v2) : regex et méthodes qui ont un contraire', () => {
+test('mutation (v2): regexes and methods that have an opposite', () => {
   const src = "export const f = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').startsWith('\\\\d');\n";
   const sites = mutationSites(src).map((x) => `${x.avant}→${x.apres}`);
-  for (const attendu of ['trim→trimStart', 'toLowerCase→toUpperCase', '^→', '+→{2,}', 'g→', '$→', 'startsWith→endsWith']) assert.ok(sites.includes(attendu), `${attendu} dans ${sites.join(' ')}`);
-  // Chaque mutant reste un module valide.
+  for (const attendu of ['trim→trimStart', 'toLowerCase→toUpperCase', '^→', '+→{2,}', 'g→', '$→', 'startsWith→endsWith']) assert.ok(sites.includes(attendu), `${attendu} in ${sites.join(' ')}`);
+  // Every mutant remains a valid module.
   for (const m of mutants({ fichiers: { 'f.mjs': src } }, )) assert.doesNotThrow(() => new Function(m.livrable.fichiers['f.mjs']!.replace('export ', '')), m.livrable.fichiers['f.mjs']);
   const classes = mutationSites('const r = /\\d+[a-z]?\\s*(?:x)/i;').map((x) => `${x.avant}→${x.apres}`);
-  assert.deepEqual(classes, ['d→D', '+→{2,}', '→^', '?→', 's→S', '*→+', 'i→'], 'le « ? » de (?: n’est pas un quantificateur');
-  // Une propriété d'objet nommée comme une méthode n'est mutée que si on y accède par un point.
+  assert.deepEqual(classes, ['d→D', '+→{2,}', '→^', '?→', 's→S', '*→+', 'i→'], 'the "?" in (?: is not a quantifier');
+  // An object property named like a method is mutated only when accessed with a dot.
   assert.deepEqual(mutationSites('const o = { min: 1 }; o.min;').map((x) => x.avant), ['1', 'min']);
 });
 
-test('adéquation : la référence de l’essai réel (que des regex) se mesure désormais', async () => {
-  // La référence de slugify qu'a écrite une vraie IA pendant le premier essai, refusée alors faute de mutants.
+test('adequacy: the reference from the real trial (regexes only) can now be measured', async () => {
+  // The slugify reference written by a real AI during the first trial, refused back then for lack of mutants.
   const ref: Livrable = { fichiers: { 'slugify.mjs': "export function slugify(s) {\n  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');\n}\n" } };
   const c: CritereV0 = {
     classe: 'V0',
@@ -124,17 +124,17 @@ test('adéquation : la référence de l’essai réel (que des regex) se mesure 
     ],
   };
   const v1 = await adequation(c, [], ref, { moteurMutation: 1, exigerMesure: true });
-  assert.equal(v1.ok, false, 'avant : rien à muter');
+  assert.equal(v1.ok, false, 'before: nothing to mutate');
   assert.equal(v1.mutation?.total, 0);
   const v2 = await adequation(c, [], ref);
   assert.ok(v2.mutation!.total >= 6, `${v2.mutation!.total} mutants`);
   assert.equal(v2.ok, true, v2.motif);
-  // Des tests faibles sur la même référence sont, eux, démasqués.
+  // Weak tests on the same reference, on the other hand, are exposed.
   const faible = await adequation({ ...c, tests: [c.tests[0]!] }, [], ref);
   assert.ok(faible.mutation!.score < v2.mutation!.score);
 });
 
-test('adéquation : une référence sans rien à muter est acceptée sans mesure, sauf si la mesure est exigée', async () => {
+test('adequacy: a reference with nothing to mutate is accepted without measuring, unless measuring is required', async () => {
   const ref: Livrable = { fichiers: { 'id.mjs': 'export const id = (x) => x;\n' } };
   const c: CritereV0 = { classe: 'V0', verificateur: 'tests-js@1', module: 'id.mjs', tests: [{ fn: 'id', args: ['a'], attendu: 'a' }] };
   const souple = await adequation(c, [], ref);
@@ -144,7 +144,7 @@ test('adéquation : une référence sans rien à muter est acceptée sans mesure
   assert.equal(stricte.ok, false);
 });
 
-test('adéquation : des tests faibles sont refusés, des tests forts sont acceptés', async () => {
+test('adequacy: weak tests are refused, strong tests are accepted', async () => {
   const faible = await adequation(critere({ tests: [{ fn: 'pgcd', args: [4, 4], attendu: 4 }] }), [], liv(EUCLIDE));
   assert.equal(faible.ok, false);
   assert.match(faible.motif, /Tests too weak/);
@@ -159,7 +159,7 @@ test('adéquation : des tests faibles sont refusés, des tests forts sont accept
   assert.match(fausse.motif, /reference implementation fails its own tests/);
 });
 
-test('tests de tests : de bons tests passent, des tests faibles, faux ou incomplets échouent', async () => {
+test('tests of tests: good tests pass, weak, wrong or incomplete tests fail', async () => {
   const cible: Livrable = {
     fichiers: {
       'lib.mjs': 'export function clamp(x, lo, hi) { return x < lo ? lo : x > hi ? hi : x; }\nexport function isLeap(y) { return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0; }\n',
@@ -191,7 +191,7 @@ test('tests de tests : de bons tests passent, des tests faibles, faux ou incompl
   assert.match(incomplets.motif, /no test: isLeap/);
 });
 
-// ---------------------------------------------------------------- coordinateur
+// ---------------------------------------------------------------- coordinator
 
 const fondateur = generateIdentity();
 const bees: Identity[] = [generateIdentity(), generateIdentity(), generateIdentity()];
@@ -216,44 +216,44 @@ async function rucheOuverte(params = {}): Promise<{ c: Coordinator; racineId: st
   return { c, racineId: a.alveole_id };
 }
 
-test('coordinateur : un découpage aux tests trop faibles est refusé, sans laisser de trace', async () => {
+test('coordinator: a split with tests that are too weak is refused, without leaving a trace', async () => {
   const { c, racineId } = await rucheOuverte();
   const reference = { fichiers: { 'pgcd.mjs': EUCLIDE } };
   const faible: CellSpec = { ...ENFANTS[0]!, critere_fini: { ...(ENFANTS[0]!.critere_fini as CritereV0), tests: [{ fn: 'pgcd', args: [4, 4], attendu: 4 }], reference_hash: commitment(reference) } };
   const n = c.registry.entries.length, h = c.stateHash();
   await assert.rejects(c.submitDecomposition(makeDecomposition(bees[0]!, racineId as never, [faible, ENFANTS[1]!, ENFANTS[2]!]), [{ reference }]), /Tests too weak/);
-  await assert.rejects(c.submitDecomposition(makeDecomposition(bees[0]!, racineId as never, [faible, ENFANTS[1]!, ENFANTS[2]!]), [{ reference: liv('export const pgcd = 1;') }]), /ne correspond pas à son engagement/);
+  await assert.rejects(c.submitDecomposition(makeDecomposition(bees[0]!, racineId as never, [faible, ENFANTS[1]!, ENFANTS[2]!]), [{ reference: liv('export const pgcd = 1;') }]), /does not match its commitment/);
   assert.equal(c.registry.entries.length, n);
   assert.equal(c.stateHash(), h);
 });
 
-test('coordinateur : engagement public, coffre privé, solution taillée rejetée, secrets révélés, audit revérifié', async () => {
+test('coordinator: public commitment, private vault, tailored solution rejected, secrets revealed, audit re-verified', async () => {
   const { c, racineId } = await rucheOuverte();
   const { specs, secrets } = enfantsAvecSecrets();
   const d = await c.submitDecomposition(makeDecomposition(bees[0]!, racineId as never, specs), secrets);
   c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'Tests forts'));
 
-  // Avant la validation, le registre public ne contient que l'engagement, jamais les tests cachés.
+  // Before validation, the public registry contains only the commitment, never the hidden tests.
   const avant = JSON.stringify(c.registry.entries);
   assert.ok(avant.includes(commitment(CACHES)));
-  assert.ok(!avant.includes('[100,75]') && !avant.includes('"export function pgcd(a, b) {\\n  a = Math.abs'), 'secrets absents du registre');
+  assert.ok(!avant.includes('[100,75]') && !avant.includes('"export function pgcd(a, b) {\\n  a = Math.abs'), 'secrets absent from the registry');
   const cmd = c.registry.entries.find((e) => e.nature === 'commande' && (e.donnees as CommandeDonnees).type === 'submitDecomposition')!;
-  assert.ok((cmd.donnees as CommandeDonnees).verifs[0]!.mutation!.score >= 0.8, 'le score de mutation est inscrit');
+  assert.ok((cmd.donnees as CommandeDonnees).verifs[0]!.mutation!.score >= 0.8, 'the mutation score is recorded');
 
-  // Une solution taillée pour les exemples visibles est rejetée par les tests cachés.
+  // A solution tailored to the visible examples is rejected by the hidden tests.
   let a = c.claim(makeRequete(bees[1]!, 'claim'));
   while (a && a.alveole.chemin !== '1') {
     c.release(makeRequete(bees[1]!, 'release', { alveole: a.alveole_id }));
     a = c.claim(makeRequete(bees[1]!, 'claim'));
   }
-  assert.ok(a, 'la cellule pgcd est tirée');
+  assert.ok(a, 'the pgcd cell is drawn');
   const taille = liv(TAILLE.replace(/12 && b === 18\) return 6; if \(a === 17 && b === 5\) return 1; return 1/, '12 && b === 18) return 6; if (a === 17 && b === 5) return 1; if (a === 0) return b; return 1'));
   const r = await c.submitResult(makeResult(bees[1]!, a.alveole_id, 'ouvriere', taille), taille);
   assert.equal(r.statut, 'rejete');
-  // (La durée mesurée est exclue : elle peut valoir 100x ms par hasard.)
-  assert.ok(!JSON.stringify({ ...r, rapport: { ...r.rapport, duree_ms: 0 } }).includes('100'), 'aucun détail des tests cachés ne revient à l’ouvrière');
+  // (The measured duration is excluded: it may happen to be 100x ms.)
+  assert.ok(!JSON.stringify({ ...r, rapport: { ...r.rapport, duree_ms: 0 } }).includes('100'), 'no detail of the hidden tests gets back to the worker');
 
-  // L'essaim termine la ruche avec les vraies solutions.
+  // The swarm finishes the hive with the real solutions.
   for (let tour = 0; tour < 300 && c.hiveView('maths').statut !== 'terminee'; tour++) await abeilleScriptee(c, bees[tour % 3]!);
   assert.equal(c.hiveView('maths').statut, 'terminee');
   const reveles = c.registry.entries.filter((e) => e.nature === 'secrets_reveles');

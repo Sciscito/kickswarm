@@ -16,7 +16,7 @@ import type { Hash } from '../src/protocol/types.js';
 const fondateur = generateIdentity();
 const bees: Identity[] = [generateIdentity(), generateIdentity(), generateIdentity()];
 
-/** Recalcule le chaînage après une falsification, comme le ferait un faussaire. */
+/** Recomputes the hash chain after a forgery, as a forger would. */
 function rechain(entries: RegistryEntry[]): RegistryEntry[] {
   let prev: Hash | null = null;
   return entries.map((e, i) => {
@@ -27,7 +27,7 @@ function rechain(entries: RegistryEntry[]): RegistryEntry[] {
   });
 }
 
-/** Une ruche complète : découpage, rejet, pièges, orientation, rappel, commandes refusées. */
+/** A complete hive: split, rejection, traps, orientation, release, refused commands. */
 async function fullRun(extra: Partial<CoordinatorOptions> = {}): Promise<Coordinator> {
   const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.2 }, rng: seededRng(11), ...extra });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'pgcd, estPremier, fibonacci' }), RACINE);
@@ -44,7 +44,7 @@ async function fullRun(extra: Partial<CoordinatorOptions> = {}): Promise<Coordin
     }
     const action = await abeilleScriptee(c, bee, { bug: bug && bee === bees[1] });
     if (action?.caste === 'ouvriere' && bee === bees[1]) bug = false;
-    if (action?.issue.includes('attente du porteur')) {
+    if (action?.issue.includes('waiting for the hive owner')) {
       const prop = c.registry.entries.filter((e) => e.nature === 'decoupage_propose').at(-1)!;
       c.decide(makeDecision(fondateur, 'approbation_decoupage', (prop.donnees as { id: string }).id, 'Découpage clair'));
     }
@@ -57,37 +57,37 @@ async function fullRun(extra: Partial<CoordinatorOptions> = {}): Promise<Coordin
   return c;
 }
 
-test('audit : une ruche complète se rejoue à l’identique, entrée par entrée', async () => {
+test('audit: a complete hive replays identically, entry by entry', async () => {
   const c = await fullRun();
   const entries = c.registry.entries;
   const report = await auditRegistry(entries, { etatAnnonce: c.stateHash() });
-  for (const ch of report.controles) assert.ok(ch.ok, `${ch.nom} : ${ch.detail ?? ''}`);
+  for (const ch of report.controles) assert.ok(ch.ok, `${ch.nom}: ${ch.detail ?? ''}`);
   assert.equal(report.ok, true);
   assert.equal(report.etat, c.stateHash());
-  assert.ok(report.commandes > 20, `${report.commandes} commandes rejouées`);
+  assert.ok(report.commandes > 20, `${report.commandes} commands replayed`);
   const types = new Set(entries.filter((e) => e.nature === 'commande').map((e) => (e.donnees as CommandeDonnees).type));
-  for (const t of ['proposeHive', 'decide', 'claim', 'start', 'release', 'submitResult', 'submitDecomposition', 'engageVerdict', 'submitVerdict']) assert.ok(types.has(t as never), `commande ${t} présente`);
+  for (const t of ['proposeHive', 'decide', 'claim', 'start', 'release', 'submitResult', 'submitDecomposition', 'engageVerdict', 'submitVerdict']) assert.ok(types.has(t as never), `command ${t} present`);
 });
 
-test('audit : la revérification confirme chaque rapport du vérificateur honnête', async () => {
+test('audit: re-verification confirms every report of the honest verifier', async () => {
   const c = await fullRun();
   const report = await auditRegistry(c.registry.entries, { reverifier: true });
   assert.equal(report.ok, true, JSON.stringify(report.controles));
 });
 
-test('audit : une commande refusée ne laisse aucune trace, ni dans l’état ni dans le registre', () => {
+test('audit: a refused command leaves no trace, neither in the state nor in the registry', () => {
   const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0, abeilles_max: 1 }, rng: seededRng(3) });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
   assert.ok(c.claim(makeRequete(bees[0]!, 'claim')));
   const n = c.registry.entries.length, h = c.stateHash();
-  assert.throws(() => c.claim(makeRequete(bees[0]!, 'claim')), /Maximum 1/);
+  assert.throws(() => c.claim(makeRequete(bees[0]!, 'claim')), /At most 1/);
   assert.throws(() => c.decide(makeDecision(bees[1]!, 'pause', 'maths', 'pas le droit')));
-  assert.equal(c.registry.entries.length, n, 'aucune entrée fantôme');
-  assert.equal(c.stateHash(), h, 'aucun nonce ni bail fantôme dans l’état');
+  assert.equal(c.registry.entries.length, n, 'no phantom entry');
+  assert.equal(c.stateHash(), h, 'no phantom nonce or lease in the state');
 });
 
-test('audit : falsifier une entrée dérivée, puis recalculer le chaînage, est détecté', async () => {
+test('audit: forging a derived entry, then recomputing the hash chain, is detected', async () => {
   const c = await fullRun();
   const forged = structuredClone(c.registry.entries);
   const i = forged.findIndex((e) => e.nature === 'alveole_miel');
@@ -98,7 +98,7 @@ test('audit : falsifier une entrée dérivée, puis recalculer le chaînage, est
   assert.match(replay.detail!, new RegExp(`#${i}`));
 });
 
-test('audit : modifier un objet signé dans une commande est détecté', async () => {
+test('audit: modifying a signed object inside a command is detected', async () => {
   const c = await fullRun();
   const forged = structuredClone(c.registry.entries);
   const e = forged.find((x) => x.nature === 'commande' && (x.donnees as CommandeDonnees).type === 'submitVerdict')!;
@@ -109,16 +109,16 @@ test('audit : modifier un objet signé dans une commande est détecté', async (
   assert.match(report.controles.find((x) => x.nom.startsWith('Deterministic replay'))!.detail!, /failed on replay|differs|replay produced/);
 });
 
-test('audit : supprimer une commande, ou tricher sur l’aléa, est détecté', async () => {
+test('audit: deleting a command, or cheating on the randomness, is detected', async () => {
   const c = await fullRun();
   const sansCommande = structuredClone(c.registry.entries);
   const k = sansCommande.findIndex((x) => x.nature === 'commande' && (x.donnees as CommandeDonnees).type === 'start');
   sansCommande.splice(k, 1);
   assert.equal((await auditRegistry(rechain(sansCommande))).ok, false);
 
-  // Un tirage qui change le déroulé (ici : forcer une alvéole-piège) fait diverger le rejeu.
-  // Un tirage modifié sans aucun effet serait indétectable, mais aussi sans conséquence ;
-  // contre un opérateur qui choisirait ses tirages, la parade est la balise publique drand (P1-3).
+  // A draw that changes the course of events (here: forcing a trap cell) makes the replay diverge.
+  // A draw modified without any effect would be undetectable, but also harmless;
+  // against an operator who would pick their own draws, the defence is the public drand beacon (P1-3).
   const aleaTruque = structuredClone(c.registry.entries);
   const apresDecoupage = aleaTruque.findIndex((x) => x.nature === 'decoupage_adopte');
   const claim = aleaTruque.find((x) => {
@@ -126,10 +126,10 @@ test('audit : supprimer une commande, ou tricher sur l’aléa, est détecté', 
     return x.seq > apresDecoupage && x.nature === 'commande' && d.type === 'claim' && d.alea.length > 0 && d.alea[0]! >= 0.2;
   })!;
   (claim.donnees as CommandeDonnees).alea[0] = 0;
-  assert.equal((await auditRegistry(rechain(aleaTruque))).ok, false, 'un tirage qui change le déroulé est détecté');
+  assert.equal((await auditRegistry(rechain(aleaTruque))).ok, false, 'a draw that changes the course of events is detected');
 });
 
-test('audit : un vérificateur menteur passe le rejeu, mais pas la revérification', async () => {
+test('audit: a lying verifier passes the replay, but not the re-verification', async () => {
   const menteur = async () => ({ ok: true, motif: '3/3 tests passed', tests: [], duree_ms: 1, sandbox: 'none' });
   const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0, gardiennes_v0: 0 }, rng: seededRng(5), verifier: menteur });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
@@ -138,17 +138,17 @@ test('audit : un vérificateur menteur passe le rejeu, mais pas la revérificati
   const d = await c.submitDecomposition(makeDecomposition(bees[0]!, a.alveole_id, ENFANTS));
   c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'ok'));
   await abeilleScriptee(c, bees[1]!, { bug: true });
-  assert.ok(c.hiveView('maths').alveoles.some((x) => x.etat === 'miel'), 'le menteur a fait passer du code faux');
+  assert.ok(c.hiveView('maths').alveoles.some((x) => x.etat === 'miel'), 'the liar got wrong code through');
 
   const sans = await auditRegistry(c.registry.entries);
-  assert.equal(sans.ok, true, 'l’histoire est cohérente avec ce que le coordinateur a écrit');
+  assert.equal(sans.ok, true, 'the history is consistent with what the coordinator wrote');
   const avec = await auditRegistry(c.registry.entries, { reverifier: true });
   const check = avec.controles.find((x) => x.nom.startsWith('Verifier reports'))!;
-  assert.equal(check.ok, false, 'la revérification démasque le mensonge');
+  assert.equal(check.ok, false, 'the re-verification exposes the lie');
   assert.match(check.detail!, /registry says passed, a fresh run says failed/);
 });
 
-test('audit : registre sur disque rejoué, état local trafiqué refusé au démarrage', async () => {
+test('audit: on-disk registry replayed, tampered local state refused at startup', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'osp-audit-'));
   try {
     const c = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { alpha_faux: 0.05, taux_pieges: 0 }, rng: seededRng(9) });
@@ -164,13 +164,13 @@ test('audit : registre sur disque rejoué, état local trafiqué refusé au dém
     const etat = JSON.parse(readFileSync(join(dir, 'etat.json'), 'utf8'));
     etat.accounts[bees[0]!.id] = { miel: 1_000_000, parts: 0, reputation: 1, miel_gagne: 1_000_000 };
     writeFileSync(join(dir, 'etat.json'), JSON.stringify(etat));
-    assert.throws(() => new Coordinator({ fondateur: fondateur.id, dataDir: dir }), /incohérent avec le registre/);
+    assert.throws(() => new Coordinator({ fondateur: fondateur.id, dataDir: dir }), /inconsistent with the registry/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('audit : une entrée modifiée sans recalcul du chaînage est arrêtée net', async () => {
+test('audit: an entry modified without recomputing the hash chain is stopped at once', async () => {
   const c = await fullRun();
   const forged = structuredClone(c.registry.entries);
   (forged[5]!.donnees as Record<string, unknown>).falsifie = true;

@@ -1,48 +1,48 @@
-// Les « (paramètre) » de la spec OSP v0.1, avec leurs valeurs de départ.
-// La gouvernance (§14) peut les modifier sans changer de version.
+// The "(parameter)" values of the OSP v0.1 spec, with their starting values.
+// Governance (§14) can change them without changing the version.
 
 export interface Params {
-  /** §5 : le bail vaut duree_max_s × ce facteur. */
+  /** §5: the lease lasts duree_max_s × this factor. */
   facteur_bail: number;
-  /** §5 : au-delà, l'alvéole est renvoyée en découpage. */
+  /** §5: beyond this, the cell is sent back for splitting. */
   rejets_avant_redecoupage: number;
   /** §6.2 */
   enfants_min: number;
   enfants_max: number;
   /** §6.4 */
   profondeur_max: number;
-  /** §6.3 : les découpages jusqu'à ce niveau doivent être approuvés par le porteur. */
+  /** §6.3: splits up to this level must be approved by the hive owner. */
   niveau_approbation_porteur: number;
-  /** §9.1 et OSP v0.2 §4.4 : plancher de validations par alvéole V0 (0 : le vérificateur automatique suffit). */
+  /** §9.1 and OSP v0.2 §4.4: minimum number of validations per V0 cell (0: the automatic verifier is enough). */
   gardiennes_v0: number;
-  /** OSP v0.2 §2 : taux maximal de faux miel, α* (probabilité qu'une alvéole validée soit fausse). */
+  /** OSP v0.2 §2: maximum rate of false honey, α* (probability that a validated cell is false). */
   alpha_faux: number;
-  /** OSP v0.2 §4.2 : P(juste) d'un résultat qui a passé le vérificateur automatique, avant tout verdict. */
+  /** OSP v0.2 §4.2: P(correct) of a result that passed the automatic verifier, before any verdict. */
   p_juste_initiale: number;
-  /** OSP v0.2 §5.3 : a priori Beta(a, b) de la sensibilité et de la spécificité d'une gardienne. */
+  /** OSP v0.2 §5.3: Beta(a, b) prior of a guard's sensitivity and specificity. */
   prior_sensibilite: [number, number];
   prior_specificite: [number, number];
-  /** OSP v0.2 §5.3 : on pèse chaque gardienne sur ce quantile de sa fiabilité (la borne basse). */
+  /** OSP v0.2 §5.3: each guard is weighted on this quantile of their reliability (the lower bound). */
   quantile_fiabilite: number;
-  /** OSP v0.2 §5.3 : oubli progressif, appliqué aux anciennes observations à chaque nouvelle. */
+  /** OSP v0.2 §5.3: gradual forgetting, applied to old observations at each new one. */
   oubli_fiabilite: number;
-  /** OSP v0.2 §4.4 : au-delà de ce nombre de verdicts sans conclusion, le porteur arbitre. */
+  /** OSP v0.2 §4.4: beyond this number of verdicts without a conclusion, the hive owner arbitrates. */
   verdicts_max: number;
-  /** OSP v0.2 §4.4 : un résultat qui attend ses gardiennes plus longtemps part aussi en arbitrage. */
+  /** OSP v0.2 §4.4: a result that waits longer than this for its guards also goes to arbitration. */
   escalade_ms: number;
-  /** §9.4 et OSP v0.2 P0-3 : taux de pièges d'une gardienne nouvelle venue ; il baisse avec sa réputation. */
+  /** §9.4 and OSP v0.2 P0-3: trap rate of a newcomer guard; it decreases with their reputation. */
   taux_pieges: number;
-  /** OSP v0.2 P0-3 : plancher du taux de pièges, même pour les gardiennes les plus fiables. */
+  /** OSP v0.2 P0-3: floor of the trap rate, even for the most reliable guards. */
   taux_pieges_min: number;
-  /** OSP v0.2 P0-3 : mutants essayés par livraison pour fabriquer des pièges. */
+  /** OSP v0.2 P0-3: mutants tried per delivery to make traps. */
   pieges_essais: number;
-  /** Version du moteur de mutation (il fait partie du rejeu). Un registre qui ne l'annonce pas utilise la version 1. */
+  /** Version of the mutation engine (it is part of the replay). A registry that does not announce it uses version 1. */
   moteur_mutation: number;
-  /** OSP v0.2 P0-3 : délai maximal avant publication d'une entrée du registre, même si une vérification reste ouverte. */
+  /** OSP v0.2 P0-3: maximum delay before a registry entry is published, even if a verification is still open. */
   embargo_max_ms: number;
-  /** OSP v0.2 §3.2 : part minimale des mutants que les tests d'un enfant doivent détecter. */
+  /** OSP v0.2 §3.2: minimum share of mutants that a child's tests must detect. */
   score_mutation_min: number;
-  /** OSP v0.2 §3.2 : exiger une référence pour chaque enfant, afin de mesurer la force de ses tests. */
+  /** OSP v0.2 §3.2: require a reference for each child, to measure the strength of its tests. */
   reference_obligatoire: boolean;
   /** §10.1 */
   miel_base: number;
@@ -59,7 +59,7 @@ export interface Params {
   facteur_bail_expire: number;
   facteur_piege_valide: number;
   facteur_resultat_rejete: number;
-  /** OSP v0.2 P1-3 : taire son verdict après s'être engagée doit coûter plus que le pire verdict révélé. */
+  /** OSP v0.2 P1-3: withholding a verdict after committing must cost more than the worst revealed verdict. */
   facteur_non_revele: number;
   /** §12 */
   plancher_anti_famine: number;
@@ -73,19 +73,19 @@ export interface Params {
   ratio_commun: number;
   allocation_fondateur: number;
   allocation_fondateur_duree_ms: number;
-  /** §10.5 : les N premiers contributeurs du réseau reçoivent le trophée Pionnier. */
+  /** §10.5: the first N contributors of the network receive the Pioneer trophy. */
   pionniers: number;
-  /** Baux simultanés autorisés par contributeur (une abeille = un bail). */
+  /** Simultaneous leases allowed per contributor (one bee = one lease). */
   abeilles_max: number;
-  /** OSP v0.2 P0-5 : le registre est scellé au plus tard après ce délai… */
+  /** OSP v0.2 P0-5: the registry is sealed at the latest after this delay… */
   sceau_intervalle_ms: number;
-  /** … ou après ce nombre de commandes. */
+  /** … or after this number of commands. */
   sceau_max_commandes: number;
-  /** Fenêtre d'acceptation des requêtes signées (anti-rejeu). */
+  /** Acceptance window for signed requests (anti-replay). */
   fenetre_requete_ms: number;
-  /** P1-3 : le tirage utilise le tour drand tourA(ts) + ce décalage. */
+  /** P1-3: the draw uses drand round tourA(ts) + this offset. */
   balise_decalage: number;
-  /** P1-3 : écart maximal entre l'horloge du contributeur et celle du coordinateur, pour un tirage équitable. */
+  /** P1-3: maximum gap between the contributor's clock and the coordinator's, for a fair draw. */
   fenetre_balise_ms: number;
 }
 

@@ -23,14 +23,14 @@ function nouvelleRuche(opts: ConstructorParameters<typeof Coordinator>[0]['param
   return c;
 }
 
-/** Une gardienne s'engage sur son verdict, puis le révèle (OSP v0.2, P1-3). */
+/** A guard commits to their verdict, then reveals it (OSP v0.2, P1-3). */
 async function juger(c: Coordinator, id: Identity, resultat: Hash, decision: Verdict['decision'], motif: string) {
   const v = makeVerdict(id, resultat, decision, motif);
   c.engagerVerdict(makeEngagement(id, v));
   return c.submitVerdict(v);
 }
 
-/** Tire `bee` comme gardienne de `resultat`, en rendant les autres tâches. */
+/** Draws `bee` as a guard of `resultat`, releasing the other tasks. */
 function tirer(c: Coordinator, bee: Identity, resultat: Hash) {
   for (let i = 0; i < 50; i++) {
     const g = c.claim(makeRequete(bee, 'claim'));
@@ -45,57 +45,57 @@ async function decouper(c: Coordinator): Promise<void> {
   const a = c.claim(makeRequete(lea, 'claim'))!;
   assert.equal(a.caste, 'eclaireuse');
   const d = await c.submitDecomposition(makeDecomposition(lea, a.alveole_id, ENFANTS));
-  assert.equal(d.statut, 'en_attente_porteur', 'le niveau 0 attend le porteur (§6.3)');
+  assert.equal(d.statut, 'en_attente_porteur', 'level 0 waits for the hive owner (§6.3)');
   c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'Découpage clair'));
 }
 
-test('de l’idée au miel : une ruche complète, de bout en bout', async () => {
+test('from idea to honey: a complete hive, end to end', async () => {
   const c = nouvelleRuche();
-  assert.equal(c.claim(makeRequete(lea, 'claim')), null, 'une ruche proposée ne distribue rien');
-  assert.throws(() => c.decide(makeDecision(lea, 'approbation_ruche', 'maths', 'ok')), /fondateur/);
+  assert.equal(c.claim(makeRequete(lea, 'claim')), null, 'a proposed hive hands out nothing');
+  assert.throws(() => c.decide(makeDecision(lea, 'approbation_ruche', 'maths', 'ok')), /founder/);
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'Conforme à la charte'));
 
   const a = c.claim(makeRequete(lea, 'claim'))!;
-  assert.equal(a.caste, 'eclaireuse', 'le cœur non atomique appelle une éclaireuse');
+  assert.equal(a.caste, 'eclaireuse', 'the non-atomic heart calls for a scout');
   const d = await c.submitDecomposition(makeDecomposition(lea, a.alveole_id, ENFANTS));
-  assert.throws(() => c.decide(makeDecision(kenji, 'approbation_decoupage', d.decoupage, 'ok')), /porteur/);
+  assert.throws(() => c.decide(makeDecision(kenji, 'approbation_decoupage', d.decoupage, 'ok')), /hive owner/);
   c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'Découpage clair'));
   assert.deepEqual(c.hiveView('maths').progression, { miel: 0, total: 4 });
 
-  // Kenji livre d'abord du faux : le vérificateur automatique le rejette.
+  // Kenji first delivers wrong code: the automatic verifier rejects it.
   const repAvant = c.account(kenji.id).reputation;
   const faux = await abeilleScriptee(c, kenji, { bug: true });
   assert.equal(faux?.caste, 'ouvriere');
-  assert.match(faux!.issue, /rejeté/);
-  assert.ok(c.account(kenji.id).reputation < repAvant, 'un rejet coûte de la réputation');
-  assert.ok(c.board('maths').some((e) => e.nature === 'impasse'), 'l’échec est inscrit au tableau noir');
+  assert.match(faux!.issue, /rejected/);
+  assert.ok(c.account(kenji.id).reputation < repAvant, 'a rejection costs reputation');
+  assert.ok(c.board('maths').some((e) => e.nature === 'impasse'), 'the failure is written on the blackboard');
 
-  // Puis l'essaim travaille jusqu'au cœur.
+  // Then the swarm works its way up to the heart.
   const abeilles: Identity[] = [kenji, amara, lea];
   for (let tour = 0; tour < 200 && c.hiveView('maths').statut !== 'terminee'; tour++) {
     const bee = abeilles[tour % abeilles.length]!;
     const action = await abeilleScriptee(c, bee);
-    if (action?.caste === 'gardienne') assert.match(action.issue, /miel|démasqué|confirmé|scellé/);
+    if (action?.caste === 'gardienne') assert.match(action.issue, /honey|fake result caught|confirmed|sealed/);
   }
   const vue = c.hiveView('maths');
   assert.equal(vue.statut, 'terminee');
   assert.deepEqual(vue.progression, { miel: 4, total: 4 });
 
-  // La solution du cœur est l'assemblage vérifié des trois enfants.
+  // The heart's solution is the verified assembly of the three children.
   const coeur = vue.alveoles.find((x) => x.chemin === '0')!;
   assert.ok(c.livrableValide(coeur.id)?.fichiers['solution.mjs']);
 
-  // Registre intègre, et le Commun détient 30 % des parts (§18.2).
+  // Registry intact, and the Commons holds 30% of the shares (§18.2).
   assert.deepEqual(verifyRegistry(c.registry.entries), { ok: true });
   const ids = [fondateur.id, lea.id, kenji.id, amara.id];
   const partsContributeurs = ids.reduce((s, id) => s + c.account(id).parts, 0);
   const commun = c.account(COMMUN).parts;
-  assert.ok(Math.abs(commun / (commun + partsContributeurs) - 0.3) < 0.01, `Commun ${commun} / contributeurs ${partsContributeurs}`);
-  assert.ok(c.account(fondateur.id).parts > 0, 'allocation fondateur et bonus porteur');
-  for (const id of ids) assert.ok(c.account(id).miel_gagne > 0, 'chacun a gagné du miel');
+  assert.ok(Math.abs(commun / (commun + partsContributeurs) - 0.3) < 0.01, `Commons ${commun} / contributors ${partsContributeurs}`);
+  assert.ok(c.account(fondateur.id).parts > 0, 'founder allocation and hive owner bonus');
+  for (const id of ids) assert.ok(c.account(id).miel_gagne > 0, 'everyone earned honey');
 });
 
-test('on ne vérifie jamais son propre travail', async () => {
+test('nobody ever verifies their own work', async () => {
   const c = nouvelleRuche();
   await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
@@ -105,17 +105,17 @@ test('on ne vérifie jamais son propre travail', async () => {
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
   assert.equal(r.statut, 'en_verification');
-  await assert.rejects(juger(c, kenji, r.resultat, 'valide', 'moi-même'), /gardienne|propre/);
+  await assert.rejects(juger(c, kenji, r.resultat, 'valide', 'moi-même'), /guard|own work/);
   for (let i = 0; i < 6; i++) {
     const b = c.claim(makeRequete(kenji, 'claim'));
     if (b) {
-      assert.notEqual(b.a_verifier?.id, r.resultat, 'kenji ne reçoit jamais son propre résultat à vérifier');
+      assert.notEqual(b.a_verifier?.id, r.resultat, 'kenji never receives his own result to verify');
       c.release(makeRequete(kenji, 'release', { alveole: b.alveole_id }));
     }
   }
 });
 
-test('une gardienne qui rejette à tort un résultat juste perd de la réputation', async () => {
+test('a guard who wrongly rejects a correct result loses reputation', async () => {
   const c = nouvelleRuche();
   await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
@@ -123,11 +123,11 @@ test('une gardienne qui rejette à tort un résultat juste perd de la réputatio
   const { SOLUTIONS } = await import('../src/exemples/maths.js');
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
-  assert.ok(tirer(c, amara, r.resultat), 'amara finit par être tirée gardienne');
+  assert.ok(tirer(c, amara, r.resultat), 'amara eventually gets drawn as a guard');
   const avant = c.account(amara.id).reputation;
   const faux = makeVerdict(amara, r.resultat, 'rejete', 'je n’aime pas');
   c.engagerVerdict(makeEngagement(amara, faux));
-  assert.ok(tirer(c, lea, r.resultat), 'lea est tirée seconde gardienne');
+  assert.ok(tirer(c, lea, r.resultat), 'lea is drawn as the second guard');
   c.engagerVerdict(makeEngagement(lea, makeVerdict(lea, r.resultat, 'valide', 'ok')));
   const v = await c.submitVerdict(faux);
   assert.equal(v.renverse, true);
@@ -135,7 +135,7 @@ test('une gardienne qui rejette à tort un résultat juste perd de la réputatio
   assert.equal(c.hiveView('maths').alveoles.find((x) => x.id === a.alveole_id)!.etat, 'en_verification');
 });
 
-test('alvéoles-pièges : la gardienne attentive gagne, la complaisante perd la moitié', async () => {
+test('trap cells: the careful guard earns, the complacent one loses half', async () => {
   const c = nouvelleRuche({ taux_pieges: 1 });
   await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
@@ -143,14 +143,14 @@ test('alvéoles-pièges : la gardienne attentive gagne, la complaisante perd la 
   const { SOLUTIONS } = await import('../src/exemples/maths.js');
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
-  // Tirée sur ce résultat, une nouvelle venue reçoit à coup sûr (taux 1) un mutant du vrai livrable.
+  // Drawn on this result, a newcomer is sure to receive (rate 1) a mutant of the real deliverable.
   const gardienne = (bee: Identity) => {
     for (let i = 0; i < 50; i++) {
       const g = c.claim(makeRequete(bee, 'claim'));
       if (g?.a_verifier) return g;
       if (g) c.release(makeRequete(bee, 'release', { alveole: g.alveole_id }));
     }
-    throw new Error('jamais tirée gardienne');
+    throw new Error('never drawn as a guard');
   };
   const p1 = gardienne(amara);
   assert.notEqual(p1.a_verifier!.id, r.resultat);
@@ -165,39 +165,39 @@ test('alvéoles-pièges : la gardienne attentive gagne, la complaisante perd la 
   assert.equal(c.account(lea.id).reputation, Math.round(avant * 0.5 * 10_000) / 10_000);
 });
 
-test('bail expiré : l’alvéole revient dans l’essaim', async () => {
+test('expired lease: the cell returns to the swarm', async () => {
   let maintenant = Date.now();
   const c = nouvelleRuche({}, { now: () => maintenant });
   await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
   const avant = c.account(kenji.id).reputation;
   maintenant += 1800 * 1.5 * 1000 + 1;
-  assert.throws(() => c.claim(makeRequete(amara, 'claim')), /expirée/, 'une requête hors de la fenêtre anti-rejeu est refusée');
+  assert.throws(() => c.claim(makeRequete(amara, 'claim')), /expired/, 'a request outside the anti-replay window is refused');
   c.claim(signObject<Requete>({ type: 'osp.requete/0.1', action: 'claim', contributeur: amara.id, ts: maintenant, nonce: newNonce() }, amara));
-  assert.ok(c.account(kenji.id).reputation < avant, 'un bail expiré coûte un peu de réputation');
-  assert.notEqual(c.liveView('maths').alveoles.find((x) => x.id === a.alveole_id)!.abeille?.par, kenji.id, 'kenji a perdu son bail');
+  assert.ok(c.account(kenji.id).reputation < avant, 'an expired lease costs a little reputation');
+  assert.notEqual(c.liveView('maths').alveoles.find((x) => x.id === a.alveole_id)!.abeille?.par, kenji.id, 'kenji lost his lease');
 });
 
-test('anti-rejeu, pause et orientation', async () => {
+test('anti-replay, pause and orientation', async () => {
   const c = nouvelleRuche();
   await decouper(c);
   const req = makeRequete(kenji, 'claim');
   c.claim(req);
-  assert.throws(() => c.claim(req), /rejouée/);
+  assert.throws(() => c.claim(req), /Replayed/);
 
-  assert.throws(() => c.decide(makeDecision(kenji, 'pause', 'maths', 'stop')), /porteur de la ruche ou au fondateur/);
+  assert.throws(() => c.decide(makeDecision(kenji, 'pause', 'maths', 'stop')), /hive owner or the founder/);
   c.decide(makeDecision(fondateur, 'pause', 'maths', 'Frein d’urgence : test'));
-  assert.equal(c.claim(makeRequete(amara, 'claim')), null, 'une ruche en pause ne distribue rien');
+  assert.equal(c.claim(makeRequete(amara, 'claim')), null, 'a paused hive hands out nothing');
   c.decide(makeDecision(fondateur, 'reprise', 'maths', 'Reprise'));
 
-  assert.throws(() => c.decide(makeDecision(fondateur, 'orientation', 'maths:2', 'trop', { multiplicateur: 4 })), /entre 1 et 3/);
-  assert.throws(() => c.decide(makeDecision(fondateur, 'orientation', 'maths:9', 'inconnue')), /Branche inconnue/);
+  assert.throws(() => c.decide(makeDecision(fondateur, 'orientation', 'maths:2', 'trop', { multiplicateur: 4 })), /between 1 and 3/);
+  assert.throws(() => c.decide(makeDecision(fondateur, 'orientation', 'maths:9', 'inconnue')), /Unknown branch/);
   c.decide(makeDecision(fondateur, 'orientation', 'maths:2', 'Priorité aux nombres premiers', { multiplicateur: 3 }));
   assert.deepEqual(c.hiveView('maths').orientations.map((o) => [o.branche, o.multiplicateur]), [['2', 3]]);
-  assert.throws(() => c.decide(makeDecision(fondateur, 'pause', 'maths', '')), /motivée/);
+  assert.throws(() => c.decide(makeDecision(fondateur, 'pause', 'maths', '')), /state its reason/);
 });
 
-test('persistance : le coordinateur reprend son état et son registre', async () => {
+test('persistence: the coordinator restores its state and its registry', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'osp-data-'));
   try {
     const c1 = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { alpha_faux: 0.05, taux_pieges: 0 } });
@@ -208,13 +208,13 @@ test('persistance : le coordinateur reprend son état et son registre', async ()
     assert.equal(c2.hiveView('maths').statut, 'active');
     assert.equal(c2.registry.entries.length, n);
     assert.equal(c2.identite.id, c1.identite.id);
-    assert.throws(() => new Coordinator({ fondateur: lea.id, dataDir: dir }), /autre fondateur/);
+    assert.throws(() => new Coordinator({ fondateur: lea.id, dataDir: dir }), /another founder/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('double vérification : deux gardiennes distinctes, puis les trophées tombent', async () => {
+test('double verification: two distinct guards, then the trophies come in', async () => {
   const c = nouvelleRuche();
   await decouper(c);
   const a = c.claim(makeRequete(kenji, 'claim'))!;
@@ -223,16 +223,16 @@ test('double vérification : deux gardiennes distinctes, puis les trophées tomb
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
 
-  assert.ok(tirer(c, amara, r.resultat), 'amara est tirée gardienne');
+  assert.ok(tirer(c, amara, r.resultat), 'amara is drawn as a guard');
   const va = makeVerdict(amara, r.resultat, 'valide', 'ok');
   assert.deepEqual(c.engagerVerdict(makeEngagement(amara, va)), { statut: 'engage', revelation: false });
-  await assert.rejects(c.submitVerdict(va), (e: { status?: number }) => e.status === 425, 'pas de révélation tant que la seconde gardienne ne s’est pas engagée');
-  assert.equal(tirer(c, amara, r.resultat), null, 'la même gardienne ne vérifie pas deux fois');
-  assert.ok(tirer(c, lea, r.resultat), 'lea est tirée seconde gardienne');
+  await assert.rejects(c.submitVerdict(va), (e: { status?: number }) => e.status === 425, 'no reveal until the second guard has committed');
+  assert.equal(tirer(c, amara, r.resultat), null, 'the same guard does not verify twice');
+  assert.ok(tirer(c, lea, r.resultat), 'lea is drawn as the second guard');
   const vl = makeVerdict(lea, r.resultat, 'valide', 'ok');
   assert.deepEqual(c.engagerVerdict(makeEngagement(lea, vl)), { statut: 'engage', revelation: true });
   const v1 = await c.submitVerdict(va);
-  assert.deepEqual([v1.statut, v1.confirmations], ['en_verification', 1], 'une seule confirmation ne suffit pas');
+  assert.deepEqual([v1.statut, v1.confirmations], ['en_verification', 1], 'a single confirmation is not enough');
   const v2 = await c.submitVerdict(vl);
   assert.equal(v2.statut, 'miel');
 
@@ -240,5 +240,5 @@ test('double vérification : deux gardiennes distinctes, puis les trophées tomb
   assert.ok(ids(kenji).includes('first_drop') && ids(kenji).includes('pioneer') && ids(kenji).includes('founding_bee'));
   assert.ok(ids(lea).includes('scout'));
   assert.ok(ids(fondateur).includes('hive_owner'));
-  assert.ok(c.registry.entries.some((e) => e.nature === 'trophee'), 'chaque trophée est inscrit au registre');
+  assert.ok(c.registry.entries.some((e) => e.nature === 'trophee'), 'every trophy is written to the registry');
 });

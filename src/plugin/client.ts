@@ -2,7 +2,7 @@ import { makeRequete } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
 import type { Assignment, CellSpec, Decision, Decomposition, EngagementVerdict, Hash, Hive, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
 
-/** Client HTTP du coordinateur. Il signe chaque requête avec l'identité locale. */
+/** HTTP client for the coordinator. It signs every request with the local identity. */
 export class CoordinatorClient {
   constructor(
     readonly url: string,
@@ -16,8 +16,8 @@ export class CoordinatorClient {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = (await res.json().catch(() => ({}))) as { erreur?: string };
-    // Le code HTTP accompagne l'erreur : 425 veut dire « révélation pas encore ouverte, réessaie ».
-    if (!res.ok) throw Object.assign(new Error(data.erreur ?? `Erreur ${res.status} du coordinateur`), { status: res.status });
+    // The HTTP status comes with the error: 425 means “reveal not open yet, try again”.
+    if (!res.ok) throw Object.assign(new Error(data.erreur ?? `Coordinator error ${res.status}`), { status: res.status });
     return data as T;
   }
 

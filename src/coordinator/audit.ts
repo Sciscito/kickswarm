@@ -9,9 +9,9 @@ import { COMMUN } from './ledger.js';
 import type { Params } from './params.js';
 import { verifyRegistry, type RegistryEntry } from './registry.js';
 
-// L'auditeur (OSP v0.2, §6) : n'importe qui peut rejouer le registre public depuis zéro, avec le
-// même code de référence, et vérifier que chaque entrée découle des objets signés qu'il contient,
-// que l'état final est celui qu'annonce le coordinateur, et que les invariants tiennent.
+// The auditor (OSP v0.2, §6): anyone can replay the public registry from scratch, with the
+// same reference code, and check that every entry follows from the signed objects it contains,
+// that the final state is the one the coordinator announces, and that the invariants hold.
 
 export interface AuditCheck {
   nom: string;
@@ -23,15 +23,15 @@ export interface AuditReport {
   ok: boolean;
   entrees: number;
   commandes: number;
-  /** Hash de l'état reconstruit par le rejeu. */
+  /** Hash of the state rebuilt by the replay. */
   etat?: Hash;
   controles: AuditCheck[];
 }
 
 export interface AuditOptions {
-  /** Relancer le vérificateur V0 sur chaque livrable, pour vérifier les rapports inscrits. */
+  /** Re-run the V0 verifier on every deliverable, to check the recorded reports. */
   reverifier?: boolean;
-  /** Hash d'état annoncé par un coordinateur en ligne, à comparer au rejeu. */
+  /** State hash announced by a live coordinator, to compare with the replay. */
   etatAnnonce?: Hash;
 }
 
@@ -59,12 +59,12 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   let commandes = 0;
   const report = (etat?: Hash): AuditReport => ({ ok: controles.every((c) => c.ok), entrees: entries.length, commandes, ...(etat ? { etat } : {}), controles });
 
-  // 1. Le chaînage : aucune entrée modifiée, supprimée ou insérée.
+  // 1. The chain: no entry modified, deleted or inserted.
   const chain = verifyRegistry(entries);
   add('Hash chain intact', chain.ok, chain.ok ? undefined : chain.erreur);
   if (!chain.ok) return report();
 
-  // 2. Le lancement annonce le fondateur, les identités publiques du coordinateur et les paramètres.
+  // 2. The launch announces the founder, the coordinator's public identities and the parameters.
   const first = entries[0];
   const L = first?.donnees as Lancement | undefined;
   if (!first || first.nature !== 'lancement' || !L?.pieges) {
@@ -73,7 +73,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   }
   add('Launch entry', true);
 
-  // 3. Le rejeu : un coordinateur neuf, sans clé privée, reproduit chaque entrée à partir des objets signés.
+  // 3. The replay: a fresh coordinator, with no private key, reproduces every entry from the signed objects.
   const coord = new Coordinator({
     fondateur: L.fondateur,
     params: L.params,
@@ -82,7 +82,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   });
   let divergence = coord.registry.entries[0]?.hash === first.hash ? undefined : 'the launch entry differs';
   const reverif: string[] = [];
-  // Tests cachés révélés à la validation : seuls ceux-là permettent de revérifier une alvéole qui en avait.
+  // Hidden tests revealed at validation: only those allow re-verifying a cell that had some.
   const reveles = new Map<string, TestCase[]>();
   for (const e of entries) {
     const d = e.donnees as { tests_caches?: TestCase[] };
@@ -93,7 +93,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   for (const e of entries) {
     if (divergence) break;
     if (e.nature === 'sceau') {
-      // Le sceau : la signature post-quantique du coordinateur sur la tête du registre.
+      // The seal: the coordinator's post-quantum signature on the registry head.
       const sc = e.donnees as { type: string; coordinateur: string; seq: number; tete: string };
       const prev = entries[e.seq - 1];
       const valide = sc.type === 'osp.sceau/0.1' && sc.coordinateur === L.coordinateur && prev !== undefined && sc.seq === prev.seq && sc.tete === prev.hash && verifyObject(sc, L.coordinateur);
@@ -136,7 +136,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     return report();
   }
 
-  // 3 bis. Les sceaux : qui garantit le registre, avec quelle cryptographie, et jusqu'où.
+  // 3a. The seals: who vouches for the registry, with which cryptography, and up to where.
   const contenu = entries.filter((e) => e.nature !== 'sceau');
   const derniereEntree = contenu.length ? contenu[contenu.length - 1]!.seq : -1;
   const nonScelles = sceaux.dernier < 0 ? contenu.length : contenu.filter((e) => e.seq > sceaux.dernier).length;
@@ -149,7 +149,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
       : `${sceaux.n} seal(s) by ${algo === 'slh1' ? 'SLH-DSA-SHA2-128f (FIPS 205)' : algo}; the last one covers entry #${sceaux.dernier}${nonScelles ? `, ${nonScelles} newer entr${nonScelles > 1 ? 'ies' : 'y'} not sealed yet (up to #${derniereEntree})` : ''}`,
   );
 
-  // P1-3 : les tirages viennent-ils d'une balise publique que personne ne contrôle ?
+  // P1-3: do the draws come from a public beacon that nobody controls?
   const claims = entries.filter((e) => e.nature === 'commande' && (e.donnees as CommandeDonnees).type === 'claim');
   const avecBalise = claims.filter((e) => (e.donnees as CommandeDonnees).balise).length;
   if (!L.balise) {
@@ -166,8 +166,8 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     );
   }
 
-  // P1-3 : chaque verdict révélé correspond à un engagement signé, inscrit avant lui.
-  // Recalculé ici à partir des seuls objets signés, indépendamment de la logique du coordinateur.
+  // P1-3: every revealed verdict matches a signed commitment, written before it.
+  // Recomputed here from the signed objects alone, independently of the coordinator's logic.
   const engages = new Map<string, Hash>();
   const sansEngagement: string[] = [];
   let nVerdicts = 0;
@@ -198,9 +198,9 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
         : 'no verdict yet',
   );
 
-  // P0-3 : les pièges sont-ils tirés au taux annoncé pour chaque gardienne ? Le rejeu a recalculé chaque
-  // tirage (taux selon la réputation du moment, mutant choisi parmi ceux du vrai livrable) ; on compare le
-  // nombre de pièges à son espérance, pour démasquer un coordinateur qui en abuserait ou en épargnerait.
+  // P0-3: are traps drawn at the announced rate for each guard? The replay recomputed every
+  // draw (rate based on the reputation at that moment, mutant picked among those of the real deliverable); we compare the
+  // number of traps with its expected value, to expose a coordinator that would overuse or spare them.
   const tirages = coord.journalPieges;
   const attendu = tirages.reduce((s, t) => s + t.taux, 0);
   const variance = tirages.reduce((s, t) => s + t.taux * (1 - t.taux), 0);
@@ -214,8 +214,8 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
       : 'no guard draw on a deliverable that could be mimicked yet',
   );
 
-  // P0-4 : chaque miel validé par les gardiennes a-t-il atteint le taux d'erreur cible α* ? La log-cote est
-  // recalculée ici à partir des seuls poids inscrits avec chaque verdict, indépendamment du coordinateur.
+  // P0-4: did every honey validated by guards reach the target error rate α*? The log-odds are
+  // recomputed here from the weights recorded with each verdict alone, independently of the coordinator.
   const somme = new Map<string, number>();
   for (const e of entries) {
     const d = e.donnees as { resultat?: string; decision?: string; poids?: number };
@@ -246,7 +246,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
         : `no cell validated by guards yet${arbitres ? `; ${arbitres} settled by the hive owner after escalation` : ''}`,
   );
 
-  // Part des signatures de contributeurs qui résistent à un ordinateur quantique.
+  // Share of contributor signatures that resist a quantum computer.
   const signataires: string[] = [];
   for (const e of entries) {
     if (e.nature !== 'commande') continue;
@@ -267,7 +267,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
       : 'no contributor signature yet',
   );
 
-  // 4. Les invariants, sur l'histoire désormais prouvée.
+  // 4. The invariants, on the now-proven history.
   const auteurs = new Map<string, string>();
   const selfChecks: string[] = [];
   const gagne = new Map<string, { total: number; n: number }>();
@@ -322,7 +322,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   return report(etat);
 }
 
-/** Relance le vérificateur V0 sur le livrable d'une commande, avant de la rejouer. */
+/** Re-runs the V0 verifier on a command's deliverable, before replaying it. */
 async function reverify(
   coord: Coordinator,
   c: CommandeDonnees,
@@ -340,7 +340,7 @@ async function reverify(
     const e = c.entree as { resultat: Result; livrable: Livrable };
     const critere = coord.critereOf(e.resultat.alveole);
     if (critere) cible = { critere, livrable: e.livrable };
-    // P0-3 : les mutants préparés comme pièges, rejoués avec les seuls contrôles des gardiennes.
+    // P0-3: the mutants prepared as traps, re-run with the guards' checks only.
     if (critere && c.verifs.length > 1) {
       const ms = mutants(e.livrable, { max: piegesEssais, version: moteur });
       for (const [i, rapport] of c.verifs.slice(1).entries()) {

@@ -15,7 +15,7 @@ import type {
   Verdict,
 } from './types.js';
 
-// Fabriques d'objets OSP signés, partagées par le plugin, la CLI, la démo et les tests.
+// Factories for signed OSP objects, shared by the plugin, the CLI, the demo and the tests.
 
 export function makeRequete(id: Identity, action: Requete['action'], extra: { ruche?: string; alveole?: Hash } = {}): Requete {
   return signObject<Requete>({ type: 'osp.requete/0.1', action, contributeur: id.id, ...extra, ts: Date.now(), nonce: newNonce() }, id);
@@ -70,7 +70,7 @@ export function makeVerdict(id: Identity, resultat: Hash, decision: Verdict['dec
   );
 }
 
-/** L'engagement sur un verdict : envoyé d'abord, le verdict lui-même n'est révélé qu'ensuite. */
+/** The commitment to a verdict: sent first, the verdict itself is only revealed afterwards. */
 export function makeEngagement(id: Identity, v: Verdict): EngagementVerdict {
   return signObject<EngagementVerdict>({ type: 'osp.engagement/0.1', resultat: v.resultat, gardienne: id.id, engagement: hashOf(v) }, id);
 }
