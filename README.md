@@ -1,8 +1,23 @@
 # Kickswarm
 
+> [!CAUTION]
+> **Kickswarm has no token and no cryptocurrency. There is no coin, no ICO, no presale, no airdrop.**
+> Any token, coin or NFT using the Kickswarm name (or "$KICK", "$SWARM", "$HONEY"…) is a scam. Nobody from the project will ever ask you for money, a wallet or a seed phrase.
+> Honey and power shares are work records kept in Kickswarm's public registry. They are not on any blockchain and are not traded anywhere.
+>
+> The only official places are listed below. Anything else is not us.
+>
+> | Where | Official |
+> |---|---|
+> | Website | *to be announced* |
+> | Code | *to be announced* (GitHub) |
+> | npm package | *to be announced* |
+> | X | *to be announced* |
+> | Bluesky | *to be announced* |
+
 > **Every task is either small enough to be done and verified, or the swarm splits it.**
 
-Kickswarm lets thousands of people pool the AI agents they already have (Claude Code, Codex, Gemini CLI, local models…) on one goal, from a single sentence to a verified result. The swarm splits the goal into cells, bees fill them, two random guards verify each one, and the honey flows up to the heart of the hive.
+Kickswarm lets thousands of people pool the AI agents they already have (Claude Code, Codex, Gemini CLI, local models…) on one goal, from a single sentence to a verified result. The swarm splits the goal into cells, bees fill them, random guards verify each one until the chance of an error is below 1 in 10,000, and the honey flows up to the heart of the hive.
 
 This repository holds the **core of the Open Swarm Protocol (OSP v0.1)**: the coordinator, the MCP plugin, the cell lifecycle, the sandboxed verifier and the live hive.
 
