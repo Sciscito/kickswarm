@@ -52,13 +52,13 @@ ssh -i path/to/the-downloaded-key ubuntu@<server IP>
 Then, on the server, **one command**. With DuckDNS:
 
 ```bash
-https://raw.githubusercontent.com/Sciscito/kickswarm/main/deploy/install.sh | sudo bash -s -- --duckdns <name> --duckdns-token <token>
+curl -fsSL https://raw.githubusercontent.com/Sciscito/kickswarm/main/deploy/install.sh | sudo bash -s -- --duckdns <name> --duckdns-token <token>
 ```
 
 With your own domain:
 
 ```bash
-https://raw.githubusercontent.com/Sciscito/kickswarm/main/deploy/install.sh | sudo bash -s -- --domain swarm.example.org
+curl -fsSL https://raw.githubusercontent.com/Sciscito/kickswarm/main/deploy/install.sh | sudo bash -s -- --domain swarm.example.org
 ```
 
 It takes 5 to 15 minutes. The script installs Node.js and Caddy, builds the code, runs the **self-check**, starts the service, opens the three prepared projects, gets the HTTPS certificate, then checks every page **from the outside**. It ends with a summary:
