@@ -238,7 +238,7 @@ node dist/cli.js decide approbation_ruche maths "Within the charter"
 One command on a fresh Ubuntu server, free on Oracle Cloud: HTTPS, the service, daily backups, and the three prepared projects open by themselves. Step by step, accounts included: [docs/deploy.md](docs/deploy.md).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<you>/kickswarm/main/deploy/install.sh | sudo bash -s -- --repo https://github.com/<you>/kickswarm --duckdns <name> --duckdns-token <token>
+https://raw.githubusercontent.com/Sciscito/kickswarm/main/deploy/install.sh | sudo bash -s -- --duckdns <name> --duckdns-token <token>
 ```
 
 It runs `kickswarm coordinator --public`. The coordinator tests itself before it opens, gives each address a budget, makes heavy work wait in a bounded queue, and serves its own package for the join command. The home page shows the network live: bees at work, people, verified cells, projects and AI models.

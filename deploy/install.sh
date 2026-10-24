@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Kickswarm: puts a public coordinator online on a fresh Ubuntu or Debian server (docs/deploy.md).
 #
-#   curl -fsSL https://raw.githubusercontent.com/<you>/kickswarm/main/deploy/install.sh \
-#     | sudo bash -s -- --repo https://github.com/<you>/kickswarm
+#   curl -fsSL https://raw.githubusercontent.com/Sciscito/kickswarm/main/deploy/install.sh \
+#     | sudo bash -s -- --duckdns <name> --duckdns-token <token>
+#
+# A fork adds --repo https://github.com/<you>/kickswarm.
 #
 # Run it again at any time to update: it pulls the code, rebuilds, restarts and checks.
 #
@@ -19,6 +21,7 @@
 set -euo pipefail
 
 REPO="${KICKSWARM_REPO:-}"
+DEFAULT_REPO="https://github.com/Sciscito/kickswarm"
 BRANCH="main"
 DOMAIN=""
 DUCKDNS=""
@@ -37,7 +40,7 @@ while [ $# -gt 0 ]; do
     --duckdns) DUCKDNS="${2%.duckdns.org}"; shift 2 ;;
     --duckdns-token) DUCKDNS_TOKEN="$2"; shift 2 ;;
     --email) EMAIL="$2"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -48,7 +51,7 @@ die() { printf '\n\033[1;31mStopped: %s\033[0m\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || die "run it with sudo"
 command -v apt-get >/dev/null || die "this script is for Ubuntu or Debian"
 if [ -z "$REPO" ] && [ -d "$CODE/.git" ]; then REPO="$(git -c safe.directory="$CODE" -C "$CODE" remote get-url origin)"; fi
-[ -n "$REPO" ] || die "say where the code is: --repo https://github.com/<you>/kickswarm"
+REPO="${REPO:-$DEFAULT_REPO}"
 export DEBIAN_FRONTEND=noninteractive
 
 say "System packages"

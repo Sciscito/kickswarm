@@ -8,22 +8,13 @@ There is no closed test phase: the coordinator protects and checks itself (see [
 
 | | Cost | What for |
 |---|---|---|
-| A **GitHub** account | Free | The code lives there; the server downloads it from there |
+| A **GitHub** account | Only for your own copy (a fork) | The code is public at [github.com/Sciscito/kickswarm](https://github.com/Sciscito/kickswarm); the server downloads it from there |
 | An **Oracle Cloud** account ("Always Free") | Free; a card is asked at sign-up and not charged | The server ([docs/hosting.md](hosting.md) explains the choice) |
 | A **DuckDNS** name, or a domain of your own | Free, or about 10 to 15 € a year | The address people type, with HTTPS |
 
-## Step 1: publish the code on GitHub
+## Step 1: the code on GitHub
 
-1. Create an empty **public** repository named `kickswarm` on github.com (no README, no license: the project has them).
-2. From the project folder, push the code to it:
-
-   ```bash
-   git remote add origin https://github.com/<you>/kickswarm.git
-   ```
-
-   ```bash
-   git push -u origin main
-   ```
+The code is public at [github.com/Sciscito/kickswarm](https://github.com/Sciscito/kickswarm), and the install script downloads it from there by default: nothing to do. To run your own copy (a fork), add `--repo https://github.com/<you>/kickswarm` to the install command.
 
 ## Step 2: create the server
 
@@ -61,13 +52,13 @@ ssh -i path/to/the-downloaded-key ubuntu@<server IP>
 Then, on the server, **one command**. With DuckDNS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<you>/kickswarm/main/deploy/install.sh | sudo bash -s -- --repo https://github.com/<you>/kickswarm --duckdns <name> --duckdns-token <token>
+https://raw.githubusercontent.com/Sciscito/kickswarm/main/deploy/install.sh | sudo bash -s -- --duckdns <name> --duckdns-token <token>
 ```
 
 With your own domain:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<you>/kickswarm/main/deploy/install.sh | sudo bash -s -- --repo https://github.com/<you>/kickswarm --domain swarm.example.org
+https://raw.githubusercontent.com/Sciscito/kickswarm/main/deploy/install.sh | sudo bash -s -- --domain swarm.example.org
 ```
 
 It takes 5 to 15 minutes. The script installs Node.js and Caddy, builds the code, runs the **self-check**, starts the service, opens the three prepared projects, gets the HTTPS certificate, then checks every page **from the outside**. It ends with a summary:
