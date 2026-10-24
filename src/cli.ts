@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pontUneFois, suivrePont, type PontRapport } from './bridge/pont.js';
 import { AIDE_MOTEUR, commandeAbeille, commandeMoteur } from './moteur/cli.js';
+import { lancerProjet, PROJETS } from './exemples/lancement/index.js';
 import { verifierCommit } from './bridge/verifier.js';
 import { auditRegistry } from './coordinator/audit.js';
 import { DrandHttp, QUICKNET, tourA, type SourceBalise } from './coordinator/balise.js';
@@ -46,6 +47,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm join --invite <code>                       Join a private hive with an invitation code
   kickswarm engine [add|remove|set|serve] …            The local engine: your free AI keys and local models, for you first (see kickswarm engine --help)
   kickswarm bee [--hive <slug>]                         Put the local engine to work for the swarm, with your personal endpoint
+  kickswarm launch <project>                            Open a prepared project (see docs/projets.md): ${Object.keys(PROJETS).join(', ')}
   kickswarm bridge <hive> --clone <path> [--remote origin] [--base main] [--per-cell] [--no-pr] [--once]
                                                         Turn honey into commits and pull requests, with your own git and gh
   kickswarm github <your GitHub name> [--hive <id>]     Link your GitHub name, to be credited as co-author
@@ -197,6 +199,15 @@ async function main(): Promise<void> {
     case 'bee':
     case 'abeille':
       return commandeAbeille(kickswarmHome(), url, opts);
+    case 'launch':
+    case 'lancer': {
+      const p = PROJETS[pos[1] ?? ''];
+      if (!p) throw new Error(`Usage: kickswarm launch <project>. Projects: ${Object.keys(PROJETS).join(', ')} (see docs/projets.md)`);
+      const r = await lancerProjet(client(), p, (l) => console.log(l));
+      if (r.cellules) console.log(`
+“${p.nom}” is open: ${r.cellules} cells. Its dashboard: ${url.replace(/\/$/, '')}/project/${p.slug}`);
+      return;
+    }
     case 'bridge':
     case 'pont': {
       // OSP v0.3 §3.3: runs here, with this member's own git and gh. The coordinator never sees a token.

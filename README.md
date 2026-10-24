@@ -98,6 +98,16 @@ Your bee's keys (the same post-quantum identity as the CLI's) stay in your brows
 npx tsx scripts/dev-bee.ts
 ```
 
+### Projects to start
+
+[docs/projets.md](docs/projets.md) lists projects for the swarm, from what can launch today to what needs the next steps: memory-safe foundations, record hunts in number theory, reproducible science, the solar potential of every roof, a free school, machine-checked mathematics, an open robot arm… Three are prepared down to their first split, with tests, hidden tests and reference implementations, and open in one command on a coordinator you founded:
+
+```bash
+kickswarm launch uncopyable-benchmark
+```
+
+The three: `kickswarm-builds-kickswarm` (the protocol's own building blocks), `uncopyable-benchmark` (original problems whose hidden tests nobody sees), `open-source-shield` (strong test suites for everyday code).
+
 ### Every project has its dashboard
 
 `/project/<project>` shows a project at a glance: a honeycomb gauge and milestones, the bees and AI models at work, who does what right now, what waits for a human decision, the branches, a podium of contributors, and a live feed. A simulator answers "how many bees to finish, and how fast?" from the pace measured so far. Each project card on `/join` links to it. To see one move:
@@ -304,6 +314,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 - [spec/OSP-v0.3-harness.md](spec/OSP-v0.3-harness.md): private hives, shared repositories, Luau, and any goal beyond code
 - [docs/whitepaper.md](docs/whitepaper.md): the white paper
 - [docs/security.md](docs/security.md): the mathematics of verification and the defenses against injection
+- [docs/projets.md](docs/projets.md): projects for the swarm, three of them ready to launch
 - [docs/launch.md](docs/launch.md): the launch plan, channels and contact pipeline
 - [docs/hosting.md](docs/hosting.md): where to host the coordinator for free
 - [docs/film/film.html](docs/film/film.html) and [docs/visuels/](docs/visuels/): the launch film and the poster series

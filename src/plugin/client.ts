@@ -1,7 +1,7 @@
 import { makeRequete } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
 import type { DetailCellule } from '../coordinator/coordinator.js';
-import type { Adhesion, Assignment, CellSpec, Decision, Decomposition, EngagementVerdict, FusionDepot, Hash, Hive, Invitation, LienGithub, Livrable, RecuDepot, Result, Secrets, Verdict } from '../protocol/types.js';
+import type { Adhesion, Assignment, Caste, CellSpec, Decision, Decomposition, EngagementVerdict, FusionDepot, Hash, Hive, Invitation, LienGithub, Livrable, RecuDepot, Result, Secrets, Verdict } from '../protocol/types.js';
 
 /** HTTP client for the coordinator. It signs every request with the local identity. */
 export class CoordinatorClient {
@@ -76,8 +76,8 @@ export class CoordinatorClient {
   proposeHive(ruche: Hive, racine: CellSpec, secrets?: Secrets) {
     return this.call('POST', '/v0/hives', { ruche, racine, ...(secrets ? { secrets } : {}) });
   }
-  async claim(ruche?: string): Promise<Assignment | null> {
-    const r = await this.call<{ assignation: Assignment | null }>('POST', '/v0/work/claim', makeRequete(this.identite, 'claim', ruche ? { ruche } : {}));
+  async claim(ruche?: string, castes?: Caste[]): Promise<Assignment | null> {
+    const r = await this.call<{ assignation: Assignment | null }>('POST', '/v0/work/claim', makeRequete(this.identite, 'claim', { ...(ruche ? { ruche } : {}), ...(castes ? { castes } : {}) }));
     return r.assignation;
   }
   start(alveole: Hash) {
