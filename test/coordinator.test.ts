@@ -109,7 +109,7 @@ test('on ne vérifie jamais son propre travail', async () => {
   for (let i = 0; i < 6; i++) {
     const b = c.claim(makeRequete(kenji, 'claim'));
     if (b) {
-      assert.notEqual(b.a_verifier?.resultat.auteur, kenji.id);
+      assert.notEqual(b.a_verifier?.id, r.resultat, 'kenji ne reçoit jamais son propre résultat à vérifier');
       c.release(makeRequete(kenji, 'release', { alveole: b.alveole_id }));
     }
   }

@@ -50,9 +50,15 @@ test('V0 : les noms de fichiers dangereux sont refusés', async () => {
 test('V0 : la sandbox empêche de lire hors du dossier de travail', async (t) => {
   const code = `import { readFileSync } from 'node:fs';
 export function pgcd() { readFileSync(${JSON.stringify(process.execPath)}); return 6; }`;
+  // Par défaut sans Docker : WebAssembly, où le module node:fs n'existe même pas.
   const r = await verifierV0({ ...critere, tests: [critere.tests[0]!] }, { fichiers: { 'pgcd.mjs': code } });
-  if (!r.sandbox.includes('permissions')) return t.skip('modèle de permissions indisponible');
-  assert.equal(r.ok, false, 'la lecture hors sandbox aurait dû échouer');
+  assert.match(r.sandbox, /WebAssembly/);
+  assert.equal(r.ok, false);
+  assert.match(r.motif, /no network, no disk/);
+  // Le mode processus, sur demande explicite, s'appuie sur le modèle de permissions de Node.
+  const p = await verifierV0({ ...critere, tests: [critere.tests[0]!] }, { fichiers: { 'pgcd.mjs': code } }, { sandbox: 'process' });
+  if (!p.sandbox.includes('permissions')) return t.skip('modèle de permissions indisponible');
+  assert.equal(p.ok, false, 'la lecture hors sandbox aurait dû échouer');
 });
 
 test('V0 : un module découpé en plusieurs fichiers est accepté', async () => {

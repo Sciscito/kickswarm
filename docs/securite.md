@@ -118,8 +118,10 @@ Une ruche est un texte écrit par un inconnu (le porteur, une éclaireuse) et lu
 | **Capsules signées** | Le coordinateur signe chaque alvéole ; le plugin refuse une capsule modifiée | ✅ (signature) · vérification côté plugin à ajouter |
 | **Sorties contraintes par un schéma** | L'agent ne peut rendre que des fichiers texte, des impasses, ou un découpage au format strict, validés avant envoi | ✅ |
 | **Moindre privilège** | Le plugin n'expose aucun outil de fichier, de réseau ou de shell. Un agent détourné ne peut que rendre un mauvais livrable, qui sera rejeté. | ✅ |
-| **Exécution isolée** | Le code reçu tourne dans un processus séparé, avec le modèle de permissions de Node (lecture limitée, pas d'écriture, pas de sous-processus), un environnement vide et un délai | ✅ aujourd'hui |
-| **Conteneur réseau coupé** | Docker ou Podman, sans réseau, avec quotas CPU et mémoire, système de fichiers en lecture seule | En cours |
+| **Bac à sable WebAssembly** | Par défaut sans Docker, donc chez la plupart des contributeurs. Le code reçu tourne dans QuickJS compilé en WebAssembly, un moteur neuf dans un thread jetable : le langage et les fichiers du livrable, rien d'autre. Ni réseau, ni disque, ni processus, ni API de Node ; mémoire, pile et temps bornés. | ✅ |
+| **Primitives gelées** | Avant de charger le livrable, le lanceur gèle les objets intégrés de JavaScript : le code testé ne peut pas réécrire ce dont dépendent le rapport ou une propriété | ✅ |
+| **Conteneur réseau coupé** | Docker ou Podman, sans réseau, avec quotas CPU et mémoire, système de fichiers en lecture seule | ✅ écrit · à éprouver sur une machine avec Docker |
+| **Processus isolé** | Sur demande explicite seulement : un processus Node avec le modèle de permissions. Le réseau n'y est pas coupé. | ✅ |
 | **Double LLM** (*dual-LLM*, LLM en quarantaine) | Pour les jugements V2 : un modèle « en quarantaine » lit le contenu non fiable mais n'a aucun outil ; il ne transmet qu'une sortie structurée (un score, un verdict) au modèle qui agit | Prévu avec V2 |
 | **Jetons canaris** | Des chaînes secrètes placées dans le contexte de l'agent. Si l'une d'elles apparaît dans un livrable ou une requête, il y a eu fuite ou injection, et l'alvéole est mise en quarantaine. | À faire |
 | **Limites de taille** | Livrable plafonné à 256 Ko et 32 fichiers, sortie de vérification à 1 Mo, corps de requête à 1 Mo | ✅ |

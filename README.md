@@ -84,12 +84,15 @@ The audit replays every entry and requires an identical result, hash for hash. I
 
 ### The sandbox
 
-The verifier runs code sent by strangers, so it is locked down:
+The verifier runs code sent by strangers, on the coordinator and on every guard's machine, so it is locked down:
 
+- **WebAssembly mode** (default without Docker, so for most contributors): the tests run in QuickJS compiled to WebAssembly, a fresh engine in a throwaway thread. The code under test gets the JavaScript language and the deliverable's own files, and nothing else: **no network, no disk, no process, no Node API**. Memory, stack and time are bounded; an infinite loop is interrupted and cannot catch the interruption. Nothing to install.
 - **Container mode** (default when Docker or Podman is available): network off, read-only filesystem, all capabilities dropped, no privilege escalation, non-root user, 256 MB, 1 CPU, 64 processes, and Node's permission model inside.
-- **Process mode** (fallback): a separate Node process with the permission model (read limited to the work folder, no writes, no child processes), an empty environment and a timeout. **The network is not cut in this mode.**
+- **Process mode** (explicit opt-in only): a separate Node process with the permission model (read limited to the work folder). **The network is not cut in this mode.**
 
-The coordinator **refuses to listen beyond localhost without the container sandbox**, unless you pass `--unsafe` on a network you fully trust. Force a mode with `--sandbox container|process`.
+In every mode, the runner freezes the JavaScript built-ins before loading the deliverable, so the code under test cannot rewrite what the runner, or a property check, relies on to report its result.
+
+The coordinator **refuses to listen beyond localhost with the process sandbox**, unless you pass `--unsafe` on a network you fully trust. Force a mode with `--sandbox container|wasm|process`.
 
 ## Architecture
 
@@ -99,7 +102,7 @@ src/
   coordinator/   cell lifecycle (§5), Thompson scheduling (§12), honey/shares/Commons (§10, §18),
                  trophies (§10.5), hash-chained registry (§14.6), governance (§14, §17),
                  HTTP API + live events (§21.2)
-  verifier/      V0 verifier "tests-js@1", container or process sandbox
+  verifier/      V0 verifier "tests-js@1", WebAssembly, container or process sandbox
   plugin/        MCP server, signed HTTP client, instructions given to agents
   exemples/      demo hives and scripted bees
   install.ts     `kickswarm join`
@@ -127,7 +130,7 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 | Trophies (Pioneer, First Drop, Trap Hunter, Guardian, Scout, Builder, Founding Bee, Heart of the Hive, Hive Owner, Busy Bee) | ✅ |
 | Governance: approval, pause, ×3 boost for 72 h, every decision justified and public | ✅ Pilot phase only; the elected council comes later. |
 | Live hive in the browser | ✅ |
-| Container sandbox | ✅ Written and unit-tested; to be run on a machine with Docker. |
+| Sandboxes: WebAssembly (QuickJS, no network, no disk, the default without Docker) and container; built-ins frozen before the deliverable loads | ✅ The WebAssembly sandbox is tested against network, disk, loop, memory and forgery attempts. The container sandbox is written and unit-tested, to be run on a machine with Docker. |
 | `kickswarm join` | ✅ Codex and Gemini configs tested; the Claude Code path calls `claude mcp add`. |
 | V1/V2 verification, juries, appeals, federation, proof of personhood | ❌ Next versions |
 

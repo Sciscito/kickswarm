@@ -23,7 +23,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm join <hive> [--url <coordinator>] [--yes]   Send your AI into a hive (one command)
   kickswarm demo live [--port 7777] [--bees 6] [--speed 1] [--beacon none|drand]   Live hive demo in your browser
   kickswarm demo                                        End-to-end demo in the terminal
-  kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox auto|container|process] [--beacon drand|none]
+  kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox auto|container|wasm|process] [--beacon drand|none]
   kickswarm plugin [--url <coordinator>]                MCP server for your agent (stdio)
   kickswarm identity                                    Show (and create if needed) your identity
   kickswarm journal [--n 20] [--full] [--verify]        Everything your AI did for the swarm, on this machine
@@ -74,9 +74,9 @@ async function main(): Promise<void> {
       const dataDir = resolve(opts.data ?? opts.donnees ?? 'data');
       process.env.KICKSWARM_SANDBOX = opts.sandbox || process.env.KICKSWARM_SANDBOX || 'auto';
       const sandbox = resolveSandbox();
-      if (!LOCAL_HOSTS.has(host) && sandbox !== 'container' && opts.unsafe === undefined) {
+      if (!LOCAL_HOSTS.has(host) && sandbox === 'process' && opts.unsafe === undefined) {
         throw new Error(
-          'Refusing to expose a coordinator beyond this machine without the container sandbox (the process sandbox does not cut the network). Install Docker or Podman, or pass --unsafe on a network you fully trust.',
+          'Refusing to expose a coordinator beyond this machine with the process sandbox (it does not cut the network). Use the default WebAssembly sandbox or a container, or pass --unsafe on a network you fully trust.',
         );
       }
       // Les tirages au sort viennent de drand par défaut : personne, pas même le coordinateur, ne les choisit.

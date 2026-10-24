@@ -437,13 +437,43 @@ Ainsi, un découpage qui ne peut pas réussir est rejeté avant d'avoir coûté 
 
 | Domaine | Mesure |
 |---|---|
-| **Exécution** | Une échelle de sandbox : processus → conteneur (fait) → gVisor ou micro-VM Firecracker pour le coordinateur public. Profils seccomp, aucun réseau, quotas. |
+| **Exécution** | Une échelle de sandbox : processus → WebAssembly (fait, par défaut sans Docker) et conteneur (fait) → gVisor ou micro-VM Firecracker pour le coordinateur public. Profils seccomp, aucun réseau, quotas. *Voir §8.1.* |
 | **Chaîne d'approvisionnement** | Lockfiles figées, versions signées (Sigstore), provenance des builds (SLSA), audit des dépendances à chaque publication. |
 | **Le code de l'essaim lui-même** | Une **ruche de sécurité permanente**, où l'essaim relit, teste et fuzz son propre code. Fuzzing continu du vérificateur et de l'API. Prime aux bugs publique. |
 | **Comportements anormaux** | Détection sur le registre : pics de débit, paires de gardiennes qui concordent toujours, en particulier sur les pièges ratés (signe de collusion), réputations qui montent trop vite. Quarantaine automatique et revue humaine. |
 | **Injection de prompt** | Capsules signées et balisées comme données, sorties à schéma strict, aucun outil hors de l'essaim pour l'agent, jetons canaris. Pour les futurs jugements V2, le schéma du LLM en quarantaine : le modèle qui lit le contenu non fiable n'a aucun pouvoir d'action. |
 | **Méthodes formelles** | La machine à états des alvéoles et les règles économiques sont spécifiées en **TLA+** et vérifiées par model checking, en plus des tests de propriétés sur les invariants. |
 | **Gouvernance** | Preuve de personne unique avant tout vote, pour corriger F8. En attendant : un vote par contributeur vérifié, pondéré par des trophées non achetables. |
+
+### 8.1 Le bac à sable WebAssembly (implémenté)
+
+**Le problème.** Les gardiennes exécutent sur leur propre machine du code écrit par des inconnus. Sans Docker, ce qui est le cas de la plupart des gens, le vérificateur utilisait un processus Node avec le modèle de permissions : la lecture du disque était limitée, mais **le réseau restait ouvert**.
+
+**La solution.** Par défaut, quand Docker manque, les tests tournent dans **QuickJS compilé en WebAssembly** (`quickjs-emscripten`, version figée) :
+
+- **Un moteur neuf à chaque exécution**, dans un thread jetable, qui s'arrête en emportant toute sa mémoire.
+- **Ce que le code testé trouve** : le langage JavaScript, et les fichiers du livrable comme modules. Rien d'autre : pas de réseau, pas de disque, pas de processus, aucune API de Node ni du navigateur. Ce n'est pas une interdiction qu'on pourrait contourner : ces fonctions n'existent pas dans le moteur.
+- **Ce qui est borné** : la mémoire (256 Mo), la pile (1 Mo) et le temps. À l'échéance, une interruption arrête même une boucle infinie, et le code ne peut pas la rattraper. Le thread lui-même est borné et arrêté s'il dépasse.
+- **Rien à installer** : le moteur fait partie du paquet.
+
+**Les primitives gelées, dans tous les modes.** En préparant ce chantier, une faille est apparue dans le lanceur Node existant. Il capturait `JSON.stringify` et quelques autres outils avant de charger le livrable, mais pas tout. Un livrable pouvait réécrire `Array.prototype.push`, `Object.prototype.toJSON` ou `Array.prototype.every`, et le rapport, ou l'expression d'une propriété, aurait utilisé ces versions truquées. Désormais, les deux lanceurs gèlent tous les objets intégrés de JavaScript, prototypes compris, et verrouillent leurs noms globaux avant de charger le code. Comme dans SES, les noms qu'un code ordinaire réaffecte sur ses propres objets (`toString`, `name`, `message`, `constructor`…) restent réaffectables sur les instances.
+
+**Ce qui est testé :**
+
+- aucune API réseau n'existe, et aucun import (`http://`, `node:http`, `node:net`) n'atteint un serveur local qui compte les connexions ;
+- aucun module système ni fichier hors du livrable ne se charge ;
+- la boucle infinie, la bombe mémoire et la récursion sans fin sont arrêtées proprement ;
+- cinq truquages du lanceur et des propriétés échouent, en WebAssembly comme en mode processus ;
+- le code ordinaire fonctionne toujours : classes d'erreur, `toString` personnalisés, `console.log`, modules sur plusieurs fichiers, fonctions asynchrones ;
+- un même livrable donne le même rapport, au détail près.
+
+**Le choix du bac à sable.** `auto` prend le conteneur s'il existe, sinon WebAssembly. Le mode processus n'est plus utilisé que sur demande explicite (`--sandbox process`), et un coordinateur refuse de s'ouvrir au-delà de `localhost` dans ce mode.
+
+**Limites assumées :**
+
+- **QuickJS n'est pas V8.** Pour du code ordinaire, sans dépendance, les résultats sont les mêmes. Mais QuickJS est plus lent (c'est un interpréteur) et n'a pas `Intl`. Une machine avec Docker (V8) et une machine sans Docker (QuickJS) peuvent donc diverger sur du code qui en dépend. Le rapport indique le bac à sable utilisé. Faire du même moteur la règle partout rendrait les verdicts reproductibles d'une machine à l'autre.
+- **Pas de minuterie** (`setTimeout`) ni d'entrée-sortie dans le bac à sable. Le code qui en dépend échoue, ce qui est voulu pour un livrable V0.
+- **L'import d'un JSON** est accepté tel quel par QuickJS, alors que Node exige `with { type: 'json' }`.
 
 ---
 

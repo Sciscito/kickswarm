@@ -2,9 +2,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { commitment, hashOf, sha256 } from '../protocol/canonical.js';
 import type { CritereFini, CritereTestsDeTests, CritereV0, Generateur, Livrable, Propriete, TestCase } from '../protocol/types.js';
+import { LOCKDOWN } from './lockdown.js';
 import { mutants } from './mutation.js';
 
 // V0 verifiers (spec §9.1, OSP v0.2 §3):
@@ -16,16 +19,19 @@ import { mutants } from './mutation.js';
 // The same mutation engine measures how strong a cell's tests are against a reference (adequacy).
 //
 // Sandboxes (§8):
-//  - container (preferred): Docker or Podman, network off, read-only filesystem, no capabilities,
+//  - container: Docker or Podman, network off, read-only filesystem, no capabilities,
 //    CPU/memory/process limits, non-root user, plus Node's permission model inside;
-//  - process (fallback): a separate Node process with the permission model (read limited to the
-//    work folder, no writes, no child processes), empty environment and a timeout. The network is
-//    NOT cut in this mode: never expose a public coordinator with it.
-// Choose with KICKSWARM_SANDBOX=auto|container|process (auto = container when available).
+//  - wasm (the default without Docker): QuickJS compiled to WebAssembly, in a throwaway thread.
+//    The code under test gets the language and the deliverable's own files, and nothing else:
+//    no network, no disk, no process, no Node API. Memory, stack and time are bounded;
+//  - process (explicit opt-in only): a separate Node process with the permission model (read
+//    limited to the work folder). The network is NOT cut in this mode.
+// Choose with KICKSWARM_SANDBOX=auto|container|wasm|process (auto = container when available, else wasm).
 //
 // The code under test can never learn the tests or forge the result: the tests reach the runner
-// through stdin, which is consumed before the module is imported; the result line carries a
-// per-run secret token; the runner captures every primitive it needs before importing the module.
+// before the module is imported, through a channel it cannot reach; the result line carries a
+// per-run secret token; the runner captures every primitive it needs, then freezes the built-ins
+// (LOCKDOWN) so the delivered code cannot rewrite what the runner or a property relies on.
 
 export interface TestReport {
   nom: string;
@@ -84,68 +90,109 @@ const IMAGE = process.env.KICKSWARM_SANDBOX_IMAGE ?? 'node:24-alpine';
 /** Extra time for the container to start (and for the image to be pulled the first time). */
 const CONTAINER_GRACE_MS = 60_000;
 
-const RUNNER = `const W = process.stdout.write.bind(process.stdout);
-const EXIT = process.exit.bind(process);
-const S = JSON.stringify, P = JSON.parse, K = Object.keys, AI = Array.isArray, F = Function, SC = structuredClone;
-const chunks = [];
-for await (const c of process.stdin) chunks.push(c);
-const spec = P(Buffer.concat(chunks).toString('utf8'));
-const TOKEN = spec.token;
-delete spec.token;
-const msg = (e) => String((e && e.message) || e);
+/**
+ * The part both runners share: comparing, generating inputs, running every check. It captures the
+ * primitives it needs before any delivered code runs, and LOCKDOWN then freezes the built-ins.
+ */
+const CORE = `const S = JSON.stringify, P = JSON.parse, K = Object.keys, AI = Array.isArray, F = Function, RA = Reflect.apply;
+const NN = Number.isNaN, MI = Math.imul, MF = Math.floor, STR = String;
+const SC = (v) => (v === undefined ? undefined : P(S(v)));
+const msg = (e) => STR((e && e.message) || e);
 const norm = (v) => (v === undefined ? null : P(S(v)));
 function eq(a, b) {
   if (a === b) return true;
-  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return Number.isNaN(a) && Number.isNaN(b);
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return NN(a) && NN(b);
   if (AI(a) !== AI(b)) return false;
   const ka = K(a), kb = K(b);
   if (ka.length !== kb.length) return false;
   for (let i = 0; i < ka.length; i++) if (!eq(a[ka[i]], b[ka[i]])) return false;
   return true;
 }
-const emit = (o) => { W('\\n__OSP__' + TOKEN + S(o) + '\\n'); EXIT(0); };
-let m;
-try { m = await import(new URL('./' + spec.module, import.meta.url).href); }
-catch (e) { emit({ chargement: msg(e) }); }
-const out = [];
-async function runCase(t, nom, cache) {
+async function runCase(m, t, nom, cache) {
   try {
     if (typeof m[t.fn] !== 'function') return cache ? { nom, ok: false, cache: true } : { nom, ok: false, attendu: t.attendu, erreur: 'missing export “' + t.fn + '”' };
-    const obtenu = norm(await m[t.fn](...SC(t.args)));
+    const obtenu = norm(await RA(m[t.fn], undefined, SC(t.args)));
     const ok = eq(obtenu, t.attendu);
     return cache ? { nom, ok, cache: true } : { nom, ok, attendu: t.attendu, obtenu };
   } catch (e) { return cache ? { nom, ok: false, cache: true } : { nom, ok: false, attendu: t.attendu, erreur: msg(e) }; }
 }
-for (const t of spec.tests) out.push(await runCase(t, t.nom || t.fn + '(' + S(t.args).slice(1, -1) + ')', false));
-for (let i = 0; i < spec.caches.length; i++) out.push(await runCase(spec.caches[i], 'hidden test #' + (i + 1), true));
-function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = MI(t ^ (t >>> 15), t | 1); t ^= t + MI(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 function gen(g, r) {
-  if (g.type === 'int') return g.min + Math.floor(r() * (g.max - g.min + 1));
+  if (g.type === 'int') return g.min + MF(r() * (g.max - g.min + 1));
   if (g.type === 'float') return g.min + r() * (g.max - g.min);
   if (g.type === 'bool') return r() < 0.5;
-  if (g.type === 'string') { const al = g.alphabet || 'abcdefghijklmnopqrstuvwxyz'; const n = Math.floor(r() * (g.maxLen + 1)); let s = ''; for (let i = 0; i < n; i++) s += al[Math.floor(r() * al.length)]; return s; }
-  if (g.type === 'array') { const n = Math.floor(r() * (g.maxLen + 1)); const a = []; for (let i = 0; i < n; i++) a.push(gen(g.of, r)); return a; }
-  if (g.type === 'oneOf') return SC(g.values[Math.floor(r() * g.values.length)]);
+  if (g.type === 'string') { const al = g.alphabet || 'abcdefghijklmnopqrstuvwxyz'; const n = MF(r() * (g.maxLen + 1)); let s = ''; for (let i = 0; i < n; i++) s += al[MF(r() * al.length)]; return s; }
+  if (g.type === 'array') { const n = MF(r() * (g.maxLen + 1)); const a = []; for (let i = 0; i < n; i++) a.push(gen(g.of, r)); return a; }
+  if (g.type === 'oneOf') return SC(g.values[MF(r() * g.values.length)]);
   throw new Error('unknown generator');
 }
-for (const p of spec.proprietes) {
-  const nom = 'property “' + p.nom + '”';
-  if (typeof m[p.fn] !== 'function') { out.push({ nom, ok: false, propriete: true, erreur: 'missing export “' + p.fn + '”' }); continue; }
-  let check;
-  try { check = F('args', 'out', 'eq', '"use strict"; return (' + p.verifie + ');'); }
-  catch (e) { out.push({ nom, ok: false, propriete: true, erreur: 'invalid property expression: ' + msg(e) }); continue; }
-  const r = rng(p.seed);
-  let fail = null;
-  for (let k = 0; k < p.cas && !fail; k++) {
-    const args = p.args.map((g) => gen(g, r));
-    try {
-      const o = norm(await m[p.fn](...SC(args)));
-      if (!check(SC(args), o, eq)) fail = 'counterexample: ' + p.fn + '(' + S(args).slice(1, -1) + ') returned ' + S(o);
-    } catch (e) { fail = 'counterexample: ' + p.fn + '(' + S(args).slice(1, -1) + ') threw ' + msg(e); }
+async function runAll(spec, m) {
+  const out = [];
+  for (const t of spec.tests) out.push(await runCase(m, t, t.nom || t.fn + '(' + S(t.args).slice(1, -1) + ')', false));
+  for (let i = 0; i < spec.caches.length; i++) out.push(await runCase(m, spec.caches[i], 'hidden test #' + (i + 1), true));
+  for (const p of spec.proprietes) {
+    const nom = 'property “' + p.nom + '”';
+    if (typeof m[p.fn] !== 'function') { out.push({ nom, ok: false, propriete: true, erreur: 'missing export “' + p.fn + '”' }); continue; }
+    let check;
+    try { check = F('args', 'out', 'eq', '"use strict"; return (' + p.verifie + ');'); }
+    catch (e) { out.push({ nom, ok: false, propriete: true, erreur: 'invalid property expression: ' + msg(e) }); continue; }
+    const r = rng(p.seed);
+    let fail = null;
+    for (let k = 0; k < p.cas && !fail; k++) {
+      const args = p.args.map((g) => gen(g, r));
+      try {
+        const o = norm(await RA(m[p.fn], undefined, SC(args)));
+        if (!check(SC(args), o, eq)) fail = 'counterexample: ' + p.fn + '(' + S(args).slice(1, -1) + ') returned ' + S(o);
+      } catch (e) { fail = 'counterexample: ' + p.fn + '(' + S(args).slice(1, -1) + ') threw ' + msg(e); }
+    }
+    out.push(fail ? { nom, ok: false, propriete: true, erreur: fail } : { nom, ok: true, propriete: true, cas: p.cas });
   }
-  out.push(fail ? { nom, ok: false, propriete: true, erreur: fail } : { nom, ok: true, propriete: true, cas: p.cas });
+  return out;
 }
-emit({ tests: out });
+`;
+
+/** The Node runner (container and process sandboxes): tests arrive through stdin. */
+const RUNNER = `const W = process.stdout.write.bind(process.stdout);
+const EXIT = process.exit.bind(process);
+const chunks = [];
+for await (const c of process.stdin) chunks.push(c);
+const spec = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+const TOKEN = spec.token;
+delete spec.token;
+const MODULE = new URL('./' + spec.module, import.meta.url).href;
+${CORE}
+${LOCKDOWN}
+const emit = (o) => { W('\\n__OSP__' + TOKEN + S(o) + '\\n'); EXIT(0); };
+let m;
+try { m = await import(MODULE); }
+catch (e) { emit({ chargement: msg(e) }); }
+emit({ tests: await runAll(spec, m) });
+`;
+
+/**
+ * The QuickJS runner (WebAssembly sandbox): no network, no disk, no process, no Node API at all.
+ * The host hands over the tests and an output function through two globals, removed before any
+ * delivered code runs.
+ */
+const WASM_RUNNER = `const E = globalThis.__osp_emit, INPUT = globalThis.__osp_spec;
+delete globalThis.__osp_emit;
+delete globalThis.__osp_spec;
+const spec = JSON.parse(INPUT);
+const TOKEN = spec.token;
+delete spec.token;
+${CORE}
+{
+  const noop = () => {};
+  const c = {};
+  for (const k of ['log', 'info', 'warn', 'error', 'debug', 'trace', 'table', 'dir', 'group', 'groupEnd', 'time', 'timeEnd', 'assert', 'count']) c[k] = noop;
+  globalThis.console = Object.freeze(c);
+}
+${LOCKDOWN}
+const emit = (o) => E('\\n__OSP__' + TOKEN + S(o) + '\\n');
+let m = null;
+try { m = await import(spec.module); }
+catch (e) { emit({ chargement: msg(e) }); }
+if (m) emit({ tests: await runAll(spec, m) });
 `;
 
 // ---------------------------------------------------------------- validation
@@ -235,7 +282,7 @@ export function validateLivrable(livrable: Livrable): void {
 
 // ---------------------------------------------------------------- sandboxes
 
-export type SandboxMode = 'container' | 'process';
+export type SandboxMode = 'container' | 'wasm' | 'process';
 
 let runtimeCache: string | null | undefined;
 
@@ -254,10 +301,38 @@ export function containerRuntime(): string | null {
 }
 
 export function resolveSandbox(pref: string = process.env.KICKSWARM_SANDBOX ?? 'auto'): SandboxMode {
-  if (pref === 'process') return 'process';
+  if (pref === 'process' || pref === 'wasm') return pref;
   const rt = containerRuntime();
   if (pref === 'container' && !rt) throw new Error('Container sandbox requested, but neither Docker nor Podman is available');
-  return rt ? 'container' : 'process';
+  return rt ? 'container' : 'wasm';
+}
+
+/** The worker that runs QuickJS (its .ts source under tsx, its compiled .js otherwise). */
+const WASM_WORKER = new URL(`./wasm-worker${extname(fileURLToPath(import.meta.url))}`, import.meta.url);
+const WASM_MEMORY_MB = 256;
+const WASM_LABEL = 'WebAssembly (QuickJS: no network, no disk, bounded memory)';
+
+function runWasm(fichiers: Record<string, string>, input: string, timeoutMs: number): Promise<RunOutput> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (o: Omit<RunOutput, 'label' | 'code'>) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      void worker.terminate();
+      resolve({ ...o, code: 0, label: WASM_LABEL });
+    };
+    const worker = new Worker(WASM_WORKER, {
+      workerData: { fichiers, input, runner: WASM_RUNNER, timeoutMs, memoireMo: WASM_MEMORY_MB, sortieMax: MAX_OUTPUT },
+      // A safety net around the engine's own limits: the thread itself is bounded and killed if late.
+      resourceLimits: { maxOldGenerationSizeMb: WASM_MEMORY_MB * 2 },
+      env: {},
+    });
+    const timer = setTimeout(() => finish({ stdout: '', stderr: '', timedOut: true }), timeoutMs + 3000);
+    worker.once('message', (m: { stdout: string; stderr: string; timedOut: boolean }) => finish(m));
+    worker.once('error', (e) => finish({ stdout: '', stderr: String(e), timedOut: false }));
+    worker.once('exit', () => finish({ stdout: '', stderr: 'The sandbox stopped unexpectedly', timedOut: false }));
+  });
 }
 
 /** Arguments of the locked-down container run (pure function, tested on its own). */
@@ -379,37 +454,43 @@ async function runSuite(suite: Suite, livrable: Livrable, opts: VerifOptions): P
     caches: suite.caches,
     proprietes: suite.proprietes.map((p) => ({ ...p, cas: p.cas ?? DEFAULT_CASES, seed: seedFor(lh, p.nom) })),
   });
+  const out = await execute(livrable, input, suite.timeout, mode);
+  if (out.timedOut) return fail(`Time limit exceeded (${suite.timeout} ms)`, [], out.label);
+  const marker = `__OSP__${token}`;
+  const line = out.stdout.split('\n').reverse().find((l) => l.startsWith(marker));
+  if (!line) {
+    const err = out.stderr.trim().split('\n').slice(-3).join(' ').slice(0, 300);
+    return fail(`The module crashed before the tests finished${err ? `: ${err}` : ''}`, [], out.label);
+  }
+  const parsed = JSON.parse(line.slice(marker.length)) as { chargement?: string; tests?: TestReport[] };
+  if (parsed.chargement) return fail(`Module could not be loaded: ${parsed.chargement}`, [], out.label);
+  const tests = parsed.tests ?? [];
+  const expected = suite.tests.length + suite.caches.length + suite.proprietes.length;
+  if (tests.length !== expected) return fail('The runner returned an incomplete report', tests, out.label);
+  const failed = tests.filter((t) => !t.ok);
+  const visibles = tests.filter((t) => !t.cache && !t.propriete).length;
+  const props = tests.filter((t) => t.propriete).length;
+  const parts = [`${visibles} tests`, suite.caches.length ? `${suite.caches.length} hidden tests` : '', props ? `${props} properties` : ''].filter(Boolean).join(', ');
+  if (failed.length === 0) return { ok: true, motif: `All passed: ${parts}`, tests, duree_ms: Date.now() - started, sandbox: out.label };
+  const visibleFail = failed.find((t) => !t.cache && !t.propriete);
+  const propFail = failed.find((t) => t.propriete);
+  const hiddenFails = failed.filter((t) => t.cache).length;
+  const detail = visibleFail
+    ? `${visibleFail.nom} → ${visibleFail.erreur ?? `got ${JSON.stringify(visibleFail.obtenu)}, expected ${JSON.stringify(visibleFail.attendu)}`}`
+    : propFail
+      ? `${propFail.nom}: ${propFail.erreur}`
+      : `${hiddenFails} hidden test${hiddenFails > 1 ? 's' : ''} failed (details stay hidden)`;
+  return fail(`${failed.length}/${tests.length} checks failed (${parts}). First failure: ${detail}`, tests, out.label);
+}
+
+/** Runs the runner in the chosen sandbox: in memory for WebAssembly, from a throwaway folder otherwise. */
+async function execute(livrable: Livrable, input: string, timeoutMs: number, mode: SandboxMode): Promise<RunOutput> {
+  if (mode === 'wasm') return runWasm(livrable.fichiers, input, timeoutMs);
   const dir = await mkdtemp(join(tmpdir(), 'osp-v0-'));
   try {
     for (const [name, content] of Object.entries(livrable.fichiers)) await writeFile(join(dir, name), content, 'utf8');
     await writeFile(join(dir, RUNNER_FILE), RUNNER, 'utf8');
-    const out = await run(dir, input, suite.timeout, mode);
-    if (out.timedOut) return fail(`Time limit exceeded (${suite.timeout} ms)`, [], out.label);
-    const marker = `__OSP__${token}`;
-    const line = out.stdout.split('\n').reverse().find((l) => l.startsWith(marker));
-    if (!line) {
-      const err = out.stderr.trim().split('\n').slice(-3).join(' ').slice(0, 300);
-      return fail(`The module crashed before the tests finished${err ? `: ${err}` : ''}`, [], out.label);
-    }
-    const parsed = JSON.parse(line.slice(marker.length)) as { chargement?: string; tests?: TestReport[] };
-    if (parsed.chargement) return fail(`Module could not be loaded: ${parsed.chargement}`, [], out.label);
-    const tests = parsed.tests ?? [];
-    const expected = suite.tests.length + suite.caches.length + suite.proprietes.length;
-    if (tests.length !== expected) return fail('The runner returned an incomplete report', tests, out.label);
-    const failed = tests.filter((t) => !t.ok);
-    const visibles = tests.filter((t) => !t.cache && !t.propriete).length;
-    const props = tests.filter((t) => t.propriete).length;
-    const parts = [`${visibles} tests`, suite.caches.length ? `${suite.caches.length} hidden tests` : '', props ? `${props} properties` : ''].filter(Boolean).join(', ');
-    if (failed.length === 0) return { ok: true, motif: `All passed: ${parts}`, tests, duree_ms: Date.now() - started, sandbox: out.label };
-    const visibleFail = failed.find((t) => !t.cache && !t.propriete);
-    const propFail = failed.find((t) => t.propriete);
-    const hiddenFails = failed.filter((t) => t.cache).length;
-    const detail = visibleFail
-      ? `${visibleFail.nom} → ${visibleFail.erreur ?? `got ${JSON.stringify(visibleFail.obtenu)}, expected ${JSON.stringify(visibleFail.attendu)}`}`
-      : propFail
-        ? `${propFail.nom}: ${propFail.erreur}`
-        : `${hiddenFails} hidden test${hiddenFails > 1 ? 's' : ''} failed (details stay hidden)`;
-    return fail(`${failed.length}/${tests.length} checks failed (${parts}). First failure: ${detail}`, tests, out.label);
+    return await run(dir, input, timeoutMs, mode);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

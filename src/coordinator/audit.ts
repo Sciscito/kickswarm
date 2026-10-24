@@ -88,7 +88,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     const d = e.donnees as { tests_caches?: TestCase[] };
     if (e.nature === 'secrets_reveles' && d.tests_caches) reveles.set(commitment(d.tests_caches), d.tests_caches);
   }
-  const nonReveles = { n: 0 };
+  const nonReveles: { n: number; sandbox?: string } = { n: 0 };
   const sceaux = { n: 0, invalides: [] as string[], dernier: -1 };
   for (const e of entries) {
     if (divergence) break;
@@ -310,8 +310,11 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   );
 
   if (opts.reverifier) {
-    const note = nonReveles.n ? `${nonReveles.n} check(s) skipped: their hidden tests are not revealed yet` : undefined;
-    add('Verifier reports reproduced by re-running every deliverable', reverif.length === 0, reverif.slice(0, 3).join('; ') || note);
+    const notes = [
+      nonReveles.sandbox ? `re-run in ${nonReveles.sandbox}` : '',
+      nonReveles.n ? `${nonReveles.n} check(s) skipped: their hidden tests are not revealed yet` : '',
+    ].filter(Boolean).join('; ');
+    add('Verifier reports reproduced by re-running every deliverable', reverif.length === 0, reverif.slice(0, 3).join('; ') || notes || undefined);
   }
 
   const etat = coord.stateHash();
@@ -326,7 +329,7 @@ async function reverify(
   seq: number,
   issues: string[],
   reveles: Map<string, TestCase[]>,
-  nonReveles: { n: number },
+  nonReveles: { n: number; sandbox?: string },
   piegesEssais = 8,
 ): Promise<void> {
   const recorded = c.verifs?.[0];
@@ -358,5 +361,6 @@ async function reverify(
     }
   }
   const again = await verifierV0(cible.critere, cible.livrable, { caches });
+  nonReveles.sandbox ??= again.sandbox;
   if (again.ok !== recorded.ok) issues.push(`#${seq}: the registry says ${recorded.ok ? 'passed' : 'failed'}, a fresh run says ${again.ok ? 'passed' : 'failed'} (${again.motif})`);
 }

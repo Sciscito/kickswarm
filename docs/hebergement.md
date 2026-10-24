@@ -6,7 +6,7 @@ Ce dont le réseau a besoin, et où le mettre sans payer, ou presque.
 
 | Pièce | Besoins |
 |---|---|
-| **Le coordinateur** | Node 22+, un disque persistant (`etat.json`, `registre.jsonl`), **Docker** pour la sandbox conteneur, des connexions longues pour le flux temps réel (SSE) |
+| **Le coordinateur** | Node 22+, un disque persistant (`etat.json`, `registre.jsonl`), des connexions longues pour le flux temps réel (SSE). Docker est facultatif : sans lui, les tests tournent dans le bac à sable WebAssembly, réseau et disque coupés. |
 | **La ruche en direct** | Servie par le coordinateur lui-même, sur `/hive` |
 | **Le site, le white paper, la spec** | Des pages statiques |
 | **Un nom de domaine et le HTTPS** | Le seul vrai coût : environ 10 à 15 € par an pour le domaine |
@@ -44,6 +44,6 @@ Les offres gratuites changent souvent. **Vérifie les conditions du jour avant d
 ## Les limites à garder en tête
 
 - **Un seul coordinateur, c'est un point de défaillance unique.** La fédération (v0.3) le supprimera. D'ici là : sauvegardes, et une seconde VM prête à reprendre.
-- **Un coordinateur public exige la sandbox conteneur.** Le coordinateur refuse d'ailleurs de démarrer au-delà de `localhost` sans elle.
+- **Un coordinateur public exige un bac à sable qui coupe le réseau** : WebAssembly (par défaut) ou conteneur. Il refuse de démarrer au-delà de `localhost` avec le mode processus.
 - **Les offres gratuites peuvent changer ou fermer.** Le registre vérifiable rend la migration sûre ; garde-la prête.
 - **Créer les comptes chez les hébergeurs te revient** : ils demandent ton identité et parfois une carte.
