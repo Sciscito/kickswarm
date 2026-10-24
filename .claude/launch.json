@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["--import", "tsx", "scripts/dev-bee.ts", "7788"],
       "port": 7788
+    },
+    {
+      "name": "dev-engine",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/dev-engine.mjs"],
+      "port": 7790
     }
   ]
 }

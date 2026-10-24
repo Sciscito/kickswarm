@@ -2,7 +2,7 @@
 // its official API, with their own key. Consumer chat websites and apps are NOT here: their terms
 // forbid driving them, and they stay with the chat door, by hand (§2.3).
 
-export type TypeApi = 'openai' | 'anthropic';
+export type TypeApi = 'openai' | 'anthropic' | 'cli';
 
 export interface Fournisseur {
   id: string;
@@ -21,6 +21,13 @@ export interface Fournisseur {
   parJour?: number;
   /** A server on this machine: unlimited and private, used as the fallback. */
   local?: boolean;
+  /** A subscription through its official command-line tool (agents.ts). */
+  agent?: 'claude-code' | 'gemini-cli' | 'codex';
+  /** The tool's command, if not the usual one. */
+  commande?: string;
+  /** The tool can read this machine's files despite the lock (Codex): used only if the contributor accepts it. */
+  risqueLecture?: boolean;
+  accepteLecture?: boolean;
 }
 
 export interface EntreeCatalogue extends Omit<Fournisseur, 'cle'> {
@@ -37,6 +44,9 @@ export const CATALOGUE: Record<string, EntreeCatalogue> = {
   mistral: { id: 'mistral', api: 'openai', url: 'https://api.mistral.ai/v1', env: 'MISTRAL_API_KEY', gratuit: true, confidentiel: false, decouverte: 'liste', aide: 'Mistral La Plateforme, free plan' },
   ollama: { id: 'ollama', api: 'openai', url: 'http://127.0.0.1:11434/v1', gratuit: true, confidentiel: true, decouverte: 'liste', local: true, aide: 'Ollama, models on this machine' },
   lmstudio: { id: 'lmstudio', api: 'openai', url: 'http://127.0.0.1:1234/v1', gratuit: true, confidentiel: true, decouverte: 'liste', local: true, aide: 'LM Studio, models on this machine' },
+  'claude-code': { id: 'claude-code', api: 'cli', url: 'cli:claude', agent: 'claude-code', gratuit: true, confidentiel: false, decouverte: 'aucune', parJour: 10, aide: 'Your Claude subscription, through Claude Code, with every tool off' },
+  'gemini-cli': { id: 'gemini-cli', api: 'cli', url: 'cli:gemini', agent: 'gemini-cli', gratuit: true, confidentiel: false, decouverte: 'aucune', parJour: 20, aide: 'Your Google account, through Gemini CLI, in plan mode (no shell, no writes)' },
+  codex: { id: 'codex', api: 'cli', url: 'cli:codex', agent: 'codex', gratuit: true, confidentiel: false, decouverte: 'aucune', parJour: 10, risqueLecture: true, aide: 'Your ChatGPT subscription, through Codex: it could read your files, so it is off unless you accept that' },
   openai: { id: 'openai', api: 'openai', url: 'https://api.openai.com/v1', env: 'OPENAI_API_KEY', gratuit: false, confidentiel: true, decouverte: 'aucune', aide: 'OpenAI API, paid: name the models, and set a budget' },
   anthropic: { id: 'anthropic', api: 'anthropic', url: 'https://api.anthropic.com/v1', env: 'ANTHROPIC_API_KEY', gratuit: false, confidentiel: true, decouverte: 'aucune', aide: 'Anthropic API, paid: name the models, and set a budget' },
 };
@@ -102,6 +112,7 @@ export async function refus(res: Response): Promise<ErreurFournisseur> {
 /** The models a provider offers, for the pool. */
 export async function decouvrir(f: Fournisseur): Promise<Modele[]> {
   const fait = (nom: string, contexte?: number): Modele => ({ id: `${f.id}/${nom}`, fournisseur: f.id, nom, contexte: contexte ?? CONTEXTE_PAR_DEFAUT, gratuit: f.gratuit, confidentiel: f.confidentiel });
+  if (f.api === 'cli') return [fait('subscription', f.agent === 'gemini-cli' ? 1_000_000 : 200_000)];
   if (f.decouverte === 'aucune' || f.modeles?.length) return (f.modeles ?? []).map((m) => fait(m));
   const res = await fetch(`${f.url}/models`, { headers: entetes(f), signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw await refus(res);
@@ -122,6 +133,7 @@ export function requeteBrute(f: Fournisseur, corps: Record<string, unknown>, sig
 
 /** One completion. Throws ErreurFournisseur on a refusal. */
 export async function completer(f: Fournisseur, nom: string, messages: Message[], o: { maxTokens: number; signal?: AbortSignal }): Promise<string> {
+  if (f.api === 'cli') return (await import('./agents.js')).executerAgent(f, messages);
   const signal = o.signal ?? AbortSignal.timeout(180_000);
   if (f.api === 'anthropic') {
     const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');

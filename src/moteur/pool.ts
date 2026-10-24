@@ -102,6 +102,9 @@ export class Pool {
         if (b.confidentiel && !m.confidentiel) return false;
         if (m.contexte < b.tokens + b.maxTokens) return false;
         const f = this.fournisseurs.find((x) => x.id === m.fournisseur)!;
+        // Subscription tools serve the swarm only: you already use them directly.
+        if (f.api === 'cli' && b.usage === 'perso') return false;
+        if (f.risqueLecture && !f.accepteLecture) return false;
         const utilises = e.parFournisseur.get(f.id) ?? 0;
         if (f.parJour !== undefined) {
           const plafond = b.usage === 'perso' ? f.parJour : Math.floor(f.parJour * (1 - (this.o.reservePerso ?? 0.3)));

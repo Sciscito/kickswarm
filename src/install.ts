@@ -4,12 +4,16 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { configurerMoteur } from './moteur/cli.js';
 import { CoordinatorClient } from './plugin/client.js';
-import { loadOrCreateIdentity } from './plugin/identite.js';
+import { kickswarmHome, loadOrCreateIdentity } from './plugin/identite.js';
 
 // `kickswarm join <hive>`: one command to send your AI into a hive.
 // It creates your identity, finds the agents installed on this machine (Claude Code, Codex,
 // Gemini CLI), shows what it will change, asks, then registers the Kickswarm MCP plugin in each.
+// Then the local engine step (OSP v0.4 §2.6): what this machine can lend (subscriptions through their
+// official tools, local models, free keys), a yes for each, OpenRouter in one click, and the engine
+// started in the background, which works on its own from then on.
 
 export type AgentId = 'claude' | 'codex' | 'gemini';
 
@@ -90,7 +94,7 @@ export function launchPrompt(slug: string): string {
   return `Join the Kickswarm hive “${slug}” with swarm_join, then call swarm_next and do each cell you receive, submitting with swarm_submit or swarm_decompose. Keep going until swarm_next says there is nothing left to do.`;
 }
 
-export async function joinHive(slug: string, opts: { url: string; yes: boolean; log?: (s: string) => void }): Promise<void> {
+export async function joinHive(slug: string, opts: { url: string; yes: boolean; autostart?: boolean; moteur?: boolean; log?: (s: string) => void }): Promise<void> {
   const log = opts.log ?? console.log;
   const { identite, fichier, creee } = loadOrCreateIdentity();
   log(`\n🐝  Kickswarm · joining “${slug}”\n`);
@@ -115,10 +119,16 @@ export async function joinHive(slug: string, opts: { url: string; yes: boolean; 
 
   const agents = detectAgents();
   if (!agents.length) {
-    log('\nNo supported agent found on this machine (Claude Code, Codex or Gemini CLI).');
-    log('Install one, run this command again, or add the MCP server by hand (see README).');
-    return;
+    log('\nNo coding agent found on this machine (Claude Code, Codex or Gemini CLI): the engine below can still lend your free keys and local models.');
+  } else {
+    await brancherAgents(agents, slug, opts, log);
   }
+  if (opts.moteur !== false) await configurerMoteur(kickswarmHome(), opts.url, { oui: opts.yes, ...(opts.autostart !== undefined ? { autostart: opts.autostart } : {}), log });
+  log(`\nWatch the hive live: ${opts.url.replace(/\/$/, '')}/hive\n`);
+}
+
+/** The MCP plugin in each agent found: for working with your agent yourself, alongside the engine. */
+async function brancherAgents(agents: AgentId[], slug: string, opts: { url: string; yes: boolean }, log: (s: string) => void): Promise<void> {
   const plugin = pluginCommand(opts.url);
   log('\nThis will:');
   for (const a of agents) log(`  • ${WHAT[a]}`);
@@ -139,11 +149,10 @@ export async function joinHive(slug: string, opts: { url: string; yes: boolean; 
       log(`  ✗ ${a}: ${(e as Error).message}`);
     }
   }
-  log(`\nYour bees are ready for “${hiveName}”. Open your agent and say:`);
+  log(`\nYour agents can also work for “${slug}” when you ask them. Open one and say:`);
   log(`  “${launchPrompt(slug)}”`);
   if (agents.includes('claude')) {
     log('\nOr launch a Claude Code bee right away, without a chat window:');
     log(`  claude -p "${launchPrompt(slug).replace(/"/g, '\\"')}" --allowedTools "mcp__kickswarm"`);
   }
-  log(`\nWatch the hive live: ${opts.url.replace(/\/$/, '')}/hive\n`);
 }

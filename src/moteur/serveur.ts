@@ -1,7 +1,8 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { completer, refus, requeteBrute, type Message } from './fournisseurs.js';
 import type { Pool } from './pool.js';
+import { pageRejoindre, pageTableau } from './tableau.js';
 
 // The personal endpoint of the local engine (OSP v0.4 §2.6): an OpenAI-compatible API on this machine,
 // protected by a token. The contributor's own tools point at it and get every free model they have
@@ -14,6 +15,33 @@ export interface OptionsServeur {
   /** Free (non-confidential) models for personal requests too; they may train on prompts. */
   autoriserGratuits: boolean;
   log?: (ligne: string) => void;
+  /** The engine's own pages: the dashboard and the one-click join (absent: the endpoint only). */
+  tableau?: Tableau;
+}
+
+export interface Tableau {
+  etat: () => Promise<Record<string, unknown>>;
+  basculerPause: () => void;
+  /** The coordinator this engine works for, if any yet. */
+  coordinateur: () => string | undefined;
+  nomRuche: (ruche: string, coordinateur: string) => Promise<string>;
+  rejoindre: (ruche: string, coordinateur: string) => Promise<void>;
+}
+
+const RUCHE = /^(p[0-9a-f]{32}|[a-z0-9][a-z0-9-]{1,39})$/;
+
+/** The same coordinator, whatever the spelling: localhost and 127.0.0.1, a final slash. */
+export function memeCoordinateur(a: string, b: string): boolean {
+  const norme = (x: string) => {
+    try {
+      const u = new URL(x);
+      if (u.hostname === 'localhost' || u.hostname === '[::1]') u.hostname = '127.0.0.1';
+      return u.origin;
+    } catch {
+      return x.replace(/\/+$/, '');
+    }
+  };
+  return norme(a) === norme(b);
 }
 
 const MAX_CORPS = 4 * 1024 * 1024;
@@ -48,6 +76,56 @@ function json(res: ServerResponse, status: number, corps: unknown): void {
 
 const erreur = (res: ServerResponse, status: number, message: string) => json(res, status, { error: { message, type: 'kickswarm_engine' } });
 
+/**
+ * The engine's pages. A project page anywhere may ask whether an engine runs here (/v0/engine), and
+ * open the join page; everything else answers only under the engine's own address (no DNS rebinding),
+ * and every change needs a request from the engine's own page (its Origin): no site can act for you.
+ */
+async function pages(req: IncomingMessage, res: ServerResponse, chemin: string, u: URL, t: Tableau, nonces: Map<string, { ruche: string; coordinateur: string; expire: number }>): Promise<void> {
+  const port = req.socket.localPort;
+  const origines = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+  if (chemin === '/v0/engine') {
+    // Presence only, readable by any page: a project page uses it to offer one-click join.
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-private-network': 'true', 'access-control-allow-methods': 'GET', 'access-control-allow-headers': 'content-type' };
+    if (req.method === 'OPTIONS') return void res.writeHead(204, cors).end();
+    res.writeHead(200, { 'content-type': 'application/json', ...cors });
+    return void res.end(JSON.stringify({ kickswarm: 'engine', version: 1 }));
+  }
+  if (!origines.map((x) => x.slice(7)).includes(req.headers.host ?? '')) return erreur(res, 403, 'Open this page at its own address: http://127.0.0.1:' + port);
+  const html = (h: string) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-frame-options': 'DENY', 'cache-control': 'no-store' });
+    res.end(h);
+  };
+  if (req.method === 'GET' && chemin === '/') return html(pageTableau());
+  if (req.method === 'GET' && chemin === '/v0/engine/state') return json(res, 200, await t.etat());
+  if (req.method === 'GET' && chemin === '/join') {
+    const ruche = u.searchParams.get('hive') ?? '';
+    const coordinateur = (u.searchParams.get('coordinator') ?? '').replace(/\/+$/, '');
+    if (!RUCHE.test(ruche) || !/^https?:\/\/[^\s/]+$/.test(coordinateur)) return erreur(res, 400, 'A join link names a hive and its coordinator');
+    const actuel = t.coordinateur();
+    if (actuel && !memeCoordinateur(actuel, coordinateur)) return html(pageRejoindre({ ruche, nom: ruche, coordinateur, nonce: '', conflit: actuel }));
+    const nonce = randomBytes(18).toString('base64url');
+    nonces.set(nonce, { ruche, coordinateur, expire: Date.now() + 10 * 60_000 });
+    return html(pageRejoindre({ ruche, nom: await t.nomRuche(ruche, coordinateur).catch(() => ruche), coordinateur, nonce }));
+  }
+  if (req.method === 'POST') {
+    if (!origines.includes(req.headers.origin ?? '')) return erreur(res, 403, 'Only the engine’s own page can do this');
+    if (chemin === '/v0/engine/pause') {
+      t.basculerPause();
+      return json(res, 200, { ok: true });
+    }
+    if (chemin === '/v0/engine/join') {
+      const b = await lire(req);
+      const n = nonces.get(String(b.nonce ?? ''));
+      if (!n || n.expire < Date.now() || n.ruche !== b.ruche || n.coordinateur !== b.coordinateur) return erreur(res, 403, 'This join page has expired: open the project link again');
+      nonces.delete(String(b.nonce));
+      await t.rejoindre(n.ruche, n.coordinateur);
+      return json(res, 200, { ok: true, ruche: n.ruche });
+    }
+  }
+  return erreur(res, 404, 'Unknown page');
+}
+
 function autorise(req: IncomingMessage, jeton: string): boolean {
   const h = req.headers.authorization ?? '';
   const donne = Buffer.from(h.startsWith('Bearer ') ? h.slice(7).trim() : '');
@@ -62,10 +140,13 @@ function tokensDe(messages: unknown): number {
 
 export function serveurPerso(pool: Pool, o: OptionsServeur): Server {
   const log = o.log ?? (() => {});
+  const nonces = new Map<string, { ruche: string; coordinateur: string; expire: number }>();
   return createServer(async (req, res) => {
     try {
+      const u = new URL(req.url ?? '/', 'http://localhost');
+      const chemin = u.pathname.replace(/\/+$/, '') || '/';
+      if (o.tableau && !chemin.startsWith('/v1/')) return await pages(req, res, chemin, u, o.tableau, nonces);
       if (!autorise(req, o.jeton)) return erreur(res, 401, 'Use the key printed by kickswarm engine (Authorization: Bearer …)');
-      const chemin = new URL(req.url ?? '/', 'http://localhost').pathname.replace(/\/+$/, '');
       if (req.method === 'GET' && chemin === '/v1/models') {
         const liste = pool.modeles().filter((m) => o.autoriserGratuits || m.confidentiel);
         return json(res, 200, { object: 'list', data: [{ id: 'auto', object: 'model', owned_by: 'kickswarm' }, ...liste.map((m) => ({ id: m.id, object: 'model', owned_by: m.fournisseur, context_length: m.contexte }))] });

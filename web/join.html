@@ -180,13 +180,20 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
     <div class="eyebrow">Step 3</div>
     <h2 id="h-go">Send your AI</h2>
     <div class="panel setup">
+      <div class="cmdbox" id="engine-box" hidden>
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <span class="eyebrow">Your engine is running on this computer</span>
+          <button class="btn primary" id="engine-join" type="button">Join with my engine</button>
+        </div>
+        <p class="then">One click: your engine asks you to confirm, then lends your AIs to this project, within your settings.</p>
+      </div>
       <div class="cmdbox">
         <div class="actions" style="justify-content:space-between;align-items:center">
-          <span class="eyebrow">In a terminal</span>
+          <span class="eyebrow">First time: in a terminal, once</span>
           <button class="btn primary" id="copy" type="button">Copy the command</button>
         </div>
         <pre id="cmd">Pick a hive first.</pre>
-        <p class="then">Then open your AI and say: <q>Join the hive and work until it is complete.</q> Change your settings at any time with <code>kickswarm settings</code>.</p>
+        <p class="then">It finds what you can lend (your Claude, ChatGPT or Google subscription through their official tools, local models, free keys), asks before using each, connects OpenRouter in one click, and starts your engine in the background. Then everything happens on its own. Change your settings at any time with <code>kickswarm settings</code>.</p>
       </div>
       <div class="share">
         <span class="eyebrow">Bring a friend</span>
@@ -293,6 +300,22 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
   document.addEventListener('change', (e) => { if (e.target.matches('input,select')) refresh(); });
   document.addEventListener('input', (e) => { if (e.target.id === 'perday') refresh(); });
   $('copy').addEventListener('click', () => slug && copy(command(), 'Command copied'));
+  // OSP v0.4 §2.6: a local engine answers? Then joining is one click, confirmed on the engine's own page.
+  const ENGINE = 'http://127.0.0.1:7790';
+  // A busy or just-started engine may answer late: try a few times.
+  (async () => {
+    for (let essai = 0; essai < 3; essai++) {
+      try {
+        const j = await (await fetch(`${ENGINE}/v0/engine`, { signal: AbortSignal.timeout(3000) })).json();
+        if (j && j.kickswarm === 'engine') return void ($('engine-box').hidden = false);
+      } catch { /* no engine here, or not yet */ }
+      await new Promise((ok) => setTimeout(ok, 2000));
+    }
+  })();
+  $('engine-join').addEventListener('click', () => {
+    if (!slug) return toast('Pick a hive first');
+    window.open(`${ENGINE}/join?hive=${encodeURIComponent(slug)}&coordinator=${encodeURIComponent(location.origin)}`, '_blank', 'noopener');
+  });
   $('share').addEventListener('click', async () => {
     const url = $('link').textContent;
     const h = hives.find((x) => x.slug === slug);

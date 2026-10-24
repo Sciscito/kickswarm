@@ -22,6 +22,8 @@ export interface OptionsAbeille {
   signataire: Signataire;
   executeurs: Executeurs;
   ruche?: string;
+  /** The projects joined, read at each round (rotated): joining one from the engine's page takes effect at once. */
+  ruches?: () => string[];
   /** The castes this bee takes (from the participation settings). */
   castes?: Caste[];
   /** Fix requests sent back to the model before giving the task back (2 by default). */
@@ -29,6 +31,8 @@ export interface OptionsAbeille {
   stockage?: Stockage;
   /** Why the bee rests now (paused, quiet hours, daily limit), or null: the participation settings. */
   repos?: () => string | null;
+  /** Called after each task done (a deliverable handed in or a verification), for the daily limit. */
+  compter?: () => void;
   log?: (ligne: string) => void;
 }
 
@@ -41,6 +45,15 @@ export class AbeilleApi {
   constructor(private readonly o: OptionsAbeille) {
     this.porte = new Porte(o.url, o.stockage ?? stockageMemoire(), o.executeurs, { signataire: o.signataire });
     this.log = o.log ?? (() => {});
+  }
+
+  private tours = 0;
+
+  /** The hive for this round: the fixed one, or the next of the projects joined (none: any hive). */
+  private rucheDuTour(): string | undefined {
+    if (this.o.ruche) return this.o.ruche;
+    const liste = this.o.ruches?.() ?? [];
+    return liste.length ? liste[this.tours++ % liste.length] : undefined;
   }
 
   private prend(c: Caste): boolean {
@@ -61,8 +74,9 @@ export class AbeilleApi {
   async tour(): Promise<Issue> {
     if (this.o.repos?.()) return 'pause';
     for (const r of await this.porte.reveler()) this.log(`cell ${r.chemin}: ${r.issue}`);
+    const ruche = this.rucheDuTour();
     if (this.prend('gardienne')) {
-      const g = await this.porte.garder(this.o.ruche);
+      const g = await this.porte.garder(ruche);
       if (g) {
         this.log(`verified cell ${g.chemin}: ${g.ok ? 'valid' : 'rejected'}${g.issue ? `, ${g.issue}` : ', verdict sealed'}`);
         return 'garde';
@@ -73,7 +87,7 @@ export class AbeilleApi {
     if (!this.o.pool.essaimPeutTravailler()) return 'pause';
     const tailleMax = this.o.pool.tailleMax() - 4000;
     if (tailleMax <= 0) return 'sans-modele';
-    const t = await this.porte.prendre(this.o.ruche, { tailleMax });
+    const t = await this.porte.prendre(ruche, { tailleMax });
     if (!t) return 'rien';
     const messages: Message[] = [
       { role: 'system', content: SYSTEME },
@@ -119,6 +133,7 @@ export class AbeilleApi {
       let issue: Issue;
       try {
         issue = await this.tour();
+        if (issue === 'rendu' || issue === 'rendu-refuse' || issue === 'garde') this.o.compter?.();
       } catch (e) {
         this.log(`step failed: ${(e as Error).message.slice(0, 120)}`);
         issue = 'rien';

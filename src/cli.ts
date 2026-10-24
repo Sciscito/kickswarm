@@ -185,7 +185,7 @@ async function main(): Promise<void> {
       const p = appliquerOptions(chargerParticipation(home), participationOptions(opts, ruche));
       enregistrerParticipation(home, p);
       console.log(`\nHow your bee takes part: ${decrire(p)}\n   Change it at any time: kickswarm settings --help`);
-      return joinHive(ruche, { url, yes: opts.yes !== undefined });
+      return joinHive(ruche, { url, yes: opts.yes !== undefined, ...(opts.autostart !== undefined ? { autostart: true } : {}), moteur: opts['no-engine'] === undefined });
     }
     case 'private':
     case 'privee':
@@ -193,7 +193,7 @@ async function main(): Promise<void> {
     case 'engine':
     case 'moteur':
       if (opts.help !== undefined) return void console.log(AIDE_MOTEUR);
-      return commandeMoteur(kickswarmHome(), pos.slice(1), opts);
+      return commandeMoteur(kickswarmHome(), url, pos.slice(1), opts);
     case 'bee':
     case 'abeille':
       return commandeAbeille(kickswarmHome(), url, opts);

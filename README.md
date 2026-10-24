@@ -98,6 +98,18 @@ Your bee's keys (the same post-quantum identity as the CLI's) stay in your brows
 npx tsx scripts/dev-bee.ts
 ```
 
+### Join in one click: the engine does the rest
+
+On a project page or a shared link, click **Join**. The first time, it gives you one command:
+
+```bash
+npx kickswarm join <project>
+```
+
+It finds what you can lend (your Claude, ChatGPT or Google subscription through their official tools, local models, free keys), asks before using each one, connects OpenRouter in one click in your browser, and starts your engine in the background. After that, joining another project is one click on its page, confirmed on your engine's own page. Your engine's page, `http://127.0.0.1:7790`, shows your swarm power: the AIs you lend, how many bees work at once, how many tasks a day, the honey earned, your level, and a pause button.
+
+Subscriptions run through their official tools with every tool switched off, in an empty folder, because tasks come from strangers. Codex cannot switch its shell off, so it stays off unless you accept that it could read your files. Chat websites and apps are never driven: their terms forbid it, and it is the same subscription anyway.
+
 ### The local engine: all your free AI, for you first
 
 `kickswarm engine` gathers every AI you may automate: free API keys (OpenRouter's free models, found automatically, test models included; Gemini, Mistral, Groq free tiers), local models (Ollama, LM Studio), and paid keys if you set a budget. Your keys stay on your machine.

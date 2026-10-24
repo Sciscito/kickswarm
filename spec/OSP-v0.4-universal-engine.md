@@ -117,6 +117,29 @@ The API door grows into a **local engine**: one program on the contributor's mac
 
 **The leaderboard of free models.** Every result says which model produced it (`agent.modele`), and the swarm verifies every result. So the coordinator can publish, from the registry alone, **how each model really does**: results handed in, validated, refused, per verification class. The engine uses it to rank models, and anyone can read it (`GET /v0/models`, and on `/bee`). It answers a question nobody answers today: *which free model actually gets things right?*
 
+### 2.7 The automatic door: join in one click, the engine does the rest
+
+Copying prompts by hand is the fallback, for a chat on a phone. The main way in is automatic.
+
+1. **A project page or a shared link** (`/join/<hive>`): "Join".
+2. **The first time, one command** (`npx kickswarm join <hive>`). It finds what this machine can lend, asks before using each, connects OpenRouter in one click, and starts the engine in the background. Start at login is offered, off by default.
+3. **After that, one click**: the project page sees the engine running on the computer and opens the engine's own confirmation page. One "Yes", and the engine takes tasks from that project too.
+4. **The engine works on its own**: one bee per AI lent, within the coordinator's limit per contributor, each AI within its daily share, the contributor's own use first.
+
+**Subscriptions through their official tools.** A Claude subscription works through Claude Code, a Google account through Gemini CLI, a ChatGPT subscription through Codex: these are the providers' own tools, made to be run by programs. The engine runs them headless, locked down as far as each tool allows, because tasks are written by strangers:
+
+- **Claude Code**: `--tools ""`, every tool and every MCP tool denied, no MCP server, `--safe-mode` (no memory files, hooks, plugins, skills), no prompt, no saved session, one turn.
+- **Gemini CLI**: plan mode (no shell, no writes), no extension, no MCP server.
+- **Codex**: its read-only sandbox still lets it run commands that read the machine's files, and it has no switch to turn the shell off. A task could make it read a private file and put it in its answer. It MUST NOT be used unless the contributor explicitly accepts that risk.
+
+Every run happens in a fresh empty folder, with the prompt on stdin. If a tool does not know a locking option (an old version), the run fails: it never runs unlocked. Subscriptions serve the swarm only (the contributor already uses these tools directly), each with a modest daily share *(parameter: 10 tasks for Claude Code and Codex, 20 for Gemini CLI)*, and never private hives (consumer plans may train on prompts).
+
+**Consumer chat websites and apps are never driven** (chatgpt.com, claude.ai, gemini.google.com and their apps): their terms forbid it, and it would add nothing, since it is the same subscription as the official tool.
+
+**Your swarm power.** The engine's page (`http://127.0.0.1:7790`) shows what the contributor lends and what it gives: AIs lent, bees working at once, tasks a day, honey earned, and a level (Egg, Larva, Worker, Forager, Queen), with a pause button and the projects joined.
+
+**Safety of the local pages.** Any page may only ask whether an engine runs (`/v0/engine`). Every other local page answers only under the engine's own address, so DNS rebinding cannot reach it. Every change needs a request from the engine's own page (its `Origin`), and a join confirmation carries a one-time token. No website can make an engine join a project, pause or leave.
+
 ---
 
 ## 3. One task, three forms
@@ -214,7 +237,7 @@ Each step says what can be **shown** when it is done. It replaces the order of v
 |---|---|---|
 | **U1** ✅ | *Done: see §6.1.* **The task card** (§3.1) and the **answer parser** (§3.4); the plugin uses the card | The same cell gives an MCP result, an API request and a chat prompt; answers pasted from five different chats are read correctly |
 | **U2** ✅ | *Done: see §6.1.* **The chat door and the guard door**: `/bee`, identity in the browser, copy and paste, checks in the browser, signing, honey (§2.3, §2.4) | On a phone, a free chat model's answer is pasted and becomes honey; a browser with no AI verifies other bees' work and catches a trap cell |
-| **U3** ✅ | *Done: see §6.2.* **The API door and the local engine**: `kickswarm bee`, OpenAI-compatible and Anthropic adapters, the pool of free providers, OpenRouter's free models found automatically, quotas, the personal endpoint, the leaderboard of free models, the cost guard (§2.2, §2.6) | A local model and a free-tier key work in the same hive as a coding agent, with no human in the loop; the contributor's own editor uses the same free models through one local address; the leaderboard shows which free model gets things right |
+| **U3** ✅ | *Done: see §6.2 and §6.3 (the automatic door, §2.7).* **The API door and the local engine**: `kickswarm bee`, OpenAI-compatible and Anthropic adapters, the pool of free providers, OpenRouter's free models found automatically, quotas, the personal endpoint, the leaderboard of free models, the cost guard (§2.2, §2.6) | A local model and a free-tier key work in the same hive as a coding agent, with no human in the loop; the contributor's own editor uses the same free models through one local address; the leaderboard shows which free model gets things right |
 | **U4** | **Bee profiles and matching**, splitting for the swarm you have (§4) | A hive with mostly chat bees gets small cells; a cell too big for everyone is re-split on its own |
 | **U5** | **Scoping and questions** (v0.3 §4.3, §3.4) | From one sentence, the hive asks good questions, writes a brief, and later asks "A or B?" without stopping the others |
 | **U6** | **AI review** `review-ai@1` (v0.3 §4.2) | A market study is checked item by item; a planted false source is caught |
@@ -257,6 +280,22 @@ After U4, the swarm is open to every kind of AI. After U7, it can take on any ki
 - **The cost guard counts paid calls, not money**: prices differ by provider and are not all published in an API.
 - **Answers use the chat format** (code blocks) rather than structured outputs: every model, small and free ones included, can follow it, and the reader already handles it. The card's API form (§3.2) stays for providers that support schemas.
 - **Scouts and repository cells that read files are not taken yet**: splits need U4's matching to go to models that do them well; reading files needs the member's clone (v0.3 §3.2).
+
+### 6.3 What is implemented (the automatic door)
+
+- **Subscription tools** (`src/moteur/agents.ts`): the Claude Code, Gemini CLI and Codex drivers with the locks of §2.7. On Windows the command line is built and quoted here (the tools are `.cmd` shims) and passed verbatim to `cmd.exe`. Login, limit and old-version messages become what the pool needs: set aside, paused for an hour, or "update it".
+- **One-click OpenRouter** (`src/moteur/openrouter-oauth.ts`, `kickswarm engine connect openrouter`): OpenRouter's OAuth with PKCE (S256), a one-time callback on `localhost`, and the key saved to the engine's settings.
+- **Detection and the swarm power** (`src/moteur/detection.ts`): the tools installed, local servers that answer, the keys given, and a level. Free API tiers with unknown limits are counted at 50 tasks a day.
+- **The engine step of `kickswarm join`** (`configurerMoteur`): it shows the power, asks for each subscription (Codex defaults to no, with the risk spelled out), offers OpenRouter in one click, starts the engine, and offers start at login. With `--yes`: the safe defaults (subscriptions and local models lent, no browser, no start at login). `join` no longer stops when no coding agent is installed.
+- **Background** (`src/moteur/service.ts`, `kickswarm engine start|stop|status|autostart on|off`): a detached `kickswarm bee` with its log and pid next to the identity; start at login through the usual per-user file of each system (Startup folder, LaunchAgent, autostart entry).
+- **Several bees at once** (`kickswarm bee`, `--bees` in the settings): one per AI lent, at most the coordinator's limit per contributor. They rotate over the projects joined, read at each round, and keep their sealed verdicts in a file, so a restart can still reveal them.
+- **The engine's pages** (`src/moteur/tableau.ts`): the swarm-power dashboard and the join confirmation, with the protections of §2.7. The project page (`/join`) offers "Join with my engine" when an engine answers. The flow was tried in a real browser: project page, confirmation, the project listed on the dashboard, and the engine verifying a result with no AI.
+
+**Different from §2.7, for now:**
+
+- **The first install is still one command**, not a downloadable app: a signed desktop installer, and a `kickswarm://` link that opens it, come later.
+- **Being logged in to Claude Code, Gemini CLI or Codex is not checked in advance**: a tool that is not logged in is set aside on its first refusal, with a message.
+- **The default daily shares of subscriptions are guesses.** Each provider's limits differ by plan; the contributor sets their own (`kickswarm engine add claude-code --per-day N`).
 
 **Why this order.** The doors come first because they decide who can join: without them, Kickswarm stays for developers. Matching comes right after, because opening the door to small models without it would fill the hive with refused results. Then the pieces that turn "code" into "anything".
 

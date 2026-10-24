@@ -22,6 +22,10 @@ export interface ConfigMoteur {
   /** The personal endpoint's key. */
   jeton: string;
   port: number;
+  /** The coordinator the engine works for (set by kickswarm join). */
+  coordinateur?: string;
+  /** How many bees the engine runs at once (each takes one task at a time). */
+  abeilles?: number;
 }
 
 const FICHIER = 'moteur.json';
@@ -56,11 +60,13 @@ export function fournisseursActifs(c: ConfigMoteur, env: Record<string, string |
     const { env: varEnv, aide: _aide, ...defaut } = base ?? { id: e.id, api: 'openai' as const, url: e.url!, gratuit: true, confidentiel: false, decouverte: 'liste' as const, env: undefined, aide: '' };
     const cle = e.cle ?? (varEnv ? env[varEnv] : undefined);
     const f: Fournisseur = { ...defaut, ...e, ...(cle ? { cle } : {}) };
-    if (!f.cle && !f.local) continue;
+    // A subscription tool needs no key: being in the settings means the contributor said yes.
+    if (!f.cle && !f.local && f.api !== 'cli') continue;
     out.set(f.id, f);
   }
   for (const [id, base] of Object.entries(CATALOGUE)) {
-    if (out.has(id) || c.fournisseurs.some((e) => e.id === id)) continue;
+    // Subscription tools are never added on their own: only with the contributor's yes (kickswarm join).
+    if (base.api === 'cli' || out.has(id) || c.fournisseurs.some((e) => e.id === id)) continue;
     const { env: varEnv, aide: _aide, ...f } = base;
     const cle = varEnv ? env[varEnv] : undefined;
     if (cle) out.set(id, { ...f, cle });
