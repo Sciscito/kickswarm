@@ -81,6 +81,7 @@ const ISSUES: Record<Outcome, string> = {
   rejected: 'rejeté',
   assembled: 'assemblé',
   assembly_rejected: 'assemblage rejeté',
+  sealed: 'verdict scellé, en attente des autres gardiennes',
   verified: 'validé : miel',
   confirmed: 'confirmé, en attente d’une seconde gardienne',
   fake_caught: 'faux résultat démasqué',

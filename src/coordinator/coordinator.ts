@@ -11,6 +11,7 @@ import type {
   ContributorId,
   Decision,
   Decomposition,
+  EngagementVerdict,
   Hash,
   Hive,
   HiveStatus,
@@ -54,7 +55,7 @@ export interface CellRecord {
   profondeur: number;
   enfants: Hash[];
   bail?: Bail;
-  /** Gardiennes tirées pour le résultat en attente (baux actifs). */
+  /** Gardiennes tirées pour le résultat en attente, qui ne se sont pas encore engagées (baux actifs). */
   gardiennes: Bail[];
   /** Gardiennes qui ont déjà validé le résultat en attente. */
   verdicts: ContributorId[];
@@ -108,6 +109,16 @@ interface Piege {
   alveole: Hash;
   attribue_a: ContributorId;
   expire: number;
+  /** P1-3 : l'engagement de la gardienne, comme pour un vrai résultat. */
+  engagement?: Hash;
+}
+
+/** P1-3 : une gardienne engagée sur un résultat, dont le verdict reste scellé. */
+interface Engagement {
+  par: ContributorId;
+  engagement: Hash;
+  /** Fin de la fenêtre de révélation (elle ne court que lorsque la révélation est ouverte). */
+  expire: number;
 }
 
 export interface BoardEntry {
@@ -127,6 +138,8 @@ interface State {
   results: Record<string, ResultRecord>;
   decompositions: Record<string, DecompRecord>;
   pieges: Record<string, Piege>;
+  /** P1-3 : verdicts scellés, par résultat. */
+  engagements: Record<string, Engagement[]>;
   board: Record<string, BoardEntry[]>;
   accounts: Record<string, Account>;
   nonces: Record<string, number>;
@@ -137,7 +150,8 @@ interface State {
 }
 
 /** Les commandes qui modifient l'état. Chacune est inscrite en entier au registre (OSP v0.2, §6.1). */
-export type CommandeType = 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'submitVerdict';
+export type CommandeType =
+  | 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'engageVerdict' | 'submitVerdict';
 
 /**
  * Le contenu d'une entrée `commande` : les objets signés reçus, plus tout ce qui n'est pas
@@ -332,6 +346,7 @@ export class Coordinator {
         results: {},
         decompositions: {},
         pieges: {},
+        engagements: {},
         board: {},
         accounts: {},
         nonces: {},
@@ -427,7 +442,8 @@ export class Coordinator {
     if (!this.options.replay) throw new Error('Rejeu réservé à un coordinateur créé en mode audit');
     this.replayNext = { at: c.at, alea: [...(c.alea ?? [])], signatures: [...(c.signatures ?? [])], verifs: c.verifs ?? [], secrets: c.secrets ?? {} };
     const e = c.entree as {
-      ruche: Hive; racine: CellSpec; decision: Decision; requete: Requete; resultat: Result; livrable: Livrable; decomposition: Decomposition; verdict: Verdict;
+      ruche: Hive; racine: CellSpec; decision: Decision; requete: Requete; resultat: Result; livrable: Livrable; decomposition: Decomposition;
+      engagement: EngagementVerdict; verdict: Verdict;
     };
     try {
       switch (c.type) {
@@ -438,6 +454,7 @@ export class Coordinator {
         case 'release': this.release(e.requete); break;
         case 'submitResult': await this.submitResult(e.resultat, e.livrable); break;
         case 'submitDecomposition': await this.submitDecomposition(e.decomposition); break;
+        case 'engageVerdict': this.engagerVerdict(e.engagement); break;
         case 'submitVerdict': await this.submitVerdict(e.verdict); break;
         default: throw new ReplayDivergence(`Commande inconnue : ${String(c.type)}`);
       }
@@ -717,7 +734,7 @@ export class Coordinator {
         profondeur: c.profondeur,
         rejets: c.rejets,
         abeille: actif(c.bail),
-        gardiennes: c.gardiennes.filter((g) => g.expire > now).map((g) => g.par),
+        gardiennes: [...c.gardiennes.filter((g) => g.expire > now).map((g) => g.par), ...this.engagesSur(c.en_attente).map((e) => e.par)],
         piege: pieges.find((p) => p.alveole === c.id)?.attribue_a,
         auteur: c.resultat_valide ? this.state.results[c.resultat_valide]?.resultat.auteur : undefined,
         validee_par: c.validee_par,
@@ -848,8 +865,9 @@ export class Coordinator {
       if (c.state !== 'en_verification' || !c.en_attente) return false;
       const rr = this.state.results[c.en_attente];
       if (!rr || rr.resultat.auteur === who) return false;
-      if (c.gardiennes.some((g) => g.par === who) || c.verdicts.includes(who)) return false;
-      return c.gardiennes.length + c.verdicts.length < k;
+      const engages = this.engagesSur(c.en_attente);
+      if (c.gardiennes.some((g) => g.par === who) || c.verdicts.includes(who) || engages.some((e) => e.par === who)) return false;
+      return c.gardiennes.length + engages.length + c.verdicts.length < k;
     });
     const libres = cells.filter((c) => c.state === 'libre');
 
@@ -1063,6 +1081,58 @@ export class Coordinator {
     return { statut: 'adopte', decoupage: id, enfants: rec.enfants };
   }
 
+  /**
+   * Première moitié d'un verdict (OSP v0.2, P1-3) : la gardienne publie le hash de son verdict,
+   * qui reste scellé. Les verdicts ne se révèlent que lorsque toutes les gardiennes du résultat
+   * se sont engagées : personne ne peut copier une autre ni s'aligner sur elle.
+   */
+  engagerVerdict(e: EngagementVerdict): { statut: 'engage'; revelation: boolean } {
+    return this.run('engageVerdict', { engagement: e }, [], () => this.doEngagerVerdict(e));
+  }
+
+  private doEngagerVerdict(e: EngagementVerdict): { statut: 'engage'; revelation: boolean } {
+    if (e?.type !== 'osp.engagement/0.1') throw new OspError('Objet engagement attendu (osp.engagement/0.1)');
+    if (!isContributorId(e.gardienne) || !verifyObject(e, e.gardienne)) throw new OspError('Signature de l’engagement invalide', 401);
+    if (typeof e.engagement !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(e.engagement)) throw new OspError('Engagement invalide : sha256 attendu');
+    this.expire();
+
+    const piege = this.state.pieges[e.resultat];
+    if (piege) {
+      if (piege.attribue_a !== e.gardienne) throw new OspError('Ce résultat ne t’a pas été attribué', 403);
+      if (piege.engagement) throw new OspError('Tu t’es déjà engagée sur ce résultat', 409);
+      piege.engagement = e.engagement;
+      piege.expire = this.leaseEnd(this.cellOrThrow(piege.alveole));
+      this.registry.append('engagement', { resultat: e.resultat, gardienne: e.gardienne, engagement: e.engagement });
+      return { statut: 'engage', revelation: true };
+    }
+
+    const rr = this.state.results[e.resultat];
+    if (!rr) throw new OspError('Résultat inconnu', 404);
+    const rec = this.cellOrThrow(rr.resultat.alveole);
+    if (rec.state !== 'en_verification' || rec.en_attente !== e.resultat) throw new OspError('Ce résultat n’attend plus de vérification', 409);
+    if (!rec.gardiennes.some((g) => g.par === e.gardienne)) throw new OspError('Tu n’es pas une gardienne tirée pour ce résultat', 403);
+    if (rr.resultat.auteur === e.gardienne) throw new OspError('On ne vérifie pas son propre travail (§7.3)', 403);
+    rec.gardiennes = rec.gardiennes.filter((g) => g.par !== e.gardienne);
+    const liste = (this.state.engagements[e.resultat] ??= []);
+    liste.push({ par: e.gardienne, engagement: e.engagement, expire: this.leaseEnd(rec) });
+    this.registry.append('engagement', { resultat: e.resultat, gardienne: e.gardienne, engagement: e.engagement });
+    const ouverte = this.revelationOuverte(rec, e.resultat);
+    // La fenêtre de révélation part du moment où elle s'ouvre, pour chacune.
+    if (ouverte) for (const x of liste) x.expire = this.leaseEnd(rec);
+    return { statut: 'engage', revelation: ouverte };
+  }
+
+  /** Toutes les places de gardienne du résultat sont engagées (ou déjà tranchées) : on peut révéler. */
+  private revelationOuverte(rec: CellRecord, resultat: Hash): boolean {
+    const k = Math.max(1, this.params.gardiennes_v0);
+    return rec.gardiennes.length === 0 && this.engagesSur(resultat).length + rec.verdicts.length >= k;
+  }
+
+  private engagesSur(resultat: Hash | undefined): Engagement[] {
+    return resultat ? (this.state.engagements[resultat] ?? []) : [];
+  }
+
+  /** Seconde moitié d'un verdict : la révélation, qui doit correspondre à l'engagement. */
   async submitVerdict(v: Verdict): Promise<{ statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number }> {
     const replay = this.replayNext;
     const rejeu = replay ? (replay.verifs[0] ?? null) : await this.rejeuFor(v);
@@ -1074,7 +1144,8 @@ export class Coordinator {
     if (v?.type !== 'osp.verdict/0.1' || v.decision !== 'rejete' || this.state.pieges[v.resultat]) return null;
     const rr = this.state.results[v.resultat];
     const rec = rr ? this.state.cells[rr.resultat.alveole] : undefined;
-    if (!rr || !rec) return null;
+    if (!rr || !rec || rec.en_attente !== v.resultat) return null;
+    if (!this.engagesSur(v.resultat).some((e) => e.par === v.gardienne) || !this.revelationOuverte(rec, v.resultat)) return null;
     return this.verifier(rec.cell.critere_fini, rr.livrable, { caches: this.cachesFor(rec) });
   }
 
@@ -1082,10 +1153,15 @@ export class Coordinator {
     if (v?.type !== 'osp.verdict/0.1') throw new OspError('Objet verdict attendu (osp.verdict/0.1)');
     if (!isContributorId(v.gardienne) || !verifyObject(v, v.gardienne)) throw new OspError('Signature du verdict invalide', 401);
     if (!['valide', 'rejete', 'abstention'].includes(v.decision)) throw new OspError('Décision invalide');
+    if (typeof v.sel !== 'string' || !/^[0-9a-f]{64,}$/.test(v.sel)) throw new OspError('Sel du verdict absent ou trop court (32 octets en hexadécimal)');
+    this.expire();
+    const h = hashOf(v);
 
     const piege = this.state.pieges[v.resultat];
     if (piege) {
       if (piege.attribue_a !== v.gardienne) throw new OspError('Ce résultat ne t’a pas été attribué', 403);
+      if (!piege.engagement) throw new OspError('Engage-toi d’abord sur ton verdict (osp.engagement/0.1)', 409);
+      if (piege.engagement !== h) throw new OspError('Ce verdict ne correspond pas à ton engagement', 400);
       delete this.state.pieges[v.resultat];
       const ruche = this.state.cells[piege.alveole]?.cell.ruche;
       let correct: boolean | null = null;
@@ -1106,11 +1182,33 @@ export class Coordinator {
     const rr = this.state.results[v.resultat];
     if (!rr) throw new OspError('Résultat inconnu', 404);
     const rec = this.cellOrThrow(rr.resultat.alveole);
-    if (rec.state !== 'en_verification' || rec.en_attente !== v.resultat) throw new OspError('Ce résultat n’attend plus de vérification', 409);
-    if (!rec.gardiennes.some((g) => g.par === v.gardienne)) throw new OspError('Tu n’es pas une gardienne tirée pour ce résultat', 403);
     if (rr.resultat.auteur === v.gardienne) throw new OspError('On ne vérifie pas son propre travail (§7.3)', 403);
-    this.registry.append('verdict', { resultat: v.resultat, gardienne: v.gardienne, decision: v.decision, motif: v.motif });
-    rec.gardiennes = rec.gardiennes.filter((g) => g.par !== v.gardienne);
+    const liste = this.engagesSur(v.resultat);
+    const eng = liste.find((e) => e.par === v.gardienne);
+    if (!eng) {
+      throw new OspError(
+        rec.gardiennes.some((g) => g.par === v.gardienne) ? 'Engage-toi d’abord sur ton verdict (osp.engagement/0.1)' : 'Aucun engagement de ta part sur ce résultat',
+        409,
+      );
+    }
+    if (eng.engagement !== h) throw new OspError('Ce verdict ne correspond pas à ton engagement', 400);
+    const enCours = rec.state === 'en_verification' && rec.en_attente === v.resultat;
+    if (enCours && !this.revelationOuverte(rec, v.resultat)) {
+      throw new OspError('Révélation pas encore ouverte : d’autres gardiennes doivent encore s’engager', 425);
+    }
+    const reste = liste.filter((e) => e !== eng);
+    if (reste.length) this.state.engagements[v.resultat] = reste;
+    else delete this.state.engagements[v.resultat];
+    this.registry.append('verdict', { resultat: v.resultat, gardienne: v.gardienne, decision: v.decision, motif: v.motif, engagement: h });
+
+    if (!enCours) {
+      // Révélation tardive : le résultat a été tranché pendant que ce verdict était scellé.
+      // On la juge quand même : se taire coûte plus cher que d'avoir eu tort.
+      if (v.decision === 'abstention') return { statut: rr.statut };
+      const juste = (v.decision === 'rejete') === (rr.statut === 'rejete');
+      this.ledger.reputation(v.gardienne, juste ? 'confirme' : 'renverse');
+      return { statut: rr.statut, renverse: !juste };
+    }
 
     if (v.decision === 'valide') {
       rec.verdicts.push(v.gardienne);
@@ -1365,7 +1463,28 @@ export class Coordinator {
         rec.gardiennes = rec.gardiennes.filter((g) => g.expire > now);
       }
     }
-    for (const [id, p] of Object.entries(this.state.pieges)) if (p.expire <= now) delete this.state.pieges[id];
+    // P1-3 : un verdict scellé qu'on ne révèle pas à temps coûte plus cher que le pire verdict révélé.
+    // La fenêtre ne court que si la révélation est ouverte (ou si le résultat a été tranché entre-temps).
+    for (const [resultat, liste] of Object.entries(this.state.engagements)) {
+      const rr = this.state.results[resultat];
+      const rec = rr ? this.state.cells[rr.resultat.alveole] : undefined;
+      if (rec && rec.en_attente === resultat && rec.state === 'en_verification' && !this.revelationOuverte(rec, resultat)) continue;
+      const echues = liste.filter((e) => e.expire <= now);
+      for (const e of echues) {
+        this.ledger.reputation(e.par, 'non_revele');
+        this.registry.append('engagement_expire', { resultat, gardienne: e.par });
+      }
+      if (echues.length === liste.length) delete this.state.engagements[resultat];
+      else if (echues.length) this.state.engagements[resultat] = liste.filter((e) => e.expire > now);
+    }
+    for (const [id, p] of Object.entries(this.state.pieges)) {
+      if (p.expire > now) continue;
+      if (p.engagement) {
+        this.ledger.reputation(p.attribue_a, 'non_revele');
+        this.registry.append('engagement_expire', { resultat: id, gardienne: p.attribue_a });
+      }
+      delete this.state.pieges[id];
+    }
     for (const hive of Object.values(this.state.hives)) hive.orientations = hive.orientations.filter((o) => o.expire > now);
     const limite = now - this.params.fenetre_requete_ms;
     for (const [k, ts] of Object.entries(this.state.nonces)) if (ts < limite) delete this.state.nonces[k];
@@ -1377,7 +1496,8 @@ export class Coordinator {
       if (c.bail?.par === who) n++;
       n += c.gardiennes.filter((g) => g.par === who).length;
     }
-    for (const p of Object.values(this.state.pieges)) if (p.attribue_a === who) n++;
+    // Un verdict scellé n'occupe plus d'abeille : vrai résultat ou piège, c'est compté pareil.
+    for (const p of Object.values(this.state.pieges)) if (p.attribue_a === who && !p.engagement) n++;
     return n;
   }
 
@@ -1447,6 +1567,7 @@ export class Coordinator {
     this.state.trophees ??= {};
     this.state.compteurs ??= {};
     this.state.contributeurs ??= [];
+    this.state.engagements ??= {};
     for (const c of Object.values(this.state.cells)) {
       const ancien = c as CellRecord & { gardienne?: Bail; validee_par?: unknown };
       c.gardiennes ??= ancien.gardienne ? [ancien.gardienne] : [];

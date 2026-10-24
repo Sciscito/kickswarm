@@ -66,7 +66,7 @@ test('audit : une ruche complète se rejoue à l’identique, entrée par entré
   assert.equal(report.etat, c.stateHash());
   assert.ok(report.commandes > 20, `${report.commandes} commandes rejouées`);
   const types = new Set(entries.filter((e) => e.nature === 'commande').map((e) => (e.donnees as CommandeDonnees).type));
-  for (const t of ['proposeHive', 'decide', 'claim', 'start', 'release', 'submitResult', 'submitDecomposition', 'submitVerdict']) assert.ok(types.has(t as never), `commande ${t} présente`);
+  for (const t of ['proposeHive', 'decide', 'claim', 'start', 'release', 'submitResult', 'submitDecomposition', 'engageVerdict', 'submitVerdict']) assert.ok(types.has(t as never), `commande ${t} présente`);
 });
 
 test('audit : la revérification confirme chaque rapport du vérificateur honnête', async () => {

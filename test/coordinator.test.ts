@@ -8,9 +8,9 @@ import { COMMUN } from '../src/coordinator/ledger.js';
 import { verifyRegistry } from '../src/coordinator/registry.js';
 import { seededRng } from '../src/coordinator/scheduler.js';
 import { abeilleScriptee, ENFANTS, RACINE } from '../src/exemples/maths.js';
-import { makeDecision, makeDecomposition, makeHive, makeRequete, makeResult, makeVerdict } from '../src/protocol/builders.js';
+import { makeDecision, makeDecomposition, makeEngagement, makeHive, makeRequete, makeResult, makeVerdict } from '../src/protocol/builders.js';
 import { generateIdentity, newNonce, signObject, type Identity } from '../src/protocol/identity.js';
-import type { Livrable, Requete } from '../src/protocol/types.js';
+import type { Hash, Livrable, Requete, Verdict } from '../src/protocol/types.js';
 
 const fondateur = generateIdentity();
 const lea = generateIdentity();
@@ -21,6 +21,23 @@ function nouvelleRuche(opts: ConstructorParameters<typeof Coordinator>[0]['param
   const c = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0, ...opts }, rng: seededRng(7), ...extra });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Mini-bibliothèque mathématique', objectif: 'pgcd, estPremier, fibonacci' }), RACINE);
   return c;
+}
+
+/** Une gardienne s'engage sur son verdict, puis le révèle (OSP v0.2, P1-3). */
+async function juger(c: Coordinator, id: Identity, resultat: Hash, decision: Verdict['decision'], motif: string) {
+  const v = makeVerdict(id, resultat, decision, motif);
+  c.engagerVerdict(makeEngagement(id, v));
+  return c.submitVerdict(v);
+}
+
+/** Tire `bee` comme gardienne de `resultat`, en rendant les autres tâches. */
+function tirer(c: Coordinator, bee: Identity, resultat: Hash) {
+  for (let i = 0; i < 50; i++) {
+    const g = c.claim(makeRequete(bee, 'claim'));
+    if (g?.a_verifier?.id === resultat) return g;
+    if (g) c.release(makeRequete(bee, 'release', { alveole: g.alveole_id }));
+  }
+  return null;
 }
 
 async function decouper(c: Coordinator): Promise<void> {
@@ -58,7 +75,7 @@ test('de l’idée au miel : une ruche complète, de bout en bout', async () => 
   for (let tour = 0; tour < 200 && c.hiveView('maths').statut !== 'terminee'; tour++) {
     const bee = abeilles[tour % abeilles.length]!;
     const action = await abeilleScriptee(c, bee);
-    if (action?.caste === 'gardienne') assert.match(action.issue, /miel|démasqué|confirmé/);
+    if (action?.caste === 'gardienne') assert.match(action.issue, /miel|démasqué|confirmé|scellé/);
   }
   const vue = c.hiveView('maths');
   assert.equal(vue.statut, 'terminee');
@@ -88,7 +105,7 @@ test('on ne vérifie jamais son propre travail', async () => {
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
   assert.equal(r.statut, 'en_verification');
-  await assert.rejects(c.submitVerdict(makeVerdict(kenji, r.resultat, 'valide', 'moi-même')), /gardienne|propre/);
+  await assert.rejects(juger(c, kenji, r.resultat, 'valide', 'moi-même'), /gardienne|propre/);
   for (let i = 0; i < 6; i++) {
     const b = c.claim(makeRequete(kenji, 'claim'));
     if (b) {
@@ -106,14 +123,13 @@ test('une gardienne qui rejette à tort un résultat juste perd de la réputatio
   const { SOLUTIONS } = await import('../src/exemples/maths.js');
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
-  let g = c.claim(makeRequete(amara, 'claim'));
-  while (g && g.a_verifier?.id !== r.resultat) {
-    c.release(makeRequete(amara, 'release', { alveole: g.alveole_id }));
-    g = c.claim(makeRequete(amara, 'claim'));
-  }
-  assert.ok(g, 'amara finit par être tirée gardienne');
+  assert.ok(tirer(c, amara, r.resultat), 'amara finit par être tirée gardienne');
   const avant = c.account(amara.id).reputation;
-  const v = await c.submitVerdict(makeVerdict(amara, r.resultat, 'rejete', 'je n’aime pas'));
+  const faux = makeVerdict(amara, r.resultat, 'rejete', 'je n’aime pas');
+  c.engagerVerdict(makeEngagement(amara, faux));
+  assert.ok(tirer(c, lea, r.resultat), 'lea est tirée seconde gardienne');
+  c.engagerVerdict(makeEngagement(lea, makeVerdict(lea, r.resultat, 'valide', 'ok')));
+  const v = await c.submitVerdict(faux);
   assert.equal(v.renverse, true);
   assert.ok(c.account(amara.id).reputation < avant);
   assert.equal(c.hiveView('maths').alveoles.find((x) => x.id === a.alveole_id)!.etat, 'en_verification');
@@ -124,13 +140,13 @@ test('alvéoles-pièges : la gardienne attentive gagne, la complaisante perd la 
   await decouper(c);
   const p1 = c.claim(makeRequete(amara, 'claim'))!;
   assert.equal(p1.caste, 'gardienne');
-  const r1 = await c.submitVerdict(makeVerdict(amara, p1.a_verifier!.id, 'rejete', 'les tests échouent'));
+  const r1 = await juger(c, amara, p1.a_verifier!.id, 'rejete', 'les tests échouent');
   assert.deepEqual([r1.piege, r1.correct], [true, true]);
   assert.equal(c.account(amara.id).miel_gagne, 12);
 
   const p2 = c.claim(makeRequete(kenji, 'claim'))!;
   const avant = c.account(kenji.id).reputation;
-  const r2 = await c.submitVerdict(makeVerdict(kenji, p2.a_verifier!.id, 'valide', 'ça a l’air bien'));
+  const r2 = await juger(c, kenji, p2.a_verifier!.id, 'valide', 'ça a l’air bien');
   assert.deepEqual([r2.piege, r2.correct], [true, false]);
   assert.equal(c.account(kenji.id).reputation, Math.round(avant * 0.5 * 10_000) / 10_000);
 });
@@ -193,20 +209,17 @@ test('double vérification : deux gardiennes distinctes, puis les trophées tomb
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
 
-  const tirer = (bee: Identity) => {
-    for (let i = 0; i < 50; i++) {
-      const g = c.claim(makeRequete(bee, 'claim'));
-      if (g?.a_verifier?.id === r.resultat) return g;
-      if (g) c.release(makeRequete(bee, 'release', { alveole: g.alveole_id }));
-    }
-    return null;
-  };
-  assert.ok(tirer(amara), 'amara est tirée gardienne');
-  const v1 = await c.submitVerdict(makeVerdict(amara, r.resultat, 'valide', 'ok'));
+  assert.ok(tirer(c, amara, r.resultat), 'amara est tirée gardienne');
+  const va = makeVerdict(amara, r.resultat, 'valide', 'ok');
+  assert.deepEqual(c.engagerVerdict(makeEngagement(amara, va)), { statut: 'engage', revelation: false });
+  await assert.rejects(c.submitVerdict(va), (e: { status?: number }) => e.status === 425, 'pas de révélation tant que la seconde gardienne ne s’est pas engagée');
+  assert.equal(tirer(c, amara, r.resultat), null, 'la même gardienne ne vérifie pas deux fois');
+  assert.ok(tirer(c, lea, r.resultat), 'lea est tirée seconde gardienne');
+  const vl = makeVerdict(lea, r.resultat, 'valide', 'ok');
+  assert.deepEqual(c.engagerVerdict(makeEngagement(lea, vl)), { statut: 'engage', revelation: true });
+  const v1 = await c.submitVerdict(va);
   assert.deepEqual([v1.statut, v1.confirmations], ['en_verification', 1], 'une seule confirmation ne suffit pas');
-  assert.equal(tirer(amara), null, 'la même gardienne ne vérifie pas deux fois');
-  assert.ok(tirer(lea), 'lea est tirée seconde gardienne');
-  const v2 = await c.submitVerdict(makeVerdict(lea, r.resultat, 'valide', 'ok'));
+  const v2 = await c.submitVerdict(vl);
   assert.equal(v2.statut, 'miel');
 
   const ids = (id: Identity) => c.account(id.id).trophees.map((t) => t.id);

@@ -1,6 +1,6 @@
-import { commitment } from '../protocol/canonical.js';
+import { commitment, hashOf } from '../protocol/canonical.js';
 import { algoOf, isPostQuantum, verifyObject } from '../protocol/identity.js';
-import type { ContributorId, Hash, Livrable, Result, TestCase, Verdict } from '../protocol/types.js';
+import type { ContributorId, EngagementVerdict, Hash, Livrable, Result, TestCase, Verdict } from '../protocol/types.js';
 import { verifierV0 } from '../verifier/v0.js';
 import { QUICKNET } from './balise.js';
 import { Coordinator, type BaliseAnnoncee, type CommandeDonnees } from './coordinator.js';
@@ -165,12 +165,46 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     );
   }
 
+  // P1-3 : chaque verdict révélé correspond à un engagement signé, inscrit avant lui.
+  // Recalculé ici à partir des seuls objets signés, indépendamment de la logique du coordinateur.
+  const engages = new Map<string, Hash>();
+  const sansEngagement: string[] = [];
+  let nVerdicts = 0;
+  for (const e of entries) {
+    if (e.nature !== 'commande') continue;
+    const c = e.donnees as CommandeDonnees;
+    if (c.type === 'engageVerdict') {
+      const en = (c.entree as { engagement: EngagementVerdict }).engagement;
+      if (verifyObject(en, en.gardienne)) engages.set(`${en.resultat}|${en.gardienne}`, en.engagement);
+    } else if (c.type === 'submitVerdict') {
+      const v = (c.entree as { verdict: Verdict }).verdict;
+      const cle = `${v.resultat}|${v.gardienne}`;
+      if (engages.get(cle) !== hashOf(v) || typeof v.sel !== 'string' || v.sel.length < 64) sansEngagement.push(`#${e.seq}`);
+      engages.delete(cle);
+      nVerdicts++;
+    }
+  }
+  const expires = entries.filter((e) => e.nature === 'engagement_expire').length;
+  const scelles = Math.max(0, engages.size - expires);
+  add(
+    'Guards committed to their verdicts before any was revealed',
+    sansEngagement.length === 0,
+    sansEngagement.length
+      ? `${sansEngagement.length} verdict(s) revealed without a matching earlier commitment: ${sansEngagement.slice(0, 5).join(', ')}`
+      : nVerdicts
+        ? `${nVerdicts} verdict(s), each matching a signed, salted commitment written before it; the replay enforces that none was revealed while another guard of the same result was still deciding` +
+          `${expires ? `; ${expires} commitment(s) never revealed, penalized` : ''}${scelles ? `; ${scelles} still sealed` : ''}`
+        : 'no verdict yet',
+  );
+
   // Part des signatures de contributeurs qui résistent à un ordinateur quantique.
   const signataires: string[] = [];
   for (const e of entries) {
     if (e.nature !== 'commande') continue;
     const en = (e.donnees as CommandeDonnees).entree as Record<string, Record<string, unknown> | undefined>;
-    for (const [obj, champ] of [['requete', 'contributeur'], ['ruche', 'porteur'], ['decision', 'auteur'], ['resultat', 'auteur'], ['decomposition', 'auteur'], ['verdict', 'gardienne']] as const) {
+    for (const [obj, champ] of [
+      ['requete', 'contributeur'], ['ruche', 'porteur'], ['decision', 'auteur'], ['resultat', 'auteur'], ['decomposition', 'auteur'], ['engagement', 'gardienne'], ['verdict', 'gardienne'],
+    ] as const) {
       const v = en[obj]?.[champ];
       if (typeof v === 'string') signataires.push(v);
     }

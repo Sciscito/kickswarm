@@ -214,7 +214,7 @@ Une seule violation, et l'alerte est publique.
 ### 6.3 Un aléa que personne ne contrôle
 
 - Les tirages utilisent la **balise publique drand**, celle de la *League of Entropy* : graine = hash(aléa du tour drand ‖ demande signée). *Implémenté : voir §6.6.*
-- **Engagement puis révélation.** Chaque gardienne publie d'abord le hash de son verdict, puis le verdict. Personne ne peut copier les autres ni s'aligner sur eux.
+- **Engagement puis révélation.** Chaque gardienne publie d'abord le hash de son verdict, puis le verdict. Personne ne peut copier les autres ni s'aligner sur eux. *Implémenté : voir §6.7.*
 
 ### 6.4 Ce qui est implémenté (P0-1)
 
@@ -290,12 +290,34 @@ Tous les tirages du coordinateur (la caste d'une abeille, l'alvéole qu'elle re�
 
 **Limites assumées :**
 
-- **Le coordinateur peut encore écarter une demande.** Il voit l'aléa avant de répondre : il pourrait refuser une demande dont le tirage lui déplaît, et le contributeur en signerait une autre. Cette censure ne laisse aucune trace dans le registre. Elle en laisse une dans le journal local du contributeur, qui note chaque demande et chaque refus. Les auditeurs multiples (§6.7), puis la fédération, la rendront visible.
+- **Le coordinateur peut encore écarter une demande.** Il voit l'aléa avant de répondre : il pourrait refuser une demande dont le tirage lui déplaît, et le contributeur en signerait une autre. Cette censure ne laisse aucune trace dans le registre. Elle en laisse une dans le journal local du contributeur, qui note chaque demande et chaque refus. Les auditeurs multiples (§6.8), puis la fédération, la rendront visible.
 - **Chaque demande de travail attend son tour**, de 6 à 9 secondes. C'est négligeable devant le temps de travail d'une IA sur une alvéole.
 - **Si drand est injoignable**, le coordinateur répond 503 au lieu de tirer lui-même. Le travail s'arrête plutôt que de perdre sa garantie.
-- **L'engagement puis révélation des verdicts** (§6.3) reste à faire.
+### 6.7 Des verdicts scellés : engagement puis révélation (P1-3, implémenté)
 
-### 6.7 Plusieurs auditeurs, puis plusieurs coordinateurs
+Avant, chaque verdict entrait dans le registre public dès son envoi. La seconde gardienne pouvait lire celui de la première et le recopier sans rien vérifier. Désormais, un verdict se donne en deux temps.
+
+1. **L'engagement** (`osp.engagement/0.1`, `POST /v0/work/commit`). La gardienne envoie, signé, le seul hash de son verdict. Le verdict porte un **sel de 32 octets aléatoires** : sans lui, il suffirait d'essayer les trois décisions possibles pour retrouver le verdict derrière le hash.
+2. **La révélation** (`osp.verdict/0.1`, `POST /v0/work/verdict`). Elle n'est acceptée que lorsque **toutes les places de gardienne du résultat sont engagées**. Avant, le coordinateur répond `425 Too Early`. Le verdict révélé doit avoir exactement le hash promis : changer d'avis après avoir vu l'autre est impossible.
+
+**Les incitations :**
+
+- **Se taire coûte plus cher que se tromper.** Une gardienne engagée qui ne révèle pas à temps perd la moitié de sa réputation (`facteur_non_revele` = 0,5, comme valider un piège). C'est pire qu'un verdict renversé (×0,9). Retenir un verdict qui s'annonce perdant n'est donc jamais rentable.
+- **Révéler après coup reste jugé.** Si une autre gardienne fait rejeter le résultat pendant que son verdict est scellé, la gardienne révèle quand même. Un « valide » sur un résultat faux est alors renversé, un « rejeté » est confirmé.
+- **La fenêtre de révélation ne court que lorsqu'elle est ouverte.** Une gardienne n'est jamais sanctionnée parce qu'une autre tarde à s'engager. Si une place se libère (abstention, bail expiré, rejet renversé), la révélation se referme jusqu'à ce qu'une nouvelle gardienne s'engage.
+- **Un piège suit exactement le même chemin.** Engagement, puis révélation. Une gardienne ne peut pas reconnaître un piège à la procédure avant d'être engagée. Une fois engagée, le savoir ne lui sert plus à rien.
+- **Un verdict scellé n'occupe plus d'abeille.** La gardienne peut prendre une autre tâche en attendant.
+
+**Côté contributeur :** le plugin écrit le verdict scellé sur disque (`~/.kickswarm/verdicts-scelles.json`, sel compris) avant d'envoyer l'engagement. Il le révèle de lui-même dès que la révélation s'ouvre, à chaque appel d'outil et en tâche de fond toutes les 3 secondes. Le journal local note l'engagement puis la révélation.
+
+**Ce que l'audit contrôle.** Un nouveau contrôle, « Guards committed to their verdicts before any was revealed », recalcule à partir des seuls objets signés que chaque verdict révélé correspond à un engagement signé, inscrit avant lui, avec un sel de la bonne longueur. Il compte aussi les engagements jamais révélés (sanctionnés) et ceux encore scellés. Le rejeu impose en plus la règle d'ouverture : aucun verdict révélé pendant qu'une autre gardienne du même résultat décidait encore. Retirer un engagement du registre fait échouer l'audit, et c'est testé.
+
+**Limites assumées :**
+
+- **Le coordinateur voit les engagements, pas les verdicts**, mais il connaît le résultat du vérificateur automatique. L'engagement protège les gardiennes les unes des autres, pas d'un coordinateur qui leur soufflerait la réponse.
+- **Après une abstention**, la gardienne tirée en remplacement voit les verdicts déjà révélés pour ce résultat. Cela n'arrive que si une gardienne s'abstient, et chaque abstention est inscrite au registre.
+
+### 6.8 Plusieurs auditeurs, puis plusieurs coordinateurs
 
 - **Étape 1 :** des auditeurs indépendants (communautés, universités, la fondation) rejouent le registre en continu et publient leur hash d'état.
 - **Étape 2 :** la fédération. Plusieurs coordinateurs partagent le registre et se vérifient mutuellement. Il n'y a plus de point de confiance unique.
@@ -382,7 +404,7 @@ Chaque erreur détectée laisse l'essaim plus fort qu'avant. C'est le sens exact
 | **P0-5** ✅ | *Fait : voir §6.5.* **Signatures post-quantiques** : identités hybrides Ed25519 + ML-DSA-65 (FIPS 204), coordinateur et registre signés en SLH-DSA (FIPS 205, sécurité fondée sur les seules fonctions de hachage). Node 24 les fournit nativement. | Menace quantique sur Ed25519 | Moyenne |
 | **P1-1** | **Caste des chasseuses** et primes au contre-exemple | F1, auto-renforcement | Moyenne |
 | **P1-2** | **Contrat d'abord** pour les découpages, et découpages en concurrence | F7 | Grande |
-| **P1-3** ◐ | **drand** ✅ *(fait : voir §6.6)* **et engagement-révélation** pour les verdicts *(à faire)* | F5 | Petite |
+| **P1-3** ✅ | **drand et engagement-révélation** pour les verdicts. *Fait : voir §6.6 et §6.7.* | F5 | Petite |
 | **P1-4** | **Programmation à N versions** pour les alvéoles critiques | F1 | Moyenne |
 | **P2-1** | Verdicts avec confiance, score logarithmique, prédiction par les pairs | Incitations | Moyenne |
 | **P2-2** | Sandbox gVisor ou Firecracker, Sigstore, SLSA, fuzzing, ruche de sécurité | Sécurité | Grande |

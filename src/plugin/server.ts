@@ -1,14 +1,16 @@
+import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { makeDecomposition, makeResult, makeVerdict } from '../protocol/builders.js';
-import { commitment } from '../protocol/canonical.js';
+import { makeDecomposition, makeEngagement, makeResult, makeVerdict } from '../protocol/builders.js';
+import { commitment, hashOf } from '../protocol/canonical.js';
 import type { Assignment, CellSpec, Livrable, Propriete, Secrets, TestCase } from '../protocol/types.js';
 import { validateCritere, verifierV0 } from '../verifier/v0.js';
 import { CoordinatorClient } from './client.js';
 import { consignes } from './consignes.js';
-import { loadOrCreateIdentity } from './identite.js';
+import { kickswarmHome, loadOrCreateIdentity } from './identite.js';
 import { JournalLocal, resumer } from './journal.js';
+import { Scelles, type VerdictScelle } from './scelles.js';
 
 // The Kickswarm plugin: a local MCP server that connects any agent to the swarm (§3, §21.1).
 // Keys stay here; the coordinator only ever receives signed objects.
@@ -67,12 +69,54 @@ const enfantSchema = z.object({
   reference: z.record(z.string(), z.string()).optional().describe('Your own implementation (file name → code), kept secret, used to measure how strong the tests are'),
 });
 
-export function createPluginServer(client: CoordinatorClient, journal?: JournalLocal): McpServer {
+type Revelation = { statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean };
+
+function issueVerdict(r: Revelation): string {
+  if (r.piege) return r.correct ? 'It was a trap cell, and you caught it (+12 g).' : 'It was a trap cell.';
+  return r.renverse ? 'Your verdict was overturned.' : `Verdict recorded: ${r.statut}.`;
+}
+
+export function createPluginServer(
+  client: CoordinatorClient,
+  journal?: JournalLocal,
+  options: { scelles?: Scelles; intervalleRevelationMs?: number } = {},
+): McpServer {
   const server = new McpServer({ name: 'kickswarm', version: '0.1.0' });
   let ruche: string | undefined;
   let enCours: Assignment | undefined;
   // Tout ce que l'IA fait pour l'essaim est noté dans le journal local du contributeur.
   const note = (nature: string, donnees: Record<string, unknown>) => journal?.note(nature, { coordinateur: client.url, ...donnees });
+
+  // Verdicts scellés (OSP v0.2, P1-3) : révélés dès que toutes les gardiennes se sont engagées,
+  // à chaque appel d'outil et en tâche de fond, pour ne jamais laisser passer la fenêtre.
+  const scelles = options.scelles ?? new Scelles();
+  type Revele = { scelle: VerdictScelle; r: Revelation };
+  const revelerScelles = async (): Promise<Revele[]> => {
+    const reveles: Revele[] = [];
+    for (const scelle of scelles.tous.filter((x) => x.coordinateur === client.url)) {
+      try {
+        const r = await client.verdict(scelle.verdict);
+        scelles.retirer(scelle);
+        const v = scelle.verdict;
+        note('verdict', { ruche: scelle.ruche, chemin: scelle.chemin, resultat: v.resultat, decision: v.decision, statut: r.statut, piege: r.piege ?? false });
+        reveles.push({ scelle, r });
+      } catch (e) {
+        if ((e as { status?: number }).status === 425) continue;
+        scelles.retirer(scelle);
+        note('erreur', { outil: 'revelation', chemin: scelle.chemin, erreur: (e as Error).message });
+      }
+    }
+    return reveles;
+  };
+  let enVol: Promise<Revele[]> | null = null;
+  const reveler = (): Promise<Revele[]> => (enVol ??= revelerScelles().finally(() => (enVol = null)));
+  const lignes = (reveles: Revele[]) => reveles.map(({ scelle, r }) => `Your sealed verdict on cell ${scelle.chemin} is revealed. ${issueVerdict(r)}\n`).join('');
+  const intervalle = options.intervalleRevelationMs ?? 3000;
+  if (intervalle > 0) {
+    setInterval(() => {
+      if (scelles.tous.length) reveler().catch(() => undefined);
+    }, intervalle).unref();
+  }
   const journalise = <A,>(nom: string, fn: (args: A) => Promise<ToolResult>) => async (args: A): Promise<ToolResult> => {
     try {
       return await fn(args);
@@ -109,24 +153,36 @@ export function createPluginServer(client: CoordinatorClient, journal?: JournalL
       inputSchema: {},
     },
     outil(journalise('swarm_next', async () => {
-      if (enCours) return texte(`You already have a cell in progress.\n\n${consignes(enCours)}`);
+      const avant = await reveler();
+      const prefixe = avant.length ? `${lignes(avant)}\n` : '';
+      if (enCours) return texte(`${prefixe}You already have a cell in progress.\n\n${consignes(enCours)}`);
       const a = await client.claim(ruche);
-      if (!a) return texte('Nothing left to do in this hive right now. Try again a bit later.');
+      if (!a) return texte(`${prefixe}Nothing left to do in this hive right now. Try again a bit later.`);
 
       if (a.caste === 'gardienne') {
         const cible = a.a_verifier!;
+        const chemin = a.alveole.chemin;
         const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
         const verdict = makeVerdict(client.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
-        note('verification', { ruche, chemin: a.alveole.chemin, resultat: cible.id, ok: rejeu.ok, motif: rejeu.motif, sandbox: rejeu.sandbox });
-        const r = await client.verdict(verdict);
-        note('verdict', { ruche, chemin: a.alveole.chemin, resultat: cible.id, decision: verdict.decision, statut: r.statut, piege: r.piege ?? false });
-        const issue = r.piege
-          ? r.correct
-            ? 'It was a trap cell, and you caught it (+12 g).'
-            : 'It was a trap cell.'
-          : `Verdict recorded: ${r.statut}.`;
+        note('verification', { ruche, chemin, resultat: cible.id, ok: rejeu.ok, motif: rejeu.motif, sandbox: rejeu.sandbox });
+        // Le verdict est gardé sur disque avant que son engagement parte : on pourra toujours le révéler.
+        const s: VerdictScelle = { verdict, coordinateur: client.url, chemin, ...(ruche ? { ruche } : {}) };
+        scelles.ajouter(s);
+        try {
+          await client.engager(makeEngagement(client.identite, verdict));
+        } catch (e) {
+          scelles.retirer(s);
+          throw e;
+        }
+        note('engagement', { ruche, chemin, resultat: cible.id, decision: verdict.decision, engagement: hashOf(verdict) });
+        const apres = await reveler();
+        const mien = apres.find((x) => x.scelle === s);
+        const issue = mien
+          ? issueVerdict(mien.r)
+          : 'Your verdict is sealed: only its hash was sent. The plugin reveals it on its own once the other guards have committed, so nobody can copy anybody.';
         return texte(
-          `Drawn as a guard for cell ${a.alveole.chemin}. The plugin replayed the verification in a sandbox: ${rejeu.ok ? 'valid' : 'rejected'} (${rejeu.motif}).\n${issue}\nCall swarm_next to continue.`,
+          `${prefixe}Drawn as a guard for cell ${chemin}. The plugin replayed the verification in a sandbox: ${rejeu.ok ? 'valid' : 'rejected'} (${rejeu.motif}).\n${issue}\n` +
+            `${lignes(apres.filter((x) => x !== mien))}Call swarm_next to continue.`,
         );
       }
 
@@ -285,7 +341,8 @@ export async function startPlugin(url: string): Promise<void> {
   const { identite, fichier, creee } = loadOrCreateIdentity();
   if (creee) console.error(`[kickswarm] New identity created: ${fichier}`);
   const journal = new JournalLocal();
-  const server = createPluginServer(new CoordinatorClient(url, identite), journal);
+  const scelles = new Scelles(join(kickswarmHome(), 'verdicts-scelles.json'));
+  const server = createPluginServer(new CoordinatorClient(url, identite), journal, { scelles });
   await server.connect(new StdioServerTransport());
   console.error(`[kickswarm] MCP plugin ready. Coordinator: ${url} · identity ${identite.id} · journal ${journal.fichier}`);
 }

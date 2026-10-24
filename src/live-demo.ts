@@ -20,6 +20,7 @@ const SAY: Record<Outcome, string> = {
   rejected: 'delivered broken code, rejected by the verifier',
   assembled: 'assembled the children, now under verification',
   assembly_rejected: 'assembly rejected',
+  sealed: 'sealed its verdict, waiting for the other guard',
   verified: 'verified it: honey!',
   confirmed: 'confirmed it, waiting for a second guard',
   fake_caught: 'caught a broken result',

@@ -1,8 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { hashOf } from './canonical.js';
 import { newNonce, signObject, type Identity } from './identity.js';
 import type {
   CellSpec,
   Decision,
+  EngagementVerdict,
   DecisionNature,
   Decomposition,
   Hash,
@@ -63,9 +65,14 @@ export function makeDecomposition(id: Identity, alveole: Hash, enfants: CellSpec
 
 export function makeVerdict(id: Identity, resultat: Hash, decision: Verdict['decision'], motif: string, mise = 0.05): Verdict {
   return signObject<Verdict>(
-    { type: 'osp.verdict/0.1', resultat, gardienne: id.id, decision, motif, mise_reputation: mise, piege: false },
+    { type: 'osp.verdict/0.1', resultat, gardienne: id.id, decision, motif, mise_reputation: mise, piege: false, sel: randomBytes(32).toString('hex') },
     id,
   );
+}
+
+/** L'engagement sur un verdict : envoyé d'abord, le verdict lui-même n'est révélé qu'ensuite. */
+export function makeEngagement(id: Identity, v: Verdict): EngagementVerdict {
+  return signObject<EngagementVerdict>({ type: 'osp.engagement/0.1', resultat: v.resultat, gardienne: id.id, engagement: hashOf(v) }, id);
 }
 
 export function makeDecision(id: Identity, nature: DecisionNature, cible: string, motif: string, params?: Decision['params']): Decision {

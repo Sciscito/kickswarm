@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isContributorId } from '../protocol/identity.js';
-import type { CellSpec, Decision, Decomposition, Hive, Livrable, Requete, Result, Secrets, Verdict } from '../protocol/types.js';
+import type { CellSpec, Decision, Decomposition, EngagementVerdict, Hive, Livrable, Requete, Result, Secrets, Verdict } from '../protocol/types.js';
 import { Coordinator, OspError } from './coordinator.js';
 import { COMMUN } from './ledger.js';
 
@@ -98,6 +98,8 @@ export function createCoordinatorServer(coord: Coordinator): Server {
           // Les secrets voyagent à côté de l'objet signé : { decomposition, secrets }. Le format nu reste accepté.
           if (body.type === 'osp.decomposition/0.1') return send(res, 200, await coord.submitDecomposition(body as unknown as Decomposition));
           return send(res, 200, await coord.submitDecomposition(body.decomposition as Decomposition, (body.secrets as Secrets[] | undefined) ?? []));
+        case route === 'POST /v0/work/commit':
+          return send(res, 200, coord.engagerVerdict(body as unknown as EngagementVerdict));
         case route === 'POST /v0/work/verdict':
           return send(res, 200, await coord.submitVerdict(body as unknown as Verdict));
         case route.startsWith('GET /v0/live/') && parts.length === 3:

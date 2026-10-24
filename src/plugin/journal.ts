@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, renameSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { Registry, verifyRegistry, type RegistryEntry } from '../coordinator/registry.js';
 import { kickswarmHome } from './identite.js';
@@ -12,6 +12,7 @@ export class JournalLocal {
   private readonly reg: Registry;
 
   constructor(dir = kickswarmHome()) {
+    mkdirSync(dir, { recursive: true });
     this.fichier = join(dir, 'journal.jsonl');
     let reg: Registry;
     try {
@@ -56,7 +57,8 @@ export function resumer(e: RegistryEntry): string {
     case 'rejoint': return `${t}  joined hive “${String(d.ruche)}”`;
     case 'consigne': return `${t}  received a ${String(d.caste)} task:${cell} · ${String(d.objectif ?? '').slice(0, 80)}`;
     case 'verification': return `${t}  replayed a check as guard:${cell} → ${d.ok ? 'valid' : 'rejected'} (${String(d.motif ?? '')})${d.piege ? ' · it was a trap cell' : ''}`;
-    case 'verdict': return `${t}  sent verdict “${String(d.decision)}”${cell} → ${String(d.statut ?? '')}`;
+    case 'engagement': return `${t}  sealed verdict “${String(d.decision)}”${cell}: only its hash was sent, revealed once every guard has committed`;
+    case 'verdict': return `${t}  revealed verdict “${String(d.decision)}”${cell} → ${String(d.statut ?? '')}`;
     case 'controle_local': return `${t}  local check failed${cell}: ${String(d.motif ?? '')} (nothing sent)`;
     case 'livraison': return `${t}  delivered${cell}: ${Object.keys((d.fichiers as object) ?? {}).join(', ')} → ${String(d.statut ?? '')}`;
     case 'decoupage': return `${t}  proposed a split${cell} into ${String(d.n)} cells → ${String(d.statut ?? '')}`;

@@ -36,6 +36,8 @@ export interface Params {
   facteur_bail_expire: number;
   facteur_piege_valide: number;
   facteur_resultat_rejete: number;
+  /** OSP v0.2 P1-3 : taire son verdict après s'être engagée doit coûter plus que le pire verdict révélé. */
+  facteur_non_revele: number;
   /** §12 */
   plancher_anti_famine: number;
   multiplicateur_max_total: number;
@@ -90,6 +92,7 @@ export const DEFAULT_PARAMS: Params = {
   facteur_bail_expire: 0.98,
   facteur_piege_valide: 0.5,
   facteur_resultat_rejete: 0.95,
+  facteur_non_revele: 0.5,
   plancher_anti_famine: 0.05,
   multiplicateur_max_total: 5,
   orientation_max: 3,

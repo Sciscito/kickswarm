@@ -1,7 +1,7 @@
 import type { Coordinator } from '../coordinator/coordinator.js';
-import { makeDecomposition, makeRequete, makeResult, makeVerdict } from '../protocol/builders.js';
+import { makeDecomposition, makeEngagement, makeRequete, makeResult, makeVerdict } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
-import type { Assignment, Caste, CellSpec, Decomposition, Hash, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
+import type { Assignment, Caste, CellSpec, Decomposition, EngagementVerdict, Hash, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
 import type { CoordinatorClient } from '../plugin/client.js';
 import { verifierV0 } from '../verifier/v0.js';
 
@@ -19,6 +19,13 @@ export interface BeeScript {
   secrets?: Record<string, Array<Secrets | undefined>>;
 }
 
+/** A guard's sealed verdict (OSP v0.2 P1-3), kept until every guard of the result has committed. */
+export interface SealedVerdict {
+  verdict: Verdict;
+  base: { caste: Caste; chemin: string; objectif: string };
+  motif: string;
+}
+
 /** Same work loop, whether the bee talks to an in-process coordinator or over HTTP. */
 export interface HiveAccess {
   identite: Identity;
@@ -26,17 +33,29 @@ export interface HiveAccess {
   start(alveole: Hash): Promise<unknown>;
   submit(resultat: Result, livrable: Livrable): Promise<{ statut: string; rapport: { motif: string } }>;
   decompose(d: Decomposition, secrets?: Array<Secrets | undefined>): Promise<{ statut: string; decoupage: Hash }>;
+  commit(e: EngagementVerdict): Promise<{ revelation: boolean }>;
   verdict(v: Verdict): Promise<{ statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean }>;
+  /** Verdicts committed but not revealed yet. */
+  sealed: SealedVerdict[];
 }
 
+// Sealed verdicts outlive one access object: one list per coordinator and per bee.
+const SEALED = new WeakMap<Coordinator, Map<string, SealedVerdict[]>>();
+
 export function directAccess(c: Coordinator, identite: Identity, ruche?: string): HiveAccess {
+  const parBee = SEALED.get(c) ?? new Map<string, SealedVerdict[]>();
+  SEALED.set(c, parBee);
+  const sealed = parBee.get(identite.id) ?? [];
+  parBee.set(identite.id, sealed);
   return {
     identite,
     claim: () => c.reclamer(makeRequete(identite, 'claim', ruche ? { ruche } : {})),
     start: async (alveole) => c.start(makeRequete(identite, 'start', { alveole })),
     submit: (r, l) => c.submitResult(r, l),
     decompose: (d, secrets) => c.submitDecomposition(d, secrets),
+    commit: async (e) => c.engagerVerdict(e),
     verdict: (v) => c.submitVerdict(v),
+    sealed,
   };
 }
 
@@ -47,8 +66,36 @@ export function httpAccess(client: CoordinatorClient, ruche?: string): HiveAcces
     start: (alveole) => client.start(alveole),
     submit: (r, l) => client.submit(r, l),
     decompose: (d, secrets) => client.decompose(d, secrets),
+    commit: (e) => client.engager(e),
     verdict: (v) => client.verdict(v),
+    sealed: [],
   };
+}
+
+/** The coordinator answers 425 while other guards of the same result are still deciding. */
+export const tooEarly = (e: unknown): boolean => (e as { status?: number })?.status === 425;
+
+async function reveal(h: HiveAccess, s: SealedVerdict): Promise<BeeAction> {
+  const r = await h.verdict(s.verdict);
+  if (r.piege) return { ...s.base, outcome: r.correct ? 'trap_caught' : 'trap_missed' };
+  const outcome: Outcome = r.renverse ? 'overturned' : r.statut === 'miel' ? 'verified' : r.statut === 'rejete' ? 'fake_caught' : 'confirmed';
+  return { ...s.base, outcome, motif: s.motif };
+}
+
+/** Reveals the first sealed verdict whose reveal is open, if any. */
+async function revealPending(h: HiveAccess): Promise<BeeAction | null> {
+  for (const s of [...h.sealed]) {
+    try {
+      const action = await reveal(h, s);
+      h.sealed.splice(h.sealed.indexOf(s), 1);
+      return action;
+    } catch (e) {
+      if (tooEarly(e)) continue;
+      h.sealed.splice(h.sealed.indexOf(s), 1);
+      throw e;
+    }
+  }
+  return null;
 }
 
 export type Outcome =
@@ -58,6 +105,7 @@ export type Outcome =
   | 'rejected'
   | 'assembled'
   | 'assembly_rejected'
+  | 'sealed'
   | 'verified'
   | 'confirmed'
   | 'fake_caught'
@@ -87,6 +135,8 @@ export async function scriptedBee(
   script: BeeScript,
   opts: { bug?: boolean; pause?: (caste: Caste) => Promise<void> } = {},
 ): Promise<BeeAction | null> {
+  const revealed = await revealPending(h);
+  if (revealed) return revealed;
   const a = await h.claim();
   if (!a) return null;
   const base = { caste: a.caste, chemin: a.alveole.chemin, objectif: a.alveole.objectif };
@@ -119,10 +169,13 @@ export async function scriptedBee(
     case 'gardienne': {
       const cible = a.a_verifier!;
       const rejeu = await verifierV0(a.alveole.critere_fini, cible.livrable, { sansCaches: true });
-      const r = await h.verdict(makeVerdict(h.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif));
-      if (r.piege) return { ...base, outcome: r.correct ? 'trap_caught' : 'trap_missed' };
-      const outcome: Outcome = r.statut === 'miel' ? 'verified' : r.statut === 'rejete' ? 'fake_caught' : r.renverse ? 'overturned' : 'confirmed';
-      return { ...base, outcome, motif: rejeu.motif };
+      // Commit first, reveal once every guard of this result has committed (OSP v0.2 P1-3).
+      const verdict = makeVerdict(h.identite, cible.id, rejeu.ok ? 'valide' : 'rejete', rejeu.motif);
+      const s: SealedVerdict = { verdict, base, motif: rejeu.motif };
+      const c = await h.commit(makeEngagement(h.identite, verdict));
+      if (c.revelation) return reveal(h, s);
+      h.sealed.push(s);
+      return { ...base, outcome: 'sealed', motif: rejeu.motif };
     }
   }
 }

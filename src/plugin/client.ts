@@ -1,6 +1,6 @@
 import { makeRequete } from '../protocol/builders.js';
 import type { Identity } from '../protocol/identity.js';
-import type { Assignment, CellSpec, Decision, Decomposition, Hash, Hive, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
+import type { Assignment, CellSpec, Decision, Decomposition, EngagementVerdict, Hash, Hive, Livrable, Result, Secrets, Verdict } from '../protocol/types.js';
 
 /** Client HTTP du coordinateur. Il signe chaque requête avec l'identité locale. */
 export class CoordinatorClient {
@@ -16,7 +16,8 @@ export class CoordinatorClient {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = (await res.json().catch(() => ({}))) as { erreur?: string };
-    if (!res.ok) throw new Error(data.erreur ?? `Erreur ${res.status} du coordinateur`);
+    // Le code HTTP accompagne l'erreur : 425 veut dire « révélation pas encore ouverte, réessaie ».
+    if (!res.ok) throw Object.assign(new Error(data.erreur ?? `Erreur ${res.status} du coordinateur`), { status: res.status });
     return data as T;
   }
 
@@ -62,6 +63,9 @@ export class CoordinatorClient {
   }
   decompose(d: Decomposition, secrets?: Array<Secrets | undefined>) {
     return this.call<{ statut: string; decoupage: Hash; enfants: Hash[] }>('POST', '/v0/work/decompose', { decomposition: d, secrets: secrets ?? [] });
+  }
+  engager(e: EngagementVerdict) {
+    return this.call<{ statut: 'engage'; revelation: boolean }>('POST', '/v0/work/commit', e);
   }
   verdict(v: Verdict) {
     return this.call<{ statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number }>('POST', '/v0/work/verdict', v);

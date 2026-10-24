@@ -14,7 +14,7 @@ export interface Account {
 export const COMMUN = 'commun';
 export type AccountId = ContributorId | typeof COMMUN;
 
-export type ReputationEvent = 'confirme' | 'renverse' | 'bail_expire' | 'piege_valide' | 'resultat_rejete';
+export type ReputationEvent = 'confirme' | 'renverse' | 'bail_expire' | 'piege_valide' | 'resultat_rejete' | 'non_revele';
 
 const round = (x: number) => Math.round(x * 1000) / 1000;
 
@@ -102,6 +102,9 @@ export class Ledger {
         break;
       case 'resultat_rejete':
         a.reputation *= p.facteur_resultat_rejete;
+        break;
+      case 'non_revele':
+        a.reputation *= p.facteur_non_revele;
         break;
     }
     a.reputation = Math.round(a.reputation * 10_000) / 10_000;

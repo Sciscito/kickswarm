@@ -7,7 +7,8 @@ import { Coordinator } from '../src/coordinator/coordinator.js';
 import { createCoordinatorServer } from '../src/coordinator/http.js';
 import { seededRng } from '../src/coordinator/scheduler.js';
 import { ENFANTS, RACINE, SOLUTIONS } from '../src/exemples/maths.js';
-import { makeDecision, makeHive, makeRequete } from '../src/protocol/builders.js';
+import { makeDecision, makeDecomposition, makeHive, makeRequete, makeResult } from '../src/protocol/builders.js';
+import { Scelles } from '../src/plugin/scelles.js';
 import { generateIdentity, signObject } from '../src/protocol/identity.js';
 import { CoordinatorClient } from '../src/plugin/client.js';
 import type { CritereV0 } from '../src/protocol/types.js';
@@ -95,5 +96,69 @@ test('plugin MCP + API HTTP : un agent rejoint, découpe, livre, et la ruche ava
     rmSync(home, { recursive: true, force: true });
   } finally {
     await new Promise<void>((r) => http.close(() => r()));
+  }
+});
+
+test('plugin gardienne : le verdict part scellé, reste sur disque, et se révèle tout seul quand l’autre gardienne s’est engagée', async () => {
+  const fondateur = generateIdentity();
+  const [lea, kenji, sami] = [generateIdentity(), generateIdentity(), generateIdentity()];
+  const coord = new Coordinator({ fondateur: fondateur.id, params: { taux_pieges: 0 }, rng: seededRng(3) });
+  coord.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'x' }), RACINE);
+  coord.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
+  const s = coord.claim(makeRequete(lea, 'claim'))!;
+  const d = await coord.submitDecomposition(makeDecomposition(lea, s.alveole_id, ENFANTS));
+  coord.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'ok'));
+  const a = coord.claim(makeRequete(kenji, 'claim'))!;
+  const mod = (a.alveole.critere_fini as CritereV0).module!;
+  const livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
+  await coord.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
+  // Les autres alvéoles sont occupées : la seule tâche à prendre est une vérification.
+  for (const bee of [lea, sami]) {
+    for (let i = 0; i < 30; i++) {
+      const g = coord.claim(makeRequete(bee, 'claim'))!;
+      if (!g.a_verifier) break;
+      coord.release(makeRequete(bee, 'release', { alveole: g.alveole_id }));
+    }
+  }
+  assert.ok(!coord.hiveView('maths').alveoles.some((x) => x.etat === 'libre'));
+
+  const http = createCoordinatorServer(coord);
+  await new Promise<void>((r) => http.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
+  const home = mkdtempSync(join(tmpdir(), 'osp-scelles-'));
+  const agent = async (nom: string, opts: { scelles?: Scelles; intervalleRevelationMs?: number } = {}) => {
+    const mcp = new Client({ name: nom, version: '1.0.0' });
+    const [cote1, cote2] = InMemoryTransport.createLinkedPair();
+    const journal = new JournalLocal(join(home, nom));
+    await createPluginServer(new CoordinatorClient(url, generateIdentity()), journal, { intervalleRevelationMs: 0, ...opts }).connect(cote2);
+    await mcp.connect(cote1);
+    await mcp.callTool({ name: 'swarm_join', arguments: { ruche: 'maths' } });
+    return { mcp, journal };
+  };
+  try {
+    const fichier = join(home, 'verdicts-scelles.json');
+    const scellesA = new Scelles(fichier);
+    const A = await agent('a', { scelles: scellesA, intervalleRevelationMs: 50 });
+    const B = await agent('b');
+
+    const premiere = texte(await A.mcp.callTool({ name: 'swarm_next', arguments: {} }));
+    assert.match(premiere, /Drawn as a guard/);
+    assert.match(premiere, /Your verdict is sealed: only its hash was sent/);
+    assert.equal(new Scelles(fichier).tous.length, 1, 'le verdict scellé, sel compris, est gardé sur disque');
+
+    const seconde = texte(await B.mcp.callTool({ name: 'swarm_next', arguments: {} }));
+    assert.match(seconde, /Verdict recorded: en_verification/, 'la seconde gardienne ouvre la révélation et révèle aussitôt');
+
+    // Le plugin de A révèle en tâche de fond, sans attendre que son IA rappelle un outil.
+    for (let i = 0; i < 100 && coord.hiveView('maths').progression.miel === 0; i++) await new Promise((r) => setTimeout(r, 30));
+    assert.equal(coord.hiveView('maths').progression.miel, 1, 'les deux verdicts révélés : l’alvéole devient du miel');
+    assert.equal(new Scelles(fichier).tous.length, 0);
+    const natures = A.journal.dernieres(50).map((e) => e.nature);
+    assert.ok(natures.includes('engagement') && natures.includes('verdict'), natures.join(', '));
+    await A.mcp.close();
+    await B.mcp.close();
+  } finally {
+    await new Promise<void>((r) => http.close(() => r()));
+    rmSync(home, { recursive: true, force: true });
   }
 });

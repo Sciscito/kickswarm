@@ -173,6 +173,20 @@ export interface Verdict extends Signed {
   motif: string;
   mise_reputation: number;
   piege: boolean;
+  /** OSP v0.2 P1-3 : 32 octets aléatoires, pour que l'engagement ne se devine pas parmi trois décisions. */
+  sel: string;
+}
+
+/**
+ * OSP v0.2 P1-3 : la gardienne s'engage d'abord sur son verdict (son hash), puis le révèle
+ * quand toutes les gardiennes du résultat se sont engagées. Personne ne peut copier les autres.
+ */
+export interface EngagementVerdict extends Signed {
+  type: 'osp.engagement/0.1';
+  resultat: Hash;
+  gardienne: ContributorId;
+  /** hashOf(verdict) : le verdict signé, sel compris. */
+  engagement: Hash;
 }
 
 export type DecisionNature =
