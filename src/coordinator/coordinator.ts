@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import { availableParallelism } from 'node:os';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { idRuchePrivee, normaliserCode } from '../protocol/builders.js';
@@ -34,7 +33,7 @@ import type {
   Verdict,
 } from '../protocol/types.js';
 import { mutants } from '../verifier/mutation.js';
-import { adequation, estCritereTests, validateCritere, validateLivrable, validateTests, verifierV0, type VerifOptions, type VerifReport } from '../verifier/v0.js';
+import { adequation, coeursDisponibles, estCritereTests, validateCritere, validateLivrable, validateTests, verifierV0, type VerifOptions, type VerifReport } from '../verifier/v0.js';
 import { COMMUN, Ledger, type Account } from './ledger.js';
 import { transition } from './lifecycle.js';
 import { DEFAULT_PARAMS, type Params } from './params.js';
@@ -207,6 +206,13 @@ export interface TableauProjet {
   fil: Array<{ date: string; nature: string; chemin?: string; qui?: string; trophee?: string; grammes?: number }>;
 }
 
+/** One item waiting for a hive owner, with what they need to decide it. */
+export type AttenteProprietaire = TableauProjet['attente'][number] & {
+  enfants?: Array<{ objectif: string; atomique: boolean; module?: string; tests: TestCase[] }>;
+  livrable?: Record<string, string>;
+  rapport?: string;
+};
+
 export interface DetailCellule {
   cell: Cell;
   etat: CellState;
@@ -357,7 +363,7 @@ const DEFAULT_BUDGET = { tokens_max: 200_000, duree_max_s: 1800 };
 /** Version 2: the snapshot on disk is written at a seal, at most this often (and at launch, restart and stop). */
 const INSTANTANE_MS = 30_000;
 /** Trap cells prepared at the same time, in the background (each one runs its mutants one by one). */
-const PREPARATIONS = Math.max(1, Math.floor(availableParallelism() / 2));
+const PREPARATIONS = Math.max(1, Math.floor(coeursDisponibles() / 2));
 const MAX_IMPASSES = 20;
 
 /** A uniform float on [0, 1), 53 bits drawn from the cryptographic generator. */
@@ -1320,6 +1326,39 @@ export class Coordinator {
     };
   }
 
+  /**
+   * What waits for a hive owner, with what they need to decide (docs/host-your-hive.md): each split with
+   * its child cells and their examples, each arbitration with the deliverable and the verifier's report.
+   */
+  enAttenteDe(porteur: string): Array<{ slug: string; nom: string; statut: HiveStatus; progression: { miel: number; total: number }; attente: AttenteProprietaire[] }> {
+    return Object.values(this.state.hives)
+      .filter((h) => h.ruche.porteur === porteur)
+      .map((h) => ({
+        slug: h.ruche.slug,
+        nom: h.ruche.nom,
+        statut: h.statut,
+        progression: this.progression(h.ruche.slug),
+        attente: this.tableauProjet(h.ruche.slug).attente.map((a): AttenteProprietaire => {
+          if (a.type === 'approbation_decoupage' && a.cible) {
+            const d = this.state.decompositions[a.cible]!;
+            return {
+              ...a,
+              enfants: d.decomposition.enfants.map((e) => ({
+                objectif: e.objectif,
+                atomique: e.atomique,
+                ...(e.critere_fini.module ? { module: e.critere_fini.module } : {}),
+                tests: estCritereTests(e.critere_fini) ? e.critere_fini.tests : [],
+              })),
+            };
+          }
+          if (a.type === 'arbitrage' && a.cible) {
+            const rr = this.state.results[a.cible]!;
+            return { ...a, livrable: rr.livrable.fichiers, rapport: rr.rapport.motif };
+          }
+          return a;
+        }),
+      }));
+  }
 
   /**
    * A project's dashboard (OSP v0.3 §3.5, v0.4): progress and milestones, branches, who does what now,

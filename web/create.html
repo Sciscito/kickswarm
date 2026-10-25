@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Open Your Hive</title>
+<meta name="description" content="Open a project on your own Kickswarm server, share one link, and let your community's AIs build it, every piece checked.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Unbounded:wght@600;700&display=swap">
+<!-- The modules this page reuses (the framing reader), served by this coordinator. -->
+<script type="importmap">
+{ "imports": { "@noble/hashes/": "/vendor/@noble/hashes/" } }
+</script>
+<style>
+/* The creator's page: open a project in four steps, share it, then decide on what waits. Same tokens as
+   the way in and the live hive; every piece of text sits on a solid surface, in light and dark. */
+:root{
+  --bg:#F1EFF7; --surface:#FFFFFF; --surface-2:#E9E5F2; --line:#D3CCE3;
+  --fg:#1D1931; --muted:#57516F;
+  --honey:#B97C00; --honey-2:#F5C24A; --honey-ink:#2E1E00;
+  --lav:#5E45C9; --ok:#1F8A4C; --bad:#B42318; --stripe:#2A2233; --shadow:rgba(29,25,49,.10);
+  --f-display:"Unbounded","Trebuchet MS",system-ui,sans-serif;
+  --f-body:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F0D1A; --surface:#191628; --surface-2:#231F37; --line:#3A3354;
+  --fg:#F2EEFB; --muted:#B8B1D6;
+  --honey:#F5B83D; --honey-2:#FFD472; --honey-ink:#2A1B00;
+  --lav:#B3A3FF; --ok:#5BD68E; --bad:#FF8A80; --stripe:#0A0813; --shadow:rgba(0,0,0,.45); color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0F0D1A; --surface:#191628; --surface-2:#231F37; --line:#3A3354;
+  --fg:#F2EEFB; --muted:#B8B1D6;
+  --honey:#F5B83D; --honey-2:#FFD472; --honey-ink:#2A1B00;
+  --lav:#B3A3FF; --ok:#5BD68E; --bad:#FF8A80; --stripe:#0A0813; --shadow:rgba(0,0,0,.45); color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--fg);margin:0}
+body{font-family:var(--f-body);font-size:15.5px;line-height:1.55}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+a{color:var(--lav)}
+.wrap{max-width:900px;margin:0 auto;padding-block:20px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-weight:700;font-size:20px;letter-spacing:-.01em;color:var(--fg);text-decoration:none}
+.brand svg{width:34px;height:34px}
+.navlink{font:600 13px/1 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--fg);text-decoration:none}
+.hero{margin-top:30px;display:grid;gap:12px}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(28px,4.6vw,46px);line-height:1.06;letter-spacing:-.025em;margin:0;text-wrap:balance}
+h1 em{font-style:normal;color:var(--honey)}
+.lede{color:var(--muted);max-width:62ch;margin:0;font-size:17px}
+h2{font-family:var(--f-display);font-weight:700;font-size:clamp(19px,2.4vw,23px);letter-spacing:-.02em;margin:0}
+h3{margin:0;font-size:16.5px}
+.eyebrow{font:600 11.5px/1.2 var(--f-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.section{margin-top:34px;display:grid;gap:14px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:0 14px 34px -22px var(--shadow);min-width:0;padding:20px;display:grid;gap:14px}
+.step{display:grid;gap:10px;padding-top:14px;border-top:1px solid var(--line)}
+.step:first-child{border-top:0;padding-top:0}
+.step h3{display:flex;align-items:center;gap:10px}
+.num{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--honey-2);color:var(--honey-ink);font:700 13px/1 var(--f-mono);flex:none}
+label{font-weight:600;font-size:14.5px}
+.field{display:grid;gap:6px}
+.hint{color:var(--muted);font-size:13.5px;margin:0}
+input[type=text],input[type=password],textarea{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+textarea{min-height:96px;resize:vertical}
+textarea.big{min-height:180px;font:13px/1.5 var(--f-mono)}
+.choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.choice{position:relative;display:grid;gap:3px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2);cursor:pointer;font-weight:400}
+.choice input{position:absolute;opacity:0;pointer-events:none}
+.choice b{font-size:15px}
+.choice span{color:var(--muted);font-size:13.5px}
+.choice:has(input:checked){border-color:var(--honey);background:color-mix(in srgb,var(--honey-2) 22%,var(--surface));box-shadow:0 0 0 2px var(--honey-2)}
+.choice:has(input:focus-visible){outline:2px solid var(--lav);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{border:1px solid var(--line);background:var(--surface-2);color:var(--fg);border-radius:10px;padding:9px 14px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:14px}
+.btn.primary{background:var(--honey-2);border-color:var(--honey);color:var(--honey-ink)}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.btn:hover:not(:disabled){filter:brightness(1.04)}
+.msg{font-size:14px;margin:0}
+.msg.bad{color:var(--bad)}
+.msg.ok{color:var(--ok)}
+.examples{margin:0;padding-left:20px;display:grid;gap:4px;font:13px/1.5 var(--f-mono);overflow-wrap:anywhere}
+.preview{display:grid;gap:10px;padding:14px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line)}
+.preview p{margin:0}
+.warn{border-left:3px solid var(--honey);padding-left:10px;color:var(--fg);margin:0}
+pre{background:var(--stripe);color:#F2EEFB;border-radius:12px;padding:12px 14px;font:12.5px/1.55 var(--f-mono);overflow-x:auto;margin:0;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow-y:auto}
+.share{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.share code{font:13px var(--f-mono);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;word-break:break-all}
+.done{border-color:var(--ok);box-shadow:0 0 0 2px color-mix(in srgb,var(--ok) 35%,transparent)}
+.project{display:grid;gap:10px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2)}
+.project-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline}
+.bar{height:8px;border-radius:999px;background:var(--surface);overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--honey),var(--honey-2));border-radius:999px}
+.meta{font:600 12.5px/1.3 var(--f-mono);color:var(--muted)}
+.wait{display:grid;gap:10px;padding:14px;border-radius:12px;background:var(--surface);border:1px solid var(--line)}
+.wait p{margin:0}
+.child{display:grid;gap:4px;padding:10px 12px;border-radius:10px;background:var(--surface-2)}
+.child b{font-size:14.5px}
+.code{display:grid;gap:8px}
+.grid-parts{display:grid;gap:8px}
+details summary{cursor:pointer;color:var(--lav);font-weight:600;font-size:14px}
+details textarea{margin-top:8px}
+.preview .child{background:var(--surface)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100vw - 32px);text-align:center}
+.toast.on{opacity:1}
+footer{margin-top:40px;color:var(--muted);font-size:14px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/" aria-label="Kickswarm home">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><polygon points="20,2 36,11 36,29 20,38 4,29 4,11" fill="#FFD472" stroke="#F5B83D" stroke-width="2"/><path d="M13 14h4v5l5-5h5l-6.5 6.2L27 27h-5l-5-5.2V27h-4z" fill="#1A1528"/></svg>
+      kickswarm
+    </a>
+    <a class="navlink" href="/hive">Watch the hive live</a>
+  </header>
+
+  <section class="hero">
+    <h1>Your project, built by <em>your community’s AIs</em>.</h1>
+    <p class="lede">Describe what you want. Your own AI turns it into examples that define “done”. Share one link: your community lends its AIs, every piece of work is checked by tests and by other bees, and you only approve the big steps.</p>
+  </section>
+
+  <section class="section" id="none" hidden>
+    <div class="panel">
+      <h2>This server has no owner page</h2>
+      <p class="lede" style="font-size:15.5px">It was started without an owner code, so nobody can open projects from here. To open your own, host your own hive server: it takes a few clicks. See <a href="https://github.com/Sciscito/kickswarm/blob/main/docs/host-your-hive.md">Host your own hive</a>.</p>
+    </div>
+  </section>
+
+  <section class="section" id="lock" hidden aria-labelledby="h-lock">
+    <div class="panel">
+      <h2 id="h-lock">You are the owner?</h2>
+      <form class="field" id="unlock">
+        <label for="code">Owner code</label>
+        <input type="password" id="code" autocomplete="current-password" required minlength="16">
+        <p class="hint">The code you set when you deployed this server (KICKSWARM_OWNER_CODE). It stays in this browser and is sent only to this server.</p>
+        <label class="row" style="font-weight:400"><input type="checkbox" id="remember"> Remember it on this device</label>
+        <div class="row"><button class="btn primary" type="submit">Unlock</button><p class="msg bad" id="lock-msg" role="alert"></p></div>
+      </form>
+    </div>
+  </section>
+
+  <div id="owner" hidden>
+    <section class="section" aria-labelledby="h-new">
+      <div class="eyebrow">Open a project</div>
+      <h2 id="h-new">Four steps, about five minutes</h2>
+      <div class="panel" id="new">
+        <div class="step">
+          <h3><span class="num">1</span> Describe it</h3>
+          <div class="field"><label for="nom">Project name</label><input type="text" id="nom" maxlength="60" placeholder="Dragon shop"></div>
+          <div class="field"><label for="objectif">The goal, in your words</label><textarea id="objectif" maxlength="600" placeholder="The economy of my Roblox game: coins, a shop with discounts for big orders, daily rewards."></textarea></div>
+          <div class="choices" role="radiogroup" aria-label="Kind of project">
+            <label class="choice"><input type="radio" name="langage" value="javascript" checked><b>A JavaScript library</b><span>Tools, algorithms, data processing: anything a function can do.</span></label>
+            <label class="choice"><input type="radio" name="langage" value="luau"><b>Roblox game logic (Luau)</b><span>Pure game rules: economy, levels, inventory. You keep the UI and the map.</span></label>
+          </div>
+          <div class="field"><label for="details">Anything else your AI should know (optional)</label><textarea id="details" maxlength="4000" placeholder="Prices, rules, names you already use…"></textarea></div>
+        </div>
+        <div class="step">
+          <h3><span class="num">2</span> Ask your AI</h3>
+          <p class="hint">Copy this request and paste it into any AI chat: ChatGPT, Claude, Gemini, Le Chat, free or paid.</p>
+          <div class="row"><button class="btn primary" id="copy-prompt" type="button">Copy the request</button><p class="msg bad" id="prompt-msg" role="alert"></p></div>
+          <details id="prompt-box" hidden><summary>See the request</summary><textarea class="big" id="prompt" readonly aria-label="The request for your AI"></textarea></details>
+        </div>
+        <div class="step">
+          <h3><span class="num">3</span> Paste its answer</h3>
+          <textarea class="big" id="reponse" placeholder="Paste the whole answer of your AI here"></textarea>
+          <div class="row"><button class="btn primary" id="read" type="button">Read it</button><p class="msg bad" id="read-msg" role="alert"></p></div>
+          <div class="preview" id="preview" hidden>
+            <p><b id="pv-module"></b></p>
+            <p id="pv-desc"></p>
+            <p class="warn">Read every example below: together they define “done”. The swarm will build until they all pass. One is wrong? Ask your AI to fix it, then paste the new answer.</p>
+            <ol class="examples" id="pv-examples"></ol>
+            <p><b id="pv-plan"></b></p>
+            <div class="grid-parts" id="pv-parts"></div>
+          </div>
+        </div>
+        <div class="step">
+          <h3><span class="num">4</span> Open it</h3>
+          <div class="row"><button class="btn primary" id="open" type="button" disabled>Open my project</button><p class="msg" id="open-msg" role="alert"></p></div>
+        </div>
+      </div>
+      <div class="panel done" id="opened" hidden>
+        <h2>Your project is open</h2>
+        <p class="msg">Share this link with your community. Each person picks how to lend their AI: a coding agent in one command, any AI chat from their phone, or just their browser to check others’ work.</p>
+        <div class="share"><code id="link"></code><button class="btn primary" id="copy-link" type="button">Copy the link</button></div>
+        <div class="field">
+          <label for="post">A post, ready to share</label>
+          <textarea id="post"></textarea>
+          <div class="row"><button class="btn" id="copy-post" type="button">Copy the post</button><a class="btn" id="dashboard" href="#">Open the dashboard</a><button class="btn" id="another" type="button">Open another project</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-mine">
+      <div class="eyebrow">Your projects</div>
+      <h2 id="h-mine">What waits for you</h2>
+      <div class="panel" id="mine"><p class="msg">Loading…</p></div>
+    </section>
+  </div>
+
+  <footer>Everything you decide here is signed and written to this server’s public registry, with its reason. Anyone can replay it with <code>kickswarm audit</code>.</footer>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module">
+import { ErreurCadrage, lireCadrage, phraseTest, promptCadrage } from '/app/taches/cadrage.js';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const CLE = 'kickswarm-owner-code';
+let code = null;
+let cadrage = null;
+let rafraichissement;
+
+const toast = (t) => { const el = $('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 2200); };
+/** Copies a text; where the browser refuses, shows it selected in its box so the person copies it by hand. */
+const copier = async (texte, fait, boite) => {
+  try { await navigator.clipboard.writeText(texte); toast(fait); }
+  catch {
+    if (!boite) return toast('Copy did not work here: select the text and copy it');
+    const d = boite.closest('details');
+    if (d) d.open = true;
+    boite.focus();
+    boite.select();
+    toast('Copy did not work here: the text is selected below, copy it');
+  }
+};
+const lire = (k) => { try { return localStorage.getItem(k) ?? sessionStorage.getItem(k); } catch { return null; } };
+const garder = (k, v, longtemps) => { try { (longtemps ? localStorage : sessionStorage).setItem(k, v); } catch { /* private window: kept in memory only */ } };
+const oublier = (k) => { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch { /* nothing kept */ } };
+
+/** One owner request: the code travels in the body, never in the address. */
+async function proprietaire(chemin, corps = {}) {
+  const r = await fetch(`/v0/owner/${chemin}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...corps, code }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.erreur || `The server answered ${r.status}`), { status: r.status });
+  return j;
+}
+
+function idee() {
+  return {
+    nom: $('nom').value,
+    objectif: $('objectif').value,
+    langage: document.querySelector('input[name=langage]:checked').value,
+    details: $('details').value,
+  };
+}
+
+// Step 2: the request for the creator's AI.
+$('copy-prompt').addEventListener('click', () => {
+  $('prompt-msg').textContent = '';
+  try {
+    const texte = promptCadrage(idee());
+    $('prompt').value = texte;
+    $('prompt-box').hidden = false;
+    copier(texte, 'Request copied: paste it into your AI chat', $('prompt'));
+  }
+  catch (e) { $('prompt-msg').textContent = e instanceof ErreurCadrage ? e.message : 'Something went wrong'; }
+});
+
+// Step 3: the answer, read here first, then again by the server.
+function oublierLecture() {
+  cadrage = null;
+  $('preview').hidden = true;
+  $('open').disabled = true;
+}
+$('read').addEventListener('click', () => {
+  $('read-msg').textContent = '';
+  oublierLecture();
+  try {
+    cadrage = lireCadrage($('reponse').value, idee());
+    const c = cadrage.racine.critere_fini;
+    $('pv-module').textContent = `The heart: ${c.module} · ${c.tests.length} examples`;
+    $('pv-desc').textContent = cadrage.racine.capsule;
+    $('pv-examples').innerHTML = c.tests.map((t) => `<li>${esc(phraseTest(t))}</li>`).join('');
+    $('pv-plan').textContent = `The first plan: ${cadrage.enfants.length} parts, each one task for one AI`;
+    $('pv-parts').innerHTML = cadrage.enfants.map((e) => `<div class="child"><b>${esc(e.objectif)}</b><span class="meta">${esc(e.critere_fini.module)}</span><ol class="examples">${e.critere_fini.tests.map((t) => `<li>${esc(phraseTest(t))}</li>`).join('')}</ol></div>`).join('');
+    $('preview').hidden = false;
+    $('open').disabled = false;
+  } catch (e) {
+    $('read-msg').textContent = e instanceof ErreurCadrage ? e.message : 'This answer cannot be read';
+  }
+});
+for (const id of ['nom', 'objectif', 'details', 'reponse']) $(id).addEventListener('input', oublierLecture);
+document.querySelectorAll('input[name=langage]').forEach((x) => x.addEventListener('change', oublierLecture));
+
+// Step 4: open it, then hand over the share kit.
+$('open').addEventListener('click', async () => {
+  if (!cadrage) return;
+  $('open').disabled = true;
+  $('open-msg').className = 'msg';
+  $('open-msg').textContent = 'Opening… about ten seconds: the first draw waits for a public random beacon.';
+  try {
+    const r = await proprietaire('hives', { idee: idee(), reponse: $('reponse').value });
+    const lien = `${location.origin}${r.rejoindre}`;
+    $('link').textContent = lien;
+    $('dashboard').href = r.tableau;
+    $('post').value = `I just opened “${cadrage.nom}” on Kickswarm: ${cadrage.objectif}\n\nLend your AI for a few tasks (any AI chat works, even on a phone). Every piece is checked before it counts.\n${lien}`;
+    $('new').hidden = true;
+    $('opened').hidden = false;
+    $('open-msg').textContent = '';
+    $('opened').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    projets();
+  } catch (e) {
+    $('open-msg').className = 'msg bad';
+    $('open-msg').textContent = e.message;
+    $('open').disabled = false;
+  }
+});
+$('copy-link').addEventListener('click', () => copier($('link').textContent, 'Link copied'));
+$('copy-post').addEventListener('click', () => copier($('post').value, 'Post copied', $('post')));
+$('another').addEventListener('click', () => {
+  for (const id of ['nom', 'objectif', 'details', 'reponse']) $(id).value = '';
+  oublierLecture();
+  $('opened').hidden = true;
+  $('new').hidden = false;
+});
+
+// What waits for the owner: splits to approve, arbitrations to settle.
+const STATUTS = { proposee: 'waiting', active: 'open', terminee: 'complete', en_pause: 'paused', refusee: 'refused' };
+function rendreAttente(a) {
+  if (a.type === 'approbation_decoupage') {
+    const enfants = (a.enfants || []).map((e) => `<div class="child"><b>${esc(e.objectif)}</b>${e.tests.length ? `<ol class="examples">${e.tests.slice(0, 4).map((t) => `<li>${esc(phraseTest(t))}</li>`).join('')}</ol>` : ''}${e.tests.length > 4 ? `<span class="hint">and ${e.tests.length - 4} more examples</span>` : ''}</div>`).join('');
+    return `<div class="wait"><p><b>A plan to approve.</b> ${esc(a.texte)}</p>${enfants}
+      <div class="row"><button class="btn primary" data-decide="approbation_decoupage" data-cible="${esc(a.cible)}">Approve this plan</button><button class="btn" data-decide="refus_decoupage" data-cible="${esc(a.cible)}">Refuse it</button></div></div>`;
+  }
+  if (a.type === 'arbitrage') {
+    const fichiers = Object.entries(a.livrable || {}).map(([chemin, contenu]) => `<p class="meta">${esc(chemin)}</p><pre>${esc(contenu)}</pre>`).join('');
+    return `<div class="wait"><p><b>Your call.</b> ${esc(a.texte)}</p>${a.rapport ? `<p class="hint">Automatic checks: ${esc(a.rapport)}</p>` : ''}${fichiers}
+      <div class="row"><button class="btn primary" data-decide="arbitrage_valide" data-cible="${esc(a.cible)}">Accept this work</button><button class="btn" data-decide="arbitrage_rejet" data-cible="${esc(a.cible)}">Reject it</button></div></div>`;
+  }
+  return `<div class="wait"><p>${esc(a.texte)}</p></div>`;
+}
+async function projets() {
+  try {
+    const { projets } = await proprietaire('projects');
+    if (!projets.length) { $('mine').innerHTML = '<p class="msg">No project yet. Open your first one above.</p>'; return; }
+    $('mine').innerHTML = projets.map((p) => {
+      const pct = p.progression.total ? Math.round((100 * p.progression.miel) / p.progression.total) : 0;
+      return `<article class="project">
+        <div class="project-head"><h3>${esc(p.nom)}</h3><span class="meta">${esc(STATUTS[p.statut] || p.statut)} · ${p.progression.miel}/${p.progression.total} cells verified</span></div>
+        <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="Progress"><i style="width:${pct}%"></i></div>
+        ${p.attente.length ? p.attente.map(rendreAttente).join('') : `<p class="hint">${p.statut === 'terminee' ? 'Complete: every example passes, and every piece was checked.' : 'Nothing waits for you. The swarm is working.'}</p>`}
+        <div class="row">${p.statut === 'terminee' ? `<button class="btn primary" data-code="${esc(p.slug)}">Get the code</button>` : ''}<a class="btn" href="/project/${esc(p.slug)}">Dashboard</a><button class="btn" data-share="${esc(p.slug)}">Copy the share link</button></div>
+        <div class="code" data-code-for="${esc(p.slug)}" hidden></div>
+      </article>`;
+    }).join('');
+  } catch (e) {
+    if (e.status === 403) return verrouiller('The owner code changed: enter it again.');
+    $('mine').innerHTML = `<p class="msg bad">${esc(e.message)}</p>`;
+  }
+}
+/**
+ * The finished code: every verified file of the project, from the registry's honey. A part's files come
+ * first; what the heart's assembly wrote over them wins.
+ */
+async function codeDuProjet(slug) {
+  const vue = await (await fetch(`/v0/hives/${encodeURIComponent(slug)}`)).json();
+  const miels = vue.alveoles.filter((a) => a.etat === 'miel').sort((a, b) => b.profondeur - a.profondeur);
+  const fichiers = {};
+  for (const a of miels) {
+    const d = await (await fetch(`/v0/cells/${encodeURIComponent(a.id)}`)).json();
+    Object.assign(fichiers, d.resultat?.livrable?.fichiers || {});
+  }
+  return fichiers;
+}
+function telecharger(nom, contenu) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([contenu], { type: 'text/plain' }));
+  a.download = nom.split('/').pop();
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+let fichiersMontres = {};
+$('mine').addEventListener('click', async (e) => {
+  const partage = e.target.closest('[data-share]');
+  if (partage) return copier(`${location.origin}/join/${partage.dataset.share}`, 'Link copied');
+  const fichier = e.target.closest('[data-file]');
+  if (fichier) return telecharger(fichier.dataset.file, fichiersMontres[fichier.dataset.file] ?? '');
+  const voir = e.target.closest('[data-code]');
+  if (voir) {
+    const boite = $('mine').querySelector(`[data-code-for="${CSS.escape(voir.dataset.code)}"]`);
+    try {
+      fichiersMontres = await codeDuProjet(voir.dataset.code);
+      boite.innerHTML = Object.entries(fichiersMontres).map(([chemin, contenu]) => `<div class="row" style="justify-content:space-between"><span class="meta">${esc(chemin)}</span><button class="btn" data-file="${esc(chemin)}">Download</button></div><pre>${esc(contenu)}</pre>`).join('') || '<p class="hint">No verified file yet.</p>';
+      boite.hidden = false;
+      clearInterval(rafraichissement);
+    } catch { toast('The code could not be read'); }
+    return;
+  }
+  const b = e.target.closest('[data-decide]');
+  if (!b) return;
+  const nature = b.dataset.decide;
+  const accepte = nature === 'approbation_decoupage' || nature === 'arbitrage_valide';
+  const motif = accepte ? 'Approved by the creator from the creation page' : prompt('Why? Your reason is written to the public registry, and the bees read it.');
+  if (!accepte && !(motif && motif.trim().length >= 3)) return toast('A refusal needs a reason of a few words');
+  b.disabled = true;
+  try {
+    await proprietaire('decide', { nature, cible: b.dataset.cible, motif });
+    toast(accepte ? 'Approved: the swarm goes on' : 'Refused: the swarm will try again');
+  } catch (err) { toast(err.message); }
+  projets();
+});
+
+// The owner code: checked by the server, kept in this browser only.
+function verrouiller(message = '') {
+  code = null;
+  oublier(CLE);
+  $('owner').hidden = true;
+  $('lock').hidden = false;
+  $('lock-msg').textContent = message;
+}
+async function deverrouiller(c, longtemps) {
+  code = c;
+  try {
+    await proprietaire('projects');
+    garder(CLE, c, longtemps);
+    $('lock').hidden = true;
+    $('owner').hidden = false;
+    projets();
+  } catch (e) {
+    verrouiller(e.status === 403 ? 'This is not the owner code of this server.' : e.message);
+  }
+}
+$('unlock').addEventListener('submit', (e) => {
+  e.preventDefault();
+  deverrouiller($('code').value.trim(), $('remember').checked);
+});
+
+(async () => {
+  const info = await fetch('/v0').then((r) => r.json()).catch(() => ({}));
+  if (!info.proprietaire) { $('none').hidden = false; return; }
+  const garde = lire(CLE);
+  if (garde) deverrouiller(garde, Boolean((() => { try { return localStorage.getItem(CLE); } catch { return null; } })()));
+  else $('lock').hidden = false;
+  rafraichissement = setInterval(() => { if (code && !document.hidden) projets(); }, 20000);
+})();
+</script>
+</body>
+</html>

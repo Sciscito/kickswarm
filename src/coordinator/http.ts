@@ -1,12 +1,15 @@
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { makeDecision } from '../protocol/builders.js';
 import { isContributorId } from '../protocol/identity.js';
+import { ErreurCadrage, lireCadrage, type Idee } from '../taches/cadrage.js';
 import type { Adhesion, CellSpec, Decision, Decomposition, EngagementVerdict, FusionDepot, Hash, Hive, Invitation, LienGithub, Livrable, RecuDepot, Requete, Result, Secrets, Verdict } from '../protocol/types.js';
 import { Coordinator, OspError, type Compteurs } from './coordinator.js';
 import { Garde } from './garde.js';
 import { Hote } from './hote.js';
 import { COMMUN } from './ledger.js';
+import { ouvrirProjet, type Proprietaire } from './proprietaire.js';
 import { servirStatique } from './statique.js';
 
 // Coordinator HTTP API (spec §21.2). Every request that changes the state carries a signed object.
@@ -54,6 +57,7 @@ const PAGES = {
   hive: new URL('../../web/hive.html', import.meta.url),
   bee: new URL('../../web/bee.html', import.meta.url),
   projet: new URL('../../web/projet.html', import.meta.url),
+  creer: new URL('../../web/create.html', import.meta.url),
 };
 
 async function sendPage(res: ServerResponse, page: keyof typeof PAGES): Promise<void> {
@@ -97,7 +101,7 @@ export const PAGE_REGISTRE = 2000;
  * not one: it is refused at once while the reveal is not open, and re-runs a deliverable only to settle a
  * rejection, which only a guard with a committed, open verdict can trigger (and the sandbox threads bound it).
  */
-const LOURDES = new Set(['POST /v0/work/submit', 'POST /v0/work/decompose', 'POST /v0/hives', 'POST /v0/private']);
+const LOURDES = new Set(['POST /v0/work/submit', 'POST /v0/work/decompose', 'POST /v0/hives', 'POST /v0/private', 'POST /v0/owner/hives']);
 
 export interface OptionsServeur {
   /** Public mode (`kickswarm coordinator --public`): budgets per address, capped streams, bounded queue. */
@@ -109,6 +113,44 @@ export interface OptionsServeur {
    * installs it from the coordinator itself, so nobody depends on a name someone else could take on npm.
    */
   paquet?: string;
+  /**
+   * A creator's own coordinator (docs/host-your-hive.md): the owner, who opens projects and decides on
+   * them from /create with the owner code chosen at deployment.
+   */
+  proprietaire?: Proprietaire;
+}
+
+/** What an owner decides from the creation page: the decisions of a hive owner, nothing else. */
+const DECISIONS_PROPRIETAIRE = new Set(['approbation_decoupage', 'refus_decoupage', 'arbitrage_valide', 'arbitrage_rejet']);
+
+/** The owner's routes: every one carries the owner code in its body (never in the address). */
+async function routeProprietaire(coord: Coordinator, p: Proprietaire, route: string, body: Record<string, unknown>): Promise<{ status: number; corps: unknown }> {
+  const moi = p.identite;
+  switch (route) {
+    case 'POST /v0/owner/projects':
+      return { status: 200, corps: { proprietaire: moi.id, projets: coord.enAttenteDe(moi.id) } };
+    case 'POST /v0/owner/hives': {
+      // The page has already read the AI's answer; the coordinator reads it again, on what it received.
+      let cadrage;
+      try {
+        cadrage = lireCadrage(String(body.reponse ?? ''), (body.idee ?? {}) as Idee);
+      } catch (e) {
+        if (e instanceof ErreurCadrage) throw new OspError(e.message, 400);
+        throw e;
+      }
+      const r = await ouvrirProjet(coord, moi, cadrage);
+      return { status: 201, corps: { ...r, rejoindre: `/join/${r.slug}`, tableau: `/project/${r.slug}` } };
+    }
+    case 'POST /v0/owner/decide': {
+      const nature = String(body.nature ?? '');
+      const motif = String(body.motif ?? '').trim();
+      if (!DECISIONS_PROPRIETAIRE.has(nature)) throw new OspError('Not a decision of the creation page');
+      if (motif.length < 3 || motif.length > 500) throw new OspError('Every decision states its reason, in 3 to 500 characters');
+      return { status: 201, corps: coord.decide(makeDecision(moi, nature as Decision['nature'], String(body.cible ?? ''), motif)) };
+    }
+    default:
+      throw new OspError('Unknown route', 404);
+  }
 }
 
 /**
@@ -144,6 +186,8 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
         if (req.method === 'GET' && /^\/project\/[a-z0-9-]{1,40}\/?$/.test(url.pathname)) return await sendPage(res, 'projet');
         // OSP v0.4 §2.3: the chat door and the guard door, and the modules they load.
         if (req.method === 'GET' && (url.pathname === '/bee' || url.pathname === '/bee/')) return await sendPage(res, 'bee');
+        // A creator's page: open a project, then decide on it (docs/host-your-hive.md).
+        if (req.method === 'GET' && (url.pathname === '/create' || url.pathname === '/create/')) return await sendPage(res, 'creer');
         if (req.method === 'GET' && url.pathname === '/kickswarm.tgz' && options.paquet) {
           const taille = (await stat(options.paquet)).size;
           res.writeHead(200, { 'content-type': 'application/gzip', 'content-length': taille, 'cache-control': 'no-cache' });
@@ -157,6 +201,17 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
       if (parts[0] !== 'v0') throw new OspError('Unknown route', 404);
       const body = req.method === 'POST' ? ((await readBody(req)) as Record<string, unknown>) : {};
       const ok = (status: number, b: unknown) => send(res, status, b, prive !== null);
+      if (!prive && parts[1] === 'owner') {
+        const p = options.proprietaire;
+        if (!p || req.method !== 'POST') throw new OspError('This coordinator has no owner page: its creator runs it with an owner code (docs/host-your-hive.md)', 404);
+        garde?.avantCode(req);
+        if (!p.verifier(body.code)) {
+          garde?.codeFaux(req);
+          throw new OspError('Wrong owner code', 403);
+        }
+        const r = garde && LOURDES.has(route) && !garde.estLocal(req) ? await garde.lourd(() => routeProprietaire(coord, p, route, body)) : await routeProprietaire(coord, p, route, body);
+        return send(res, r.status, r.corps, true);
+      }
       if (garde && LOURDES.has(route) && !garde.estLocal(req)) {
         if (route === 'POST /v0/hives') verifierEnAttente(coord, body.ruche as Hive, options.enAttenteParPorteur ?? 3);
         return await garde.lourd(() => repondre());
@@ -188,7 +243,14 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
 
       switch (true) {
         case route === 'GET /v0':
-          return ok(200, { protocole: 'OSP', version: '0.1', fondateur: cible.fondateur, coordinateur: cible.identite.id, ...(prive ? { prive } : options.paquet ? { paquet: '/kickswarm.tgz' } : {}) });
+          return ok(200, {
+            protocole: 'OSP',
+            version: '0.1',
+            fondateur: cible.fondateur,
+            coordinateur: cible.identite.id,
+            ...(prive ? { prive } : options.paquet ? { paquet: '/kickswarm.tgz' } : {}),
+            ...(!prive && options.proprietaire ? { proprietaire: true } : {}),
+          });
         case route === 'GET /v0/hives' && parts.length === 2:
           return ok(200, cible.listHives());
         case route.startsWith('GET /v0/hives/') && parts.length === 3:

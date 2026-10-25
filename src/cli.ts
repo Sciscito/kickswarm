@@ -13,6 +13,7 @@ import type { RegistryEntry } from './coordinator/registry.js';
 import { Garde } from './coordinator/garde.js';
 import { createCoordinatorServer } from './coordinator/http.js';
 import { Hote } from './coordinator/hote.js';
+import { Proprietaire } from './coordinator/proprietaire.js';
 import { demo } from './demo.js';
 import { joinHive } from './install.js';
 import { liveDemo } from './live-demo.js';
@@ -36,6 +37,7 @@ const HELP = `kickswarm · Open Swarm Protocol v0.1
   kickswarm trial [--port 7777] [--guards 4] [--beacon none|drand] [--rehearse]   First run with a real AI (see docs/trial.md)
   kickswarm coordinator [--port 7777] [--host 127.0.0.1] [--data ./data] [--founder <id>] [--sandbox wasm|container|process] [--beacon drand|none]
   kickswarm coordinator --public [--port 7777] [--data /srv/kickswarm] [--launch all|none|<project>,…]   Open to everyone, behind Caddy (see docs/deploy.md)
+  kickswarm coordinator --public --owner-code <code> [--trust-proxy]   A creator's own hive server, run from its /create page (see docs/host-your-hive.md)
   kickswarm plugin [--url <coordinator>]                MCP server for your agent (stdio)
   kickswarm identity                                    Show (and create if needed) your identity
   kickswarm journal [--n 20] [--full] [--verify]        Everything your AI did for the swarm, on this machine
@@ -272,12 +274,20 @@ async function main(): Promise<void> {
     case 'coordinateur': {
       const publique = opts.public !== undefined;
       const moi = loadOrCreateIdentity().identite;
-      const founder = opts.founder ?? opts.fondateur ?? moi.id;
-      if (!isContributorId(founder)) throw new Error('--founder must be an ed25519:… identity');
-      const port = Number(opts.port ?? 7777);
+      const port = Number(opts.port ?? process.env.PORT ?? 7777);
       // Public mode listens on this machine only: Caddy, in front, brings HTTPS and relays the visitors.
       const host = opts.host ?? opts.hote ?? '127.0.0.1';
       const dataDir = resolve(opts.data ?? opts.donnees ?? 'data');
+      // A creator's own coordinator: the owner's key is made here, in the data folder, and is the founder.
+      const codeProprietaire = opts['owner-code'] ?? process.env.KICKSWARM_OWNER_CODE;
+      const proprietaire = codeProprietaire ? new Proprietaire(dataDir, codeProprietaire) : undefined;
+      if (proprietaire && (opts.founder ?? opts.fondateur) && (opts.founder ?? opts.fondateur) !== proprietaire.identite.id) {
+        throw new Error('With an owner code, the founder is the owner made in the data folder: leave out --founder');
+      }
+      const founder = proprietaire?.identite.id ?? opts.founder ?? opts.fondateur ?? moi.id;
+      if (!isContributorId(founder)) throw new Error('--founder must be a contributor identity (pq1:…, ed25519:… or slh1:…)');
+      // Behind a hosting provider's proxy (Render, Railway…), the visitor's address is the last X-Forwarded-For hop.
+      const procheDistant = opts['trust-proxy'] !== undefined || process.env.KICKSWARM_TRUST_PROXY === '1';
       process.env.KICKSWARM_SANDBOX = opts.sandbox || process.env.KICKSWARM_SANDBOX || 'auto';
       const sandbox = resolveSandbox();
       if ((publique || !LOCAL_HOSTS.has(host)) && sandbox === 'process' && opts.unsafe === undefined) {
@@ -318,17 +328,18 @@ async function main(): Promise<void> {
           process.exit(0);
         });
       }
-      const garde = publique ? new Garde({ proxy: LOCAL_HOSTS.has(host) }) : undefined;
+      const garde = publique ? new Garde({ proxy: LOCAL_HOSTS.has(host), proxyDistant: procheDistant }) : undefined;
       // The package built next to this program (deploy/install.sh runs `npm pack`): the join command installs it from here.
       const paquet = opts.package ? resolve(opts.package) : fileURLToPath(new URL('../kickswarm.tgz', import.meta.url));
-      const serveur = createCoordinatorServer(coord, hote, { ...(garde ? { garde } : {}), ...(existsSync(paquet) ? { paquet } : {}) });
+      const serveur = createCoordinatorServer(coord, hote, { ...(garde ? { garde } : {}), ...(existsSync(paquet) ? { paquet } : {}), ...(proprietaire ? { proprietaire } : {}) });
       await new Promise<void>((ok) => serveur.listen(port, host, ok));
       console.log(`OSP v0.1 coordinator on http://${host}:${port}${publique ? ' (public mode: budgets per address, bounded queue)' : ''}`);
       console.log(`Live hive: http://${host}:${port}/hive`);
+      if (proprietaire) console.log(`Owner page: http://${host}:${port}/create (with the owner code set at deployment)`);
       console.log(`Founder: ${founder}\nData: ${dataDir}\nSandbox: ${sandbox}${sandbox === 'process' ? ' (network not cut: keep this coordinator private)' : ''}`);
       console.log(`Random draws: ${balise ? 'public drand beacon (League of Entropy, quicknet), verifiable by anyone' : 'drawn by the coordinator itself (not verifiable)'}`);
       // The prepared projects of docs/projets.md open by themselves (safe to run at every start).
-      const lancer = String(opts.launch ?? (publique ? 'all' : 'none'));
+      const lancer = String(opts.launch ?? (publique && !proprietaire ? 'all' : 'none'));
       const projets = lancer === 'none' ? [] : lancer === 'all' ? Object.values(PROJETS) : lancer.split(',').map((n) => PROJETS[n.trim()] ?? (() => { throw new Error(`Unknown project: ${n}`); })());
       if (projets.length && founder !== moi.id) console.log('The prepared projects are not opened: the founder\'s key is not on this machine (run "kickswarm launch <project>" from the founder\'s machine).');
       else {

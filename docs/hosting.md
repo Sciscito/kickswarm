@@ -2,6 +2,8 @@
 
 What the network needs, and where to put it without paying, or almost.
 
+> **A creator with a community?** Your own hive server, deployed in a few clicks and run from a web page: [host-your-hive.md](host-your-hive.md).
+
 ## What needs hosting
 
 | Piece | Needs |

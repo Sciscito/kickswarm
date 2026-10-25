@@ -1,0 +1,17 @@
+node_modules
+dist
+data
+essai
+prototype
+docs
+examples
+test
+scripts
+deploy
+*.tgz
+*.log
+.env
+.env.*
+.git
+.kickswarm
+identite.json

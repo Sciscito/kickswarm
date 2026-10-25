@@ -124,6 +124,7 @@ function corps(f: FicheTache): string {
     for (const [chemin, contenu] of lus) parties.push(bloc(chemin, contenu));
   }
   parties.push('', '## What to write', ce_qu_il_faut_ecrire(f));
+  if (f.role === 'batisseuse' && lus.length && !f.livrable.portee) parties.push('The verified files above are added to your answer automatically: write the files you add or change, starting with the main file.');
   if (f.livrable.portee) parties.push(`Only write these paths: ${f.livrable.portee.join(', ')}. To delete one of them, add a line "DELETE: <path>" after your code blocks.`);
   parties.push('', '## Done when', ...f.fini_quand.map((x, i) => `${i + 1}. ${x}`));
   if (f.playbook) parties.push('', `## Guide: ${f.playbook.titre}`, f.playbook.texte);

@@ -185,7 +185,10 @@ export class Porte {
     const t = this.enCours();
     if (!t) throw new ErreurPorte('No task in progress: take one first');
     const lu = lireReponse(reponse, { module: t.fiche.livrable.module, ...(t.fiche.livrable.portee ? { portee: t.fiche.livrable.portee } : {}) });
-    const livrable: Livrable = { fichiers: lu.fichiers, ...(lu.supprimes ? { supprimes: lu.supprimes } : {}) };
+    // A builder assembles verified parts: their files come with the answer, so a chat only writes what it
+    // adds or changes. A repository cell keeps its write scope: nothing is added there.
+    const parties = t.assignment.caste === 'batisseuse' && !t.fiche.livrable.portee ? Object.assign({}, ...(t.assignment.enfants_valides ?? []).map((e) => e.livrable.fichiers)) : {};
+    const livrable: Livrable = { fichiers: { ...parties, ...lu.fichiers }, ...(lu.supprimes ? { supprimes: lu.supprimes } : {}) };
     try {
       validateLivrable(livrable);
     } catch (e) {

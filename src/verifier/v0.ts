@@ -111,10 +111,19 @@ const WASM_WORKER = new URL(`./wasm-worker${extname(fileURLToPath(import.meta.ur
 const WASM_MEMORY_MB = 256;
 const WASM_LABEL = 'WebAssembly (QuickJS: no network, no disk, bounded memory)';
 
+/**
+ * The processor cores this server may use: KICKSWARM_THREADS when set (a small hosted container often
+ * reports the host's cores, not its own share), else what Node sees.
+ */
+export function coeursDisponibles(): number {
+  const n = Number(process.env.KICKSWARM_THREADS);
+  return Math.max(1, Number.isInteger(n) && n > 0 ? n : availableParallelism());
+}
+
 // Warm sandboxes: one thread per processor core, each keeping its QuickJS module loaded. Every run still gets
 // a fresh engine; a thread is retired after RUNS_PAR_FIL runs, or at once after a run that hit a limit.
 const RUNS_PAR_FIL = 25;
-const FILS_MAX = Math.max(1, availableParallelism());
+const FILS_MAX = coeursDisponibles();
 
 interface Fil {
   w: Worker;

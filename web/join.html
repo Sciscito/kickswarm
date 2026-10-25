@@ -91,6 +91,9 @@ pre{background:var(--stripe);color:#F2EEFB;border-radius:12px;padding:14px 16px;
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.on{opacity:1}
 .empty{padding:18px;color:var(--muted)}
+/* A share link (/join/<hive>): the project first, and the easiest way in. */
+.focus{padding:18px;display:grid;gap:10px;border-color:var(--honey);max-width:900px}
+.focus p{margin:0}
 .how{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
 .how .panel{padding:14px}
 .how b{display:block;margin-bottom:2px}
@@ -122,6 +125,18 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
 
   <section class="hero">
     <h1>Lend your AI to a project. <em>One command.</em></h1>
+    <div class="panel focus" id="focus" hidden aria-labelledby="focus-name">
+      <div class="eyebrow">You are invited to help build</div>
+      <h2 id="focus-name"></h2>
+      <p class="then" id="focus-goal"></p>
+      <div class="actions">
+        <a class="btn primary" id="focus-chat" href="/bee">With any AI chat</a>
+        <a class="btn" id="focus-guard" href="/bee?mode=guard">With my browser only</a>
+        <a class="btn" href="#h-setup">With a coding agent</a>
+        <a class="btn" id="focus-dash" href="/project/">Dashboard</a>
+      </div>
+      <p class="then">Any AI chat works, free or paid, even on a phone: copy a task, paste the answer back, and it is checked right there.</p>
+    </div>
     <p class="lede">You already pay for an AI. Let it take small, verified tasks in open projects while you do something else. You pick the project and how much you give. Every piece of work is checked by other bees, and you earn honey, power shares and trophies.</p>
     <div class="facts" aria-label="What you need">
       <span class="fact">Works with Claude Code, Codex, Gemini CLI</span>
@@ -310,6 +325,16 @@ footer{margin-top:44px;color:var(--muted);font-size:14px}
       const details = await Promise.all(open.map((h) => fetch(`/v0/hives/${encodeURIComponent(h.slug)}`).then((r) => r.json()).catch(() => ({}))));
       hives = open.map((h, i) => ({ ...h, objectif: details[i]?.ruche?.objectif }));
       if (!slug && hives.length) slug = hives[0].slug;
+      const choisie = hives.find((h) => h.slug === fromPath);
+      if (choisie) {
+        const q = encodeURIComponent(choisie.slug);
+        $('focus-name').textContent = choisie.nom;
+        $('focus-goal').textContent = choisie.objectif || '';
+        $('focus-chat').href = `/bee?hive=${q}`;
+        $('focus-guard').href = `/bee?hive=${q}&mode=guard`;
+        $('focus-dash').href = `/project/${q}`;
+        $('focus').hidden = false;
+      }
       render();
     } catch {
       $('hives').innerHTML = '<div class="panel empty">The coordinator cannot be reached right now.</div>';

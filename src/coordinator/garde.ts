@@ -1,5 +1,5 @@
-import { availableParallelism } from 'node:os';
 import type { IncomingMessage } from 'node:http';
+import { coeursDisponibles } from '../verifier/v0.js';
 import { OspError } from './coordinator.js';
 
 // The public coordinator's guard (`kickswarm coordinator --public`): nobody tests the network before
@@ -11,6 +11,14 @@ import { OspError } from './coordinator.js';
 export interface OptionsGarde {
   /** Behind a reverse proxy on this machine (Caddy): the client's address is the last X-Forwarded-For hop. */
   proxy?: boolean;
+  /**
+   * Behind a hosting provider's proxy (Render, Railway…), which reaches the coordinator from its own
+   * addresses: the client's address is the last X-Forwarded-For hop, whoever relays it. Only for a
+   * coordinator that cannot be reached except through that proxy.
+   */
+  proxyDistant?: boolean;
+  /** Wrong owner codes from one address before it waits (docs/host-your-hive.md). */
+  codesFauxParQuartDHeure?: number;
   lecturesParMinute?: number;
   ecrituresParMinute?: number;
   propositionsParHeure?: number;
@@ -46,7 +54,8 @@ export class Garde {
   adresse(req: IncomingMessage): string {
     const brute = req.socket.remoteAddress ?? 'unknown';
     const xff = req.headers['x-forwarded-for'];
-    if (this.opts.proxy && BOUCLE.has(brute) && typeof xff === 'string' && xff.trim()) return xff.split(',').at(-1)!.trim();
+    const relaye = this.opts.proxyDistant || (this.opts.proxy && BOUCLE.has(brute));
+    if (relaye && typeof xff === 'string' && xff.trim()) return xff.split(',').at(-1)!.trim();
     return brute;
   }
 
@@ -80,6 +89,25 @@ export class Garde {
     if (route === 'POST /v0/private') this.compter(a, 'v', this.opts.privesParJour ?? 5, 24 * 60 * MINUTE, 'Too many private hives created from your address today');
   }
 
+  /**
+   * Before an owner code is even compared: an address past its wrong tries waits a quarter of an hour,
+   * so a guess, right or wrong, gets the same answer.
+   */
+  avantCode(req: IncomingMessage): void {
+    if (this.estLocal(req)) return;
+    const f = this.fenetres.get(`o:${this.adresse(req)}`);
+    if (f && f.fin >= Date.now() && f.n >= (this.opts.codesFauxParQuartDHeure ?? 10)) throw new OspError('Too many wrong owner codes from your address: wait a quarter of an hour', 429);
+  }
+
+  /** Counts one wrong owner code. */
+  codeFaux(req: IncomingMessage): void {
+    if (this.estLocal(req)) return;
+    const cle = `o:${this.adresse(req)}`;
+    const f = this.fenetres.get(cle);
+    if (!f || f.fin < Date.now()) this.fenetres.set(cle, { n: 1, fin: Date.now() + 15 * MINUTE });
+    else f.n++;
+  }
+
   /** Opens a real-time stream, within the caps; the returned function closes it. */
   ouvrirFlux(req: IncomingMessage): () => void {
     const local = this.estLocal(req);
@@ -102,7 +130,7 @@ export class Garde {
 
   /** Runs heavy work within the concurrency cap; a full queue answers 503 at once. */
   async lourd<T>(fn: () => Promise<T>): Promise<T> {
-    const max = this.opts.lourdesSimultanees ?? Math.max(1, availableParallelism());
+    const max = this.opts.lourdesSimultanees ?? coeursDisponibles();
     if (this.enCours >= max) {
       if (this.file.length >= (this.opts.fileMax ?? 300)) throw new OspError('The network is very busy: your bee will try again in a minute', 503);
       // The slot is handed over by the request that leaves: nobody can jump the queue.

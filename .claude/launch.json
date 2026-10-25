@@ -21,6 +21,22 @@
       "port": 7790
     },
     {
+      "name": "dev-creator",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "dist/cli.js",
+        "coordinator",
+        "--public",
+        "--port",
+        "7799",
+        "--data",
+        "data/dev-creator",
+        "--owner-code",
+        "local-dev-owner-code-only"
+      ],
+      "port": 7799
+    },
+    {
       "name": "dev-bee-live",
       "runtimeExecutable": "node",
       "runtimeArgs": [

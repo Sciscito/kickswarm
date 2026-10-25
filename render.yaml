@@ -1,0 +1,20 @@
+# Your own hive server on Render, in a few clicks (docs/host-your-hive.md).
+# A persistent disk keeps the registry across restarts and deploys; free instances cannot have one.
+services:
+  - type: web
+    name: kickswarm-hive
+    runtime: docker
+    plan: 0.5c-512mb
+    region: frankfurt
+    healthCheckPath: /healthz
+    disk:
+      name: kickswarm-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      # Unlocks the /create page. Render draws it at random; read it in the service's Environment tab.
+      - key: KICKSWARM_OWNER_CODE
+        generateValue: true
+      # A small instance: two sandbox threads fit in its memory.
+      - key: KICKSWARM_THREADS
+        value: "2"
