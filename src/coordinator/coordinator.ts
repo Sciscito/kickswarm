@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { availableParallelism } from 'node:os';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { idRuchePrivee, normaliserCode } from '../protocol/builders.js';
@@ -254,7 +255,7 @@ interface State {
 /** The commands that change the state. Each one is written in full to the registry (OSP v0.2, §6.1). */
 export type CommandeType =
   | 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'engageVerdict' | 'submitVerdict' | 'inviter' | 'rejoindre'
-  | 'recuDepot' | 'lienGithub' | 'fusionDepot';
+  | 'recuDepot' | 'lienGithub' | 'fusionDepot' | 'preparerPieges';
 
 /**
  * The content of a `commande` entry: the signed objects received, plus everything that is not
@@ -355,6 +356,8 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,39}$/;
 const DEFAULT_BUDGET = { tokens_max: 200_000, duree_max_s: 1800 };
 /** Version 2: the snapshot on disk is written at a seal, at most this often (and at launch, restart and stop). */
 const INSTANTANE_MS = 30_000;
+/** Trap cells prepared at the same time, in the background (each one runs its mutants one by one). */
+const PREPARATIONS = Math.max(1, Math.floor(availableParallelism() / 2));
 const MAX_IMPASSES = 20;
 
 /** A uniform float on [0, 1), 53 bits drawn from the cryptographic generator. */
@@ -752,6 +755,7 @@ export class Coordinator {
         case 'submitResult': await this.submitResult(e.resultat, e.livrable); break;
         case 'submitDecomposition': await this.submitDecomposition(e.decomposition); break;
         case 'engageVerdict': this.engagerVerdict(e.engagement); break;
+        case 'preparerPieges': await this.preparerPieges((c.entree as { pour: Hash }).pour); break;
         case 'submitVerdict': await this.submitVerdict(e.verdict); break;
         case 'inviter': this.inviter(e.invitation); break;
         case 'rejoindre': this.rejoindre(e.adhesion); break;
@@ -1783,33 +1787,106 @@ export class Coordinator {
     const verifs = replay ? replay.verifs : await this.verifyResult(res, livrable);
     const [rapport, ...mutants] = verifs;
     if (!rapport) throw new ReplayDivergence('Verification report missing from the registry');
-    return this.run('submitResult', { resultat: res, livrable }, verifs, () => this.doSubmitResult(res, livrable, rapport, mutants));
+    const out = this.run('submitResult', { resultat: res, livrable }, verifs, () => this.doSubmitResult(res, livrable, rapport, mutants));
+    // The trap cells of this result are prepared afterwards, in the background: the bee gets its answer at once.
+    if (!replay && !this.enRecuperation && out.statut === 'en_verification' && this.params.taux_pieges > 0 && estCritereTests(this.critereOf(res.alveole)!)) {
+      this.planifierPieges(out.resultat);
+    }
+    return out;
   }
 
-  /**
-   * Side-effect-free checks, then automatic verification, outside the transaction. If the deliverable
-   * passes, we prepare what is needed to make traps (P0-3): its mutants, run through only the checks
-   * that the guards re-run. Those they reject can be handed to them in place of the real one.
-   */
+  /** Side-effect-free checks, then automatic verification, outside the transaction. */
   private async verifyResult(res: Result, livrable: Livrable): Promise<VerifReport[]> {
     const rec = this.checkResult(res, livrable);
     if (this.occupees.has(rec.id)) throw new OspError('A verification is already in progress for this cell', 409);
     this.occupees.add(rec.id);
     try {
-      const rapport = await this.verifier(rec.cell.critere_fini, livrable, { caches: this.cachesFor(rec) });
-      const crit = rec.cell.critere_fini;
-      if (!rapport.ok || this.params.taux_pieges <= 0 || this.params.gardiennes_v0 <= 0 || !estCritereTests(crit)) return [rapport];
-      const reports = [rapport];
-      let tues = 0;
-      for (const m of mutants(livrable, { max: this.params.pieges_essais, version: this.params.moteur_mutation })) {
-        const r = await this.verifier(crit, m.livrable, { sansCaches: true });
-        reports.push(r);
-        if (!r.ok && ++tues >= 3) break;
-      }
-      return reports;
+      return [await this.verifier(rec.cell.critere_fini, livrable, { caches: this.cachesFor(rec) })];
     } finally {
       this.occupees.delete(rec.id);
     }
+  }
+
+  // ---------------------------------------------------------------- trap cells, prepared in the background (P0-3)
+
+  private readonly filePieges: Hash[] = [];
+  private preparationsEnCours = 0;
+  private readonly attentesPieges: Array<() => void> = [];
+
+  private planifierPieges(id: Hash): void {
+    this.filePieges.push(id);
+    // A long backlog holds only stale results: the oldest go first, they have had their guards.
+    if (this.filePieges.length > 2000) this.filePieges.shift();
+    this.lancerPreparations();
+  }
+
+  private lancerPreparations(): void {
+    while (this.preparationsEnCours < PREPARATIONS && this.filePieges.length) {
+      const id = this.filePieges.shift()!;
+      this.preparationsEnCours++;
+      void this.preparerPieges(id)
+        .catch(() => undefined)
+        .finally(() => {
+          this.preparationsEnCours--;
+          this.lancerPreparations();
+          if (!this.preparationsEnCours && !this.filePieges.length) for (const ok of this.attentesPieges.splice(0)) ok();
+        });
+    }
+  }
+
+  /** Waits until the trap cells planned so far are prepared (tests, demos). */
+  async piegesPrets(): Promise<void> {
+    if (!this.preparationsEnCours && !this.filePieges.length) return;
+    await new Promise<void>((ok) => this.attentesPieges.push(ok));
+  }
+
+  /**
+   * Prepares what is needed to make trap cells for a result awaiting its guards: its mutants, run
+   * through only the checks the guards re-run, at background priority. Those they reject can later be
+   * handed to a guard in place of the real one. Recorded as a command, with the reports, so it replays.
+   */
+  async preparerPieges(id: Hash): Promise<void> {
+    const replay = this.replayNext;
+    let essais: VerifReport[];
+    if (replay) essais = replay.verifs;
+    else {
+      const rr = this.state.results[id];
+      const crit = rr ? this.critereOf(rr.resultat.alveole) : undefined;
+      if (!rr || !crit || rr.statut !== 'en_verification' || rr.mutants.length || !estCritereTests(crit)) return;
+      essais = [];
+      let tues = 0;
+      for (const m of mutants(rr.livrable, { max: this.params.pieges_essais, version: this.params.moteur_mutation })) {
+        // Settled meanwhile: no trap will ever be drawn for it.
+        if (this.state.results[id]?.statut !== 'en_verification') return;
+        const r = await this.verifier(crit, m.livrable, { sansCaches: true, fond: true });
+        essais.push(r);
+        if (!r.ok && ++tues >= 3) break;
+      }
+      if (!essais.length) return;
+    }
+    try {
+      this.run('preparerPieges', { pour: id }, essais, () => this.doPreparerPieges(id, essais));
+    } catch (e) {
+      // Live, the result may have moved on during the runs: nothing to record then.
+      if (replay) throw e;
+    }
+  }
+
+  private doPreparerPieges(id: Hash, essais: VerifReport[]): void {
+    const rr = this.state.results[id];
+    if (!rr || rr.statut !== 'en_verification' || rr.mutants.length) throw new OspError('No trap cells to prepare for this result', 409);
+    rr.mutants = geler(this.piegesDepuis(rr.livrable, essais));
+  }
+
+  /** The mutants recomputed identically (the engine is deterministic), kept when the guards' checks reject them. */
+  private piegesDepuis(livrable: Livrable, essais: VerifReport[]): Array<{ livrable: Livrable; echecs: number }> {
+    const candidats = essais.length ? mutants(livrable, { max: this.params.pieges_essais, version: this.params.moteur_mutation }) : [];
+    if (essais.length > candidats.length) throw new ReplayDivergence('More mutant reports than mutants');
+    // A good trap loads and passes some of the tests: only a real verification exposes it.
+    return essais
+      .map((r, i) => ({ livrable: candidats[i]!.livrable, echecs: r.ok ? 0 : r.tests.filter((t) => !t.ok).length }))
+      .filter((m) => m.echecs > 0)
+      .sort((a, b) => a.echecs - b.echecs);
   }
 
   private checkResult(res: Result, livrable: Livrable): CellRecord {
@@ -1848,14 +1925,8 @@ export class Coordinator {
     const rec = this.checkResult(res, livrable);
     if (rec.state === 'reservee') transition(rec, 'en_cours');
     const id = hashOf(res);
-    // The mutants are recomputed identically (the engine is deterministic); only the reports come from execution.
-    const candidats = essais.length ? mutants(livrable, { max: this.params.pieges_essais, version: this.params.moteur_mutation }) : [];
-    if (essais.length > candidats.length) throw new ReplayDivergence('More mutant reports than mutants');
-    // A good trap loads and passes some of the tests: only a real verification exposes it.
-    const pieges = essais
-      .map((r, i) => ({ livrable: candidats[i]!.livrable, echecs: r.ok ? 0 : r.tests.filter((t) => !t.ok).length }))
-      .filter((m) => m.echecs > 0)
-      .sort((a, b) => a.echecs - b.echecs);
+    // Registries written before background preparation carry the trap mutants' reports with the submission.
+    const pieges = this.piegesDepuis(livrable, essais);
     // Frozen copies: written once, shared by every later snapshot, fingerprinted once.
     this.state.results[id] = {
       resultat: geler(structuredClone(res)), livrable: geler(structuredClone(livrable)), rapport: geler(structuredClone(rapport)),

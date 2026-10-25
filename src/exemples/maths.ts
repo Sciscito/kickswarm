@@ -93,6 +93,8 @@ const ISSUES: Record<Outcome, string> = {
 /** A scripted bee on the “maths” hive, plugged straight into an in-memory coordinator. */
 export async function abeilleScriptee(c: Coordinator, bee: Identity, opts: { bug?: boolean } = {}): Promise<ActionAbeille | null> {
   const a = await scriptedBee(directAccess(c, bee), MATHS_SCRIPT, opts);
+  // Trap cells are prepared in the background: a scripted swarm lets them finish before the next bee acts.
+  await c.piegesPrets();
   if (!a) return null;
   const detail = a.outcome === 'rejected' ? `: ${a.motif}` : a.outcome === 'delivered' || a.outcome === 'assembled' ? ` (${a.motif}), under verification` : '';
   return { caste: a.caste, chemin: a.chemin, issue: ISSUES[a.outcome] + detail, piege: a.outcome.startsWith('trap') || undefined };

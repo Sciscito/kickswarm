@@ -454,6 +454,17 @@ async function reverify(
     }
   } else if (c.type === 'submitVerdict') {
     cible = coord.resultForReverify((c.entree as { verdict: Verdict }).verdict.resultat);
+  } else if (c.type === 'preparerPieges') {
+    // P0-3, prepared in the background since: the same mutants, re-run with the guards' checks only.
+    const r = coord.resultForReverify((c.entree as { pour: Hash }).pour);
+    if (!r) return;
+    const ms = mutants(r.livrable, { max: piegesEssais, version: moteur });
+    for (const [i, rapport] of c.verifs.entries()) {
+      const m = ms[i];
+      const again = m ? await verifierV0(r.critere, m.livrable, { sansCaches: true }) : undefined;
+      if (!again || again.ok !== rapport.ok) issues.push(`#${seq}: trap mutant ${i + 1} is recorded as ${rapport.ok ? 'passing' : 'failing'} the guards’ checks, a fresh run disagrees`);
+    }
+    return;
   }
   if (!cible) return;
   let caches: TestCase[] | undefined;

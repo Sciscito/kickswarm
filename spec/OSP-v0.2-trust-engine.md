@@ -441,7 +441,14 @@ A split into 12 cells went from 2.4 s to 15 ms at 400 projects; a sandbox run fr
 | 500, hyperactive | collapsed | saturated |
 | 1,000 at a realistic pace (60 s per task, 20 s per check) | — | holds: 88% CPU, a start in 0.5 s, a submission in 2.8 s, 3 refusals in 150 s |
 
-**The next limits**, in the order the profiler and the load test show them: every submission runs up to 9 deliverables in the sandbox (the deliverable and its trap mutants), which fills the heavy queue first; then the rollback snapshot of the cells still open, on a single thread.
+**Trap cells prepared in the background.** A submission used to run up to 9 deliverables before answering: its own, then up to 8 trap mutants. It now runs its own only. The mutants are tried afterwards, at background priority (behind every other sandbox run, on at most half the threads), and recorded by their own command, `preparerPieges`, with their reports, so the replay and `--reverify` check them as before; registries that carry them with the submission still replay. A result settled in the meantime needs no trap and is skipped. A verdict no longer goes through the heavy queue: it is refused at once while the reveal is not open, and re-runs a deliverable only to settle a rejection.
+
+| Simulated bees | Before | After |
+|---|---|---|
+| 200, hyperactive | heavy queue up to 182, a submission in 2.5 s, 7 honey cells a minute | heavy queue up to 51, a submission in 1.1 s, 15 honey cells a minute |
+| 1,000 at a realistic pace | heavy queue full (300), a submission in 2.8 s | heavy queue up to 18, a submission in 2.0 s, no "busy" refusal |
+
+**The next limit** is the coordinator's single main thread, at about 1,000 agents working at a realistic pace on this machine: the rollback snapshot of the cells still open, then the sweep of expired leases. Past it, the answers slow down and some signed requests outlive their 4-second drand window. The way through is to split the work across threads or coordinators (federation, §6.10).
 
 **Known limits:**
 

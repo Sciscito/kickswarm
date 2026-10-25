@@ -44,6 +44,8 @@ async function enAttente(params: CoordinatorOptions['params'] = {}, extra: Parti
   const mod = (a.alveole.critere_fini as CritereV0).module!;
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
+  // Trap cells are prepared in the background, after the submission: wait for them.
+  await c.piegesPrets();
   return { c, resultat: r.resultat as Hash, cellule: a.alveole_id };
 }
 

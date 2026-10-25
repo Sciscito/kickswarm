@@ -33,6 +33,8 @@ async function resultatEnAttente(extra: Partial<CoordinatorOptions> = {}) {
   const mod = a.alveole.critere_fini.module!;
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
+  // Trap cells are prepared in the background, after the submission: wait for them.
+  await c.piegesPrets();
   assert.equal(r.statut, 'en_verification');
   const tirer = (bee: Identity) => {
     for (let i = 0; i < 50; i++) {

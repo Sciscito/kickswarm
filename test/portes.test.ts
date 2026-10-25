@@ -158,6 +158,8 @@ test('chat door and guard door: a chat answer becomes honey, a browser with no A
     const rendu = await chat.rendre(bon.livrable, 'Le Chat');
     assert.equal(rendu.statut, 'en_verification', rendu.motif);
     assert.equal(chat.enCours(), null);
+    // Trap cells are prepared in the background, after the submission.
+    await c.piegesPrets();
 
     // The guard door: only verifications. At a trap rate of 1, a newcomer first gets a trap.
     const issues: string[] = [];

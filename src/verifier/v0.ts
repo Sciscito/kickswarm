@@ -124,6 +124,11 @@ interface Fil {
 
 const fils: Fil[] = [];
 const enAttenteDeFil: Array<(f: Fil) => void> = [];
+// Background runs (preparing trap cells) wait behind everything else, and never hold more than half the
+// threads: a bee's submission or a guard's check is never stuck behind them.
+const enAttenteDeFond: Array<(f: Fil) => void> = [];
+const FOND_MAX = Math.max(1, Math.floor(FILS_MAX / 2));
+let fondEnCours = 0;
 let prochainId = 0;
 
 function nouveauFil(): Fil {
@@ -140,27 +145,32 @@ function nouveauFil(): Fil {
   return f;
 }
 
-function prendreFil(): Promise<Fil> {
-  const libre = fils.find((f) => !f.occupe) ?? (fils.length < FILS_MAX ? nouveauFil() : undefined);
+function prendreFil(fond = false): Promise<Fil> {
+  const libre = fond && (fondEnCours >= FOND_MAX || enAttenteDeFil.length) ? undefined : (fils.find((f) => !f.occupe) ?? (fils.length < FILS_MAX ? nouveauFil() : undefined));
   if (libre) {
     libre.occupe = true;
     libre.w.ref();
+    if (fond) fondEnCours++;
     return Promise.resolve(libre);
   }
-  return new Promise((ok) => enAttenteDeFil.push(ok));
+  return new Promise((ok) => (fond ? enAttenteDeFond : enAttenteDeFil).push(ok));
 }
 
-function rendreFil(f: Fil, retirer: boolean): void {
+function rendreFil(f: Fil, retirer: boolean, fond = false): void {
+  if (fond) fondEnCours--;
   if (retirer) {
     const i = fils.indexOf(f);
     if (i >= 0) fils.splice(i, 1);
     void f.w.terminate();
   }
-  const suivant = enAttenteDeFil.shift();
+  // Urgent runs first; a background run only within its share of the threads.
+  const urgent = enAttenteDeFil.shift();
+  const suivant = urgent ?? (fondEnCours < FOND_MAX ? enAttenteDeFond.shift() : undefined);
   if (suivant) {
     const g = retirer ? nouveauFil() : f;
     g.occupe = true;
     g.w.ref();
+    if (!urgent) fondEnCours++;
     suivant(g);
     return;
   }
@@ -171,8 +181,8 @@ function rendreFil(f: Fil, retirer: boolean): void {
   }
 }
 
-async function runWasm(fichiers: Record<string, string>, input: string, timeoutMs: number): Promise<RunOutput> {
-  const f = await prendreFil();
+async function runWasm(fichiers: Record<string, string>, input: string, timeoutMs: number, fond = false): Promise<RunOutput> {
+  const f = await prendreFil(fond);
   return new Promise((resolve) => {
     const id = ++prochainId;
     let fini = false;
@@ -183,7 +193,7 @@ async function runWasm(fichiers: Record<string, string>, input: string, timeoutM
       f.w.off('message', surMessage);
       f.w.off('error', surErreur);
       f.w.off('exit', surSortie);
-      rendreFil(f, retirer);
+      rendreFil(f, retirer, fond);
       resolve({ ...o, code: 0, label: WASM_LABEL });
     };
     const surMessage = (m: { id: number; stdout: string; stderr: string; timedOut: boolean }) => {
@@ -285,8 +295,8 @@ function collect(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEn
 }
 
 /** Runs the runner in the chosen sandbox: in memory for WebAssembly, from a throwaway folder otherwise. */
-async function execute(livrable: Livrable, input: string, timeoutMs: number, mode: SandboxMode): Promise<RunOutput> {
-  if (mode === 'wasm') return runWasm(livrable.fichiers, input, timeoutMs);
+async function execute(livrable: Livrable, input: string, timeoutMs: number, mode: SandboxMode, fond = false): Promise<RunOutput> {
+  if (mode === 'wasm') return runWasm(livrable.fichiers, input, timeoutMs, fond);
   const dir = await mkdtemp(join(tmpdir(), 'osp-v0-'));
   try {
     for (const [name, content] of Object.entries(livrable.fichiers)) {
@@ -305,7 +315,7 @@ async function execute(livrable: Livrable, input: string, timeoutMs: number, mod
 export function executeursNode(opts: VerifOptions = {}): Executeurs {
   return {
     verifierMode: () => void resolveSandbox(opts.sandbox),
-    js: (livrable, input, timeoutMs) => execute(livrable, input, timeoutMs, resolveSandbox(opts.sandbox)),
+    js: (livrable, input, timeoutMs) => execute(livrable, input, timeoutMs, resolveSandbox(opts.sandbox), opts.fond),
     luau: (o) => runLuau(o),
   };
 }

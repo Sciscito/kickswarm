@@ -132,6 +132,8 @@ test('a Roblox hive in Luau: the playbook guides the bees, a guard catches a Lua
       return a;
     };
     const a = await scriptedBee(h, ROBLOX_SCRIPT);
+    // Trap cells are prepared in the background: let them finish before the next bee acts.
+    await c.piegesPrets();
     if (!a) continue;
     issues.push(a.outcome);
     if (a.outcome === 'decomposition_proposed' && a.decoupage) c.decide(makeDecision(fondateur, 'approbation_decoupage', a.decoupage, 'Pure modules first'));

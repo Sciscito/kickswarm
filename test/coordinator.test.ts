@@ -143,6 +143,8 @@ test('trap cells: the careful guard earns, the complacent one loses half', async
   const { SOLUTIONS } = await import('../src/exemples/maths.js');
   const livrable: Livrable = { fichiers: { [mod]: SOLUTIONS[mod]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
+  // Trap cells are prepared in the background, after the submission: wait for them.
+  await c.piegesPrets();
   // Drawn on this result, a newcomer is sure to receive (rate 1) a mutant of the real deliverable.
   const gardienne = (bee: Identity) => {
     for (let i = 0; i < 50; i++) {

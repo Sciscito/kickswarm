@@ -61,6 +61,8 @@ export interface VerifOptions {
   caches?: TestCase[];
   /** For a worker or a guard, who never see the hidden tests: everything else only. */
   sansCaches?: boolean;
+  /** Background work (preparing trap cells): it waits behind every other run. */
+  fond?: boolean;
 }
 
 // Paths inside a deliverable (OSP v0.3 §3.2, repo deliverables): up to 8 folders, plain characters,

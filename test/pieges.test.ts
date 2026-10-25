@@ -31,6 +31,8 @@ async function resultatEnAttente(params: CoordinatorOptions['params'] = {}, extr
   const critere = a.alveole.critere_fini as CritereV0;
   const livrable: Livrable = { fichiers: { [critere.module!]: SOLUTIONS[critere.module!]! } };
   const r = await c.submitResult(makeResult(kenji, a.alveole_id, 'ouvriere', livrable), livrable);
+  // Trap cells are prepared in the background, after the submission: wait for them.
+  await c.piegesPrets();
   assert.equal(r.statut, 'en_verification');
   return { c, resultat: r.resultat as Hash, cellule: a.alveole_id, critere, livrable };
 }
@@ -181,9 +183,10 @@ test('audit: a forged mutant report, or a removed secret draw, is exposed', asyn
 
   // A mutant declared "rejected by the guards" although it passes: the re-verification sees it.
   const faux = structuredClone(c.registry.entries);
-  const sub = faux.find((e) => e.nature === 'commande' && (e.donnees as CommandeDonnees).type === 'submitResult' && (e.donnees as CommandeDonnees).verifs.length > 1)!;
+  // The trap mutants are prepared in the background, by their own command, with their reports.
+  const sub = faux.find((e) => e.nature === 'commande' && (e.donnees as CommandeDonnees).type === 'preparerPieges' && (e.donnees as CommandeDonnees).verifs.length > 0)!;
   const rapports = (sub.donnees as CommandeDonnees).verifs;
-  rapports[1] = { ...rapports[1]!, ok: !rapports[1]!.ok };
+  rapports[0] = { ...rapports[0]!, ok: !rapports[0]!.ok };
   const r1 = await auditRegistry(faux, { reverifier: true });
   assert.equal(r1.ok, false);
 

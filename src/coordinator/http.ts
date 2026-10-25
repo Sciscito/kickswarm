@@ -92,8 +92,12 @@ const ID_PRIVE = /^p[0-9a-f]{32}$/;
 /** At most this many registry entries per read: a client pages with `?since=`. */
 export const PAGE_REGISTRE = 2000;
 
-/** Heavy requests: they run deliverables or measure tests, so they wait in the guard's queue. */
-const LOURDES = new Set(['POST /v0/work/submit', 'POST /v0/work/decompose', 'POST /v0/work/verdict', 'POST /v0/hives', 'POST /v0/private']);
+/**
+ * Heavy requests: they run deliverables or measure tests, so they wait in the guard's queue. A verdict is
+ * not one: it is refused at once while the reveal is not open, and re-runs a deliverable only to settle a
+ * rejection, which only a guard with a committed, open verdict can trigger (and the sandbox threads bound it).
+ */
+const LOURDES = new Set(['POST /v0/work/submit', 'POST /v0/work/decompose', 'POST /v0/hives', 'POST /v0/private']);
 
 export interface OptionsServeur {
   /** Public mode (`kickswarm coordinator --public`): budgets per address, capped streams, bounded queue. */
