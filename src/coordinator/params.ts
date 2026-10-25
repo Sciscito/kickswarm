@@ -43,6 +43,11 @@ export interface Params {
   prive: boolean;
   /** Version of the mutation engine (it is part of the replay). A registry that does not announce it uses version 1. */
   moteur_mutation: number;
+  /**
+   * How the state is fingerprinted. Version 2: the fingerprint goes into each seal, and the big immutable
+   * pieces count by their own hash; version 1, in older registries: the full state hashed after every command.
+   */
+  empreinte_etat: number;
   /** OSP v0.2 P0-3: maximum delay before a registry entry is published, even if a verification is still open. */
   embargo_max_ms: number;
   /** OSP v0.2 §3.2: minimum share of mutants that a child's tests must detect. */
@@ -116,6 +121,7 @@ export const DEFAULT_PARAMS: Params = {
   taux_pieges_min: 0.01,
   pieges_essais: 8,
   moteur_mutation: 3,
+  empreinte_etat: 2,
   prive: false,
   embargo_max_ms: 2 * HEURE,
   score_mutation_min: 0.8,
@@ -145,8 +151,8 @@ export const DEFAULT_PARAMS: Params = {
   allocation_fondateur_duree_ms: 4 * 365 * 24 * HEURE,
   pionniers: 1000,
   abeilles_max: 3,
-  sceau_intervalle_ms: 2000,
-  sceau_max_commandes: 50,
+  sceau_intervalle_ms: 5000,
+  sceau_max_commandes: 100,
   fenetre_requete_ms: 5 * 60_000,
   balise_decalage: 3,
   fenetre_balise_ms: 4000,

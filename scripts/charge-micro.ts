@@ -5,7 +5,7 @@
 // It opens hives one batch after another (each split into 12 cells, as a real project would be), and after
 // each batch times a trivial command and its ingredients: the state hash, the state file, the signatures.
 
-import { mkdtempSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -74,11 +74,16 @@ async function main(): Promise<void> {
       decoupe = performance.now() - t0;
       c.decide(makeDecision(fondateur, 'approbation_decoupage', d.decoupage, 'ok'));
     }
-    const commande = chrono(() => c.release(makeRequete(passante, 'release')), 10);
+    const commande = chrono(() => c.release(makeRequete(passante, 'release')), 50);
     const hash = chrono(() => c.stateHash(), 5);
     const cellules = ouvertes * 13;
-    const mo = (f: string) => `${(statSync(join(dir, f)).size / 1e6).toFixed(1)} MB`;
-    console.log(`${String(palier).padStart(5)} | ${String(cellules).padStart(5)} | ${mo('etat.json').padStart(10)} | ${mo('registre.jsonl').padStart(8)} | ${commande.toFixed(0).padStart(12)} ms | ${hash.toFixed(0).padStart(16)} ms | ${decoupe.toFixed(0).padStart(10)} ms`);
+    // The snapshot is etat2.json since the state fingerprint version 2 (etat.json before).
+    c.fermer();
+    const mo = (...fs: string[]) => {
+      const f = fs.find((x) => existsSync(join(dir, x)));
+      return f ? `${(statSync(join(dir, f)).size / 1e6).toFixed(1)} MB` : '-';
+    };
+    console.log(`${String(palier).padStart(5)} | ${String(cellules).padStart(5)} | ${mo('etat2.json', 'etat.json').padStart(10)} | ${mo('registre.jsonl').padStart(8)} | ${commande.toFixed(1).padStart(12)} ms | ${hash.toFixed(1).padStart(16)} ms | ${decoupe.toFixed(0).padStart(10)} ms`);
   }
 }
 

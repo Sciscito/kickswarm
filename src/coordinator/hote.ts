@@ -54,6 +54,16 @@ export class Hote {
     }
   }
 
+  /** Waits until every private hive brought back from disk has replayed what came after its last snapshot. */
+  async pret(): Promise<void> {
+    await Promise.all([...this.prives.values()].map((c) => c.pret()));
+  }
+
+  /** On a clean stop: a last seal and snapshot for every private hive. */
+  fermer(): void {
+    for (const c of this.prives.values()) c.fermer();
+  }
+
   private dossierPrives(): string | undefined {
     return this.opts.dataDir ? join(this.opts.dataDir, 'prives') : undefined;
   }

@@ -95,15 +95,25 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** The real drand network, over HTTP, with several relays and systematic verification. */
 export class DrandHttp implements SourceBalise {
   private readonly cache = new Map<number, Balise>();
+  /** Rounds being fetched: every request waiting for the same round shares one fetch and one BLS check. */
+  private readonly enCours = new Map<number, Promise<Balise>>();
 
   constructor(
     readonly info: BaliseInfo = QUICKNET,
     private readonly relais: string[] = ['https://api.drand.sh', 'https://drand.cloudflare.com', 'https://api2.drand.sh', 'https://api3.drand.sh'],
   ) {}
 
-  async get(round: number): Promise<Balise> {
+  get(round: number): Promise<Balise> {
     const hit = this.cache.get(round);
-    if (hit) return hit;
+    if (hit) return Promise.resolve(hit);
+    const deja = this.enCours.get(round);
+    if (deja) return deja;
+    const p = this.chercher(round).finally(() => this.enCours.delete(round));
+    this.enCours.set(round, p);
+    return p;
+  }
+
+  private async chercher(round: number): Promise<Balise> {
     const attente = publication(this.info, round) - Date.now();
     if (attente > 0) await sleep(attente + 150);
     let derniere = 'no relay reachable';

@@ -279,10 +279,10 @@ A single violation, and the alert is public.
   - each random draw;
   - each coordinator signature;
   - each verifier report;
-  - the hash of the resulting state.
+  - in registries launched before §6.9 (state fingerprint version 1), the hash of the resulting state; since then, the state fingerprint goes into each seal.
 - **`kickswarm audit`** (file, data folder or online coordinator) creates a fresh coordinator, **with no private key at all**, and replays the whole history. It requires every entry to be reproduced identically, down to the hash. It then checks that nobody verified themselves, that the honey earned equals the honey recorded, that the Commons holds 30% of the shares, and that the online coordinator's state is the replay's state.
 - **`--reverify`** reruns the verifier on every deliverable. It is the only defense against a coordinator that would lie about test results, and it is tested: a lying verifier passes the replay but not the re-verification.
-- **A coordinator refuses to start** if its state on disk does not match the hash announced by the last command in the registry.
+- **A coordinator refuses to start** if its state on disk does not match the fingerprint the registry announces for it (§6.9).
 
 **Known limits:**
 
@@ -303,7 +303,8 @@ A single violation, and the alert is public.
 
 - **A short identifier**: it is the **SHA-256 fingerprint** of the public keys. The signature carries the keys, which are checked against this fingerprint.
 - **The exact type of each key is checked.** A weak key, Ed25519 for example, cannot pass itself off as an ML-DSA or SLH-DSA key, even if the fingerprint matches: algorithm substitution is impossible, and this is tested.
-- **The registry is sealed at checkpoints**, like certificate transparency logs. A seal is the coordinator's SLH-DSA signature on the hash of the last entry; since this hash chains the whole history, a seal authenticates everything before it. The launch is sealed right away, then every 2 seconds or every 50 commands *(parameters)*.
+- **The registry is sealed at checkpoints**, like certificate transparency logs. A seal is the coordinator's SLH-DSA signature on the hash of the last entry, and on the state fingerprint at that point (§6.9); since this hash chains the whole history, a seal authenticates everything before it. The launch is sealed right away, then every 5 seconds or every 100 commands *(parameters)*, and on demand when someone asks for the published state.
+- **Cells are signed with a lighter key** of the coordinator, hybrid Ed25519 + ML-DSA-65 (`pq1:`), announced at launch: about 7 KB instead of 23 KB, and ten times faster. The SLH-DSA seals still cover every cell. Registries launched earlier keep their SLH-DSA-signed cells.
 - **The audit checks every seal and replays the history with the seals in place.** It reports how far the registry is sealed, and what share of contributor signatures is post-quantum.
 
 **Measurements on the development machine** (Node 24, OpenSSL 3.5):
@@ -318,7 +319,7 @@ The 128s variant, too slow for frequent sealing, is ruled out.
 
 **Known limits:**
 
-- **Post-quantum signatures are heavy.** A hybrid request weighs about 7 KB and a cell signed by the coordinator about 23 KB. The registry grows fast: a key directory (register a key once, then sign without carrying it) and hash-addressed storage will come next.
+- **Post-quantum signatures are heavy.** A hybrid request, or a cell, weighs about 7 KB, a seal about 23 KB. The registry grows fast (about 13 KB per cell with everything around it): a key directory (register a key once, then sign without carrying it) and hash-addressed storage will come next.
 - **Entries after the last seal** are guaranteed only by the chaining, until the next seal. The audit counts them.
 - **"Mathematically unbreakable" does not exist for signatures.** SLH-DSA comes closest: breaking it requires breaking the hash function itself.
 
@@ -344,7 +345,7 @@ All of the coordinator's draws (a bee's caste, the cell it receives, the review 
 
 **Known limits:**
 
-- **The coordinator can still drop a request.** It sees the randomness before answering: it could refuse a request whose draw it dislikes, and the contributor would sign another one. This censorship leaves no trace in the registry. It does leave one in the contributor's local log, which records every request and every refusal. Multiple auditors (§6.9), then federation, will make it visible.
+- **The coordinator can still drop a request.** It sees the randomness before answering: it could refuse a request whose draw it dislikes, and the contributor would sign another one. This censorship leaves no trace in the registry. It does leave one in the contributor's local log, which records every request and every refusal. Multiple auditors (§6.10), then federation, will make it visible.
 - **Each work request waits for its round**, 6 to 9 seconds. This is negligible next to the time an AI spends working on a cell.
 - **If drand cannot be reached**, the coordinator answers 503 instead of drawing on its own. Work stops rather than lose its guarantee.
 ### 6.7 Sealed verdicts: commit-reveal (P1-3, implemented)
@@ -406,7 +407,49 @@ Before, each verdict entered the public registry as soon as it was sent. The sec
 - **A trap cell exists only if the visible tests kill at least one mutant.** This is the case as soon as the tests are strong enough (P0-2). Otherwise, that result gets no trap cell.
 - **Two guards who collude** can compare their deliverables. This is collusion, handled by proof of unique personhood (P3).
 
-### 6.9 Several auditors, then several coordinators
+### 6.9 Keeping up with the crowd (implemented)
+
+**What a load test showed** (`scripts/charge.ts`, `scripts/charge-micro.ts`). Every command cost about 0.5 ms *per cell already on the coordinator*: it copied the whole state (to roll back on failure), hashed it whole, then rewrote it whole on disk. With 400 projects, a trivial command took 2.5 s; with 60 projects, 50 simulated bees already saturated the public coordinator, and slow answers made signed requests expire. Three smaller costs added up: each cell carried a 23 KB SLH-DSA signature, each work request re-checked its drand round (42 ms of BLS), and each deliverable run loaded a fresh WebAssembly module (245 ms).
+
+**What changed:**
+
+- **Frozen pieces.** What never changes once written (a signed cell, a result with its deliverable and report, a split, a hive) is frozen as it enters the state. The rollback snapshot shares these pieces instead of copying them.
+- **State fingerprint version 2.** The big immutable pieces count by their own hash, computed once; the fingerprint goes into each seal instead of each command. Registries launched earlier announce no version and keep version 1, so they replay and audit exactly as before.
+- **The snapshot is written at each seal**, in one file renamed at once (`etat2.json`, with the seal's position and fingerprint). On start, the snapshot must match the fingerprint in its seal, or the coordinator refuses to start. The commands written after it are replayed from the registry, which must reproduce them byte for byte, before any new command is taken. A clean stop seals and writes the snapshot.
+- **Cells signed with the lighter hybrid key** (§6.5).
+- **One fetch and one BLS check per drand round**, shared by every request waiting for the same round (a profile under load showed each of them fetching and checking it again: 36% of the coordinator's time).
+- **Warm sandboxes.** One thread per processor core keeps its QuickJS module loaded; each run still gets a fresh engine (runtime and context), and a thread is retired after 25 runs, or at once after a run that hit a limit.
+- **Finished records frozen**: honey cells, settled results and decided splits never move again, so snapshots share them too; the cost of a command no longer grows with the finished history.
+- **Smaller things the profiler found**: a guard's Wald weight is kept once computed; a sealed verdict tried before every guard has committed (the most frequent answer by far) is refused before the rollback snapshot is taken; the full snapshot is written at most every 30 seconds (at a seal, and at launch, restart and stop).
+
+**Measured on the development machine** (a trivial command, with the projects already on the coordinator):
+
+| Projects | Before | After |
+|---|---|---|
+| 10 | 62 ms | 3.5 ms |
+| 100 | 599 ms | 7 ms |
+| 400 | 2,513 ms | 11.5 ms |
+
+A split into 12 cells went from 2.4 s to 15 ms at 400 projects; a sandbox run from 245 ms to 60 ms.
+
+**Load test on the real public coordinator** (8-core laptop, 300 to 400 synthetic projects open at once, α* = 10⁻⁴, drand mandatory):
+
+| Simulated bees | Before | After |
+|---|---|---|
+| 50, hyperactive (a full cycle every ~10 s) | saturated: no cell validated in 90 s | fine: 25% CPU, a start in 65 ms, a submission in 0.4 s |
+| 200, hyperactive | collapsed | holds: a submission in 2.5 s |
+| 500, hyperactive | collapsed | saturated |
+| 1,000 at a realistic pace (60 s per task, 20 s per check) | — | holds: 88% CPU, a start in 0.5 s, a submission in 2.8 s, 3 refusals in 150 s |
+
+**The next limits**, in the order the profiler and the load test show them: every submission runs up to 9 deliverables in the sandbox (the deliverable and its trap mutants), which fills the heavy queue first; then the rollback snapshot of the cells still open, on a single thread.
+
+**Known limits:**
+
+- **What follows the last seal is guaranteed by the chaining only**, as before; the per-command fingerprint no longer adds its own check there. Seals come every few seconds, on demand for publication, and at every clean stop.
+- **The fingerprint at a seal still walks every small record** (66 ms at 400 projects, every 5 seconds): fine for now; an incremental fingerprint would remove it.
+- **Restarting after a crash** replays the commands since the last snapshot: a few seconds of history at most.
+
+### 6.10 Several auditors, then several coordinators
 
 - **Step 1:** independent auditors (communities, universities, the foundation) replay the registry continuously and publish their state hash.
 - **Step 2:** federation. Several coordinators share the registry and verify each other. There is no longer a single point of trust.

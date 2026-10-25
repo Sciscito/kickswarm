@@ -26,6 +26,9 @@ const VAGUES = arg('waves', '100,300,1000,2000').split(',').map(Number);
 const SECONDES = Number(arg('seconds', '120'));
 const RUCHES = Number(arg('hives', '300'));
 const PORT = Number(arg('port', '7800'));
+// --think <s>: the time a real AI spends on a task before handing it in (a third of it for a check).
+// Without it, the bees are hyperactive: a full cycle every few seconds, far more requests than real agents.
+const REFLEXION_MS = Number(arg('think', '0')) * 1000;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DIR = resolve(arg('dir', join(tmpdir(), `kickswarm-charge-${Date.now()}`)));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -130,6 +133,7 @@ async function abeille(n: number): Promise<void> {
         continue;
       }
       if (a.caste === 'gardienne') {
+        if (REFLEXION_MS) await sleep(REFLEXION_MS / 3);
         const fichiers = a.a_verifier!.livrable.fichiers;
         const juste = Object.entries(fichiers).every(([f, c]) => !SOLUTIONS.has(f) || SOLUTIONS.get(f) === c);
         const v = makeVerdict(id, a.a_verifier!.id, juste ? 'valide' : 'rejete', juste ? 'matches' : 'differs');
@@ -141,6 +145,7 @@ async function abeille(n: number): Promise<void> {
         continue;
       }
       await post('/v0/work/start', makeRequete(id, 'start', { alveole: a.alveole_id }));
+      if (REFLEXION_MS) await sleep(REFLEXION_MS * (0.5 + Math.random()));
       const crit = a.alveole.critere_fini as CritereV0;
       if (a.caste === 'eclaireuse') {
         const enfants = DECOUPAGES.get(a.alveole.objectif);
@@ -183,6 +188,40 @@ function demarrer(home: string, data: string): Promise<ChildProcess> {
   });
 }
 
+/** The public coordinator in this very process, set up as `kickswarm coordinator --public` does. */
+async function demarrerIci(data: string): Promise<ChildProcess> {
+  const { Coordinator } = await import('../src/coordinator/coordinator.js');
+  const { Hote } = await import('../src/coordinator/hote.js');
+  const { Garde } = await import('../src/coordinator/garde.js');
+  const { createCoordinatorServer } = await import('../src/coordinator/http.js');
+  const { DrandHttp } = await import('../src/coordinator/balise.js');
+  const balise = new DrandHttp();
+  const coord = new Coordinator({ fondateur: fondateur.id, dataDir: data, balise });
+  const hote = new Hote(coord, { dataDir: data, balise });
+  await coord.pret();
+  const serveur = createCoordinatorServer(coord, hote, { garde: new Garde({ proxy: true }) });
+  await new Promise<void>((ok) => serveur.listen(PORT, '127.0.0.1', ok));
+  return { kill: () => serveur.close() } as unknown as ChildProcess;
+}
+
+/** The V8 profiler, through the inspector: everything this process runs, sampled. */
+async function profiler(): Promise<{ arreter: (fichier: string) => Promise<void> }> {
+  const { Session } = await import('node:inspector/promises');
+  const { writeFileSync } = await import('node:fs');
+  const s = new Session();
+  s.connect();
+  await s.post('Profiler.enable');
+  await s.post('Profiler.setSamplingInterval', { interval: 500 });
+  await s.post('Profiler.start');
+  return {
+    arreter: async (fichier) => {
+      const { profile } = (await s.post('Profiler.stop')) as { profile: unknown };
+      writeFileSync(fichier, JSON.stringify(profile));
+      console.log(`Profile: ${fichier}`);
+    },
+  };
+}
+
 /** The server process's CPU and memory, sampled by PowerShell every two seconds. */
 function surveiller(pid: number): { lire: () => { cpu: number; rss: number }[]; arreter: () => void } {
   const echantillons: { t: number; cpu: number; rss: number }[] = [];
@@ -218,8 +257,11 @@ async function main(): Promise<void> {
   process.env.KICKSWARM_HOME = home;
   fondateur = loadOrCreateIdentity(home).identite;
   console.log(`Load test in ${DIR}\nStarting the public coordinator (self-check, drand)…`);
-  const serveur = await demarrer(home, data);
-  const veille = surveiller(serveur.pid!);
+  const profil = process.argv.includes('--profile');
+  // --profile: the coordinator runs in this process, under the profiler, so we can see where its time goes.
+  const serveur = profil ? await demarrerIci(data) : await demarrer(home, data);
+  const veille = surveiller(profil ? process.pid : serveur.pid!);
+  const session = profil ? await profiler() : null;
 
   console.log(`Opening ${RUCHES} synthetic hives (13 cells each)…`);
   const t0 = performance.now();
@@ -267,8 +309,14 @@ async function main(): Promise<void> {
     console.log(`\n▶ ${cible} bees for ${SECONDES} s…`);
     await sleep(SECONDES * 1000);
 
-    const hives = (await (await fetch(`${BASE}/v0/hives`)).json()) as Array<{ progression: { miel: number } }>;
-    const miel = hives.reduce((s, h) => s + h.progression.miel, 0);
+    // A saturated server may drop this read too: count the honey as unknown rather than stop the test.
+    let miel = mielAvant;
+    try {
+      const hives = (await (await fetch(`${BASE}/v0/hives`, { signal: AbortSignal.timeout(60_000) })).json()) as Array<{ progression: { miel: number } }>;
+      miel = hives.reduce((s, h) => s + h.progression.miel, 0);
+    } catch {
+      console.log('   (the hive list did not answer: honey count unknown for this wave)');
+    }
     const cpu = veille.lire().slice(cpuDebut);
     const ligne = {
       abeilles: cible,
@@ -298,6 +346,7 @@ async function main(): Promise<void> {
 
   enCours = false;
   clearInterval(sonde);
+  if (session) await session.arreter(join(DIR, 'serveur.cpuprofile'));
   console.log('\nStopping the bees…');
   await Promise.race([Promise.all(abeilles), sleep(30_000)]);
   veille.arreter();

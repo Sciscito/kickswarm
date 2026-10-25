@@ -49,6 +49,8 @@ interface Lancement {
   pieges?: ContributorId;
   params: Params;
   balise?: BaliseAnnoncee;
+  /** The key that signs cells, when it is not the coordinator's own (registries launched since its introduction). */
+  alveoles?: ContributorId;
 }
 
 const close = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
@@ -75,16 +77,21 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   if (opts.ancres) {
     // OSP v0.3 §2.4: every public anchor of this private hive must point into this very history.
     // Checked before the replay: a rewritten history must be caught even when it no longer replays.
-    const faux = opts.ancres.filter((a) => entries[a.seq]?.hash !== a.tete);
-    const derniere = opts.ancres.reduce((m, a) => Math.max(m, a.seq), -1);
+    // An anchor past the end of this copy cannot be checked on it (the copy stops at a seal): it is counted apart.
+    const dedans = opts.ancres.filter((a) => a.seq < entries.length);
+    const au_dela = opts.ancres.length - dedans.length;
+    const faux = dedans.filter((a) => entries[a.seq]!.hash !== a.tete);
+    const derniere = dedans.reduce((m, a) => Math.max(m, a.seq), -1);
     add(
       'Matches the public anchors of this private hive',
-      opts.ancres.length > 0 && faux.length === 0,
+      dedans.length > 0 && faux.length === 0,
       !opts.ancres.length
         ? 'no anchor found in the public registry'
-        : faux.length
-          ? `${faux.length} anchor(s) point to a different history: ${faux.slice(0, 3).map((a) => `#${a.seq}`).join(', ')}`
-          : `${opts.ancres.length} anchor(s) in the public registry, the last one covering entry #${derniere} of ${entries.length - 1}`,
+        : !dedans.length
+          ? 'every public anchor points past the end of this copy: download a longer one'
+          : faux.length
+            ? `${faux.length} anchor(s) point to a different history: ${faux.slice(0, 3).map((a) => `#${a.seq}`).join(', ')}`
+            : `${dedans.length} anchor(s) in the public registry, the last one covering entry #${derniere} of ${entries.length - 1}${au_dela ? `; ${au_dela} newer one(s) past the end of this copy` : ''}`,
     );
   }
 
@@ -102,7 +109,7 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     fondateur: L.fondateur,
     params: L.params,
     now: () => Date.parse(first.date),
-    replay: { coordinateur: L.coordinateur, pieges: L.pieges, ...(L.balise ? { balise: L.balise } : {}) },
+    replay: { coordinateur: L.coordinateur, pieges: L.pieges, ...(L.balise ? { balise: L.balise } : {}), ...(L.alveoles ? { alveoles: L.alveoles } : {}) },
   });
   let divergence = coord.registry.entries[0]?.hash === first.hash ? undefined : 'the launch entry differs';
   const reverif: string[] = [];

@@ -204,11 +204,16 @@ test('private hive: guessing codes is rate-limited, and private hives come back 
     for (let i = 0; i < 3; i++) assert.throws(() => hote.rejoindre(makeAdhesion(inconnu, `KSW-AAAAA-AAAA${i}`), '1.2.3.4'), /Unknown/);
     assert.throws(() => hote.rejoindre(makeAdhesion(inconnu, inv.code), '1.2.3.4'), /Too many join attempts/, 'even the right code, after too many tries');
     hote.rejoindre(makeAdhesion(cousin, inv.code), '5.6.7.8');
+    // A clean stop: a last seal and snapshot for every registry, and their anchors.
+    hote.fermer();
     hote.ancrerMaintenant();
+    coord.fermer();
 
     // Restart: the host finds its private hives, their members and their own guarantee.
     const coord2 = new Coordinator({ fondateur: fondateur.id, dataDir: dir });
     const hote2 = new Hote(coord2, { dataDir: dir });
+    await coord2.pret();
+    await hote2.pret();
     const inst = hote2.instance(id);
     assert.deepEqual(inst.membres().map((m) => m.role).sort(), ['membre', 'proprietaire']);
     assert.equal(inst.params.alpha_faux, 0.1);

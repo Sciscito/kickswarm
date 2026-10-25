@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
@@ -111,26 +111,95 @@ const WASM_WORKER = new URL(`./wasm-worker${extname(fileURLToPath(import.meta.ur
 const WASM_MEMORY_MB = 256;
 const WASM_LABEL = 'WebAssembly (QuickJS: no network, no disk, bounded memory)';
 
-function runWasm(fichiers: Record<string, string>, input: string, timeoutMs: number): Promise<RunOutput> {
+// Warm sandboxes: one thread per processor core, each keeping its QuickJS module loaded. Every run still gets
+// a fresh engine; a thread is retired after RUNS_PAR_FIL runs, or at once after a run that hit a limit.
+const RUNS_PAR_FIL = 25;
+const FILS_MAX = Math.max(1, availableParallelism());
+
+interface Fil {
+  w: Worker;
+  runs: number;
+  occupe: boolean;
+}
+
+const fils: Fil[] = [];
+const enAttenteDeFil: Array<(f: Fil) => void> = [];
+let prochainId = 0;
+
+function nouveauFil(): Fil {
+  // A safety net around the engine's own limits: the thread itself is bounded, and killed if late.
+  // No env stripping here: the code under test runs inside QuickJS and never sees process.env.
+  const w = new Worker(WASM_WORKER, { resourceLimits: { maxOldGenerationSizeMb: WASM_MEMORY_MB * 2 } });
+  const f: Fil = { w, runs: 0, occupe: false };
+  w.on('exit', () => {
+    const i = fils.indexOf(f);
+    if (i >= 0) fils.splice(i, 1);
+  });
+  w.on('error', () => undefined);
+  fils.push(f);
+  return f;
+}
+
+function prendreFil(): Promise<Fil> {
+  const libre = fils.find((f) => !f.occupe) ?? (fils.length < FILS_MAX ? nouveauFil() : undefined);
+  if (libre) {
+    libre.occupe = true;
+    libre.w.ref();
+    return Promise.resolve(libre);
+  }
+  return new Promise((ok) => enAttenteDeFil.push(ok));
+}
+
+function rendreFil(f: Fil, retirer: boolean): void {
+  if (retirer) {
+    const i = fils.indexOf(f);
+    if (i >= 0) fils.splice(i, 1);
+    void f.w.terminate();
+  }
+  const suivant = enAttenteDeFil.shift();
+  if (suivant) {
+    const g = retirer ? nouveauFil() : f;
+    g.occupe = true;
+    g.w.ref();
+    suivant(g);
+    return;
+  }
+  if (!retirer) {
+    f.occupe = false;
+    // An idle thread does not keep the process alive.
+    f.w.unref();
+  }
+}
+
+async function runWasm(fichiers: Record<string, string>, input: string, timeoutMs: number): Promise<RunOutput> {
+  const f = await prendreFil();
   return new Promise((resolve) => {
-    let done = false;
-    const finish = (o: Omit<RunOutput, 'label' | 'code'>) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      void worker.terminate();
+    const id = ++prochainId;
+    let fini = false;
+    const finir = (o: Omit<RunOutput, 'label' | 'code'>, retirer: boolean) => {
+      if (fini) return;
+      fini = true;
+      clearTimeout(minuteur);
+      f.w.off('message', surMessage);
+      f.w.off('error', surErreur);
+      f.w.off('exit', surSortie);
+      rendreFil(f, retirer);
       resolve({ ...o, code: 0, label: WASM_LABEL });
     };
-    const worker = new Worker(WASM_WORKER, {
-      workerData: { fichiers, input, runner: WASM_RUNNER, timeoutMs, memoireMo: WASM_MEMORY_MB, sortieMax: MAX_OUTPUT },
-      // A safety net around the engine's own limits: the thread itself is bounded and killed if late.
-      resourceLimits: { maxOldGenerationSizeMb: WASM_MEMORY_MB * 2 },
-      // No env stripping here: the code under test runs inside QuickJS and never sees process.env.
-    });
-    const timer = setTimeout(() => finish({ stdout: '', stderr: '', timedOut: true }), timeoutMs + 3000);
-    worker.once('message', (m: { stdout: string; stderr: string; timedOut: boolean }) => finish(m));
-    worker.once('error', (e) => finish({ stdout: '', stderr: String(e), timedOut: false }));
-    worker.once('exit', () => finish({ stdout: '', stderr: 'The sandbox stopped unexpectedly', timedOut: false }));
+    const surMessage = (m: { id: number; stdout: string; stderr: string; timedOut: boolean }) => {
+      if (m.id !== id) return;
+      f.runs++;
+      // A run that hit a limit may leave the engine's module in a bad state: that thread is retired.
+      const abime = m.timedOut || /Aborted|RuntimeError|out of memory|InternalError/i.test(m.stderr);
+      finir({ stdout: m.stdout, stderr: m.stderr, timedOut: m.timedOut }, abime || f.runs >= RUNS_PAR_FIL);
+    };
+    const surErreur = (e: unknown) => finir({ stdout: '', stderr: String(e), timedOut: false }, true);
+    const surSortie = () => finir({ stdout: '', stderr: 'The sandbox stopped unexpectedly', timedOut: false }, true);
+    f.w.on('message', surMessage);
+    f.w.once('error', surErreur);
+    f.w.once('exit', surSortie);
+    const minuteur = setTimeout(() => finir({ stdout: '', stderr: '', timedOut: true }, true), timeoutMs + 3000);
+    f.w.postMessage({ id, entree: { fichiers, input, runner: WASM_RUNNER, timeoutMs, memoireMo: WASM_MEMORY_MB, sortieMax: MAX_OUTPUT } });
   });
 }
 

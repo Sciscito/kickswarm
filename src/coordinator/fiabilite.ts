@@ -108,9 +108,21 @@ export function bornes(f: Fiabilite, p: ParamsFiabilite): { s: number; c: number
 
 /** Weight of a "valid" in the Wald test: log(c / (1 − s)), in nats, on the lower bounds. */
 export function poidsValide(f: Fiabilite, p: ParamsFiabilite): number {
+  let connus = poidsConnus.get(p);
+  if (!connus) poidsConnus.set(p, (connus = new Map()));
+  const cle = `${p.prior_sensibilite}|${p.prior_specificite}|${p.quantile_fiabilite}|${f.s_ok}|${f.s_ko}|${f.c_ok}|${f.c_ko}`;
+  const connu = connus.get(cle);
+  if (connu !== undefined) return connu;
   const { s, c } = bornes(f, p);
-  return net(Math.log(c / (1 - s)));
+  const w = net(Math.log(c / (1 - s)));
+  connus.set(cle, w);
+  if (connus.size > 100_000) connus.clear();
+  return w;
 }
+
+// The weights already computed, per parameter set: a guard's weight is asked for every open cell at every
+// claim, and its Beta quantiles take a few hundred microseconds. They depend only on these numbers.
+const poidsConnus = new WeakMap<ParamsFiabilite, Map<string, number>>();
 
 /** An observation: the guard was right (ok) or wrong against a false (s) or correct (c) result. */
 export function observer(f: Fiabilite, quoi: 's' | 'c', ok: boolean, oubli: number): void {

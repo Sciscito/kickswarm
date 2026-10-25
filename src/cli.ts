@@ -307,6 +307,17 @@ async function main(): Promise<void> {
       const coord = new Coordinator({ fondateur: founder, dataDir, balise });
       // Private hives (OSP v0.3) run next to the public ones, each in its own instance and registry.
       const hote = new Hote(coord, { dataDir, ...(balise ? { balise } : {}), ...(publique ? { privesMax: Number(opts['max-private'] ?? 500) } : {}) });
+      // After a stop, the commands written since the last snapshot are replayed before anyone is served.
+      await coord.pret();
+      await hote.pret();
+      // On a clean stop, a last seal and snapshot: nothing to replay at the next start.
+      for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+        process.once(signal, () => {
+          coord.fermer();
+          hote.fermer();
+          process.exit(0);
+        });
+      }
       const garde = publique ? new Garde({ proxy: LOCAL_HOSTS.has(host) }) : undefined;
       // The package built next to this program (deploy/install.sh runs `npm pack`): the join command installs it from here.
       const paquet = opts.package ? resolve(opts.package) : fileURLToPath(new URL('../kickswarm.tgz', import.meta.url));

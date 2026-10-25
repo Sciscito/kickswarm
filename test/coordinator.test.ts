@@ -204,10 +204,19 @@ test('persistence: the coordinator restores its state and its registry', async (
     c1.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'test' }), RACINE);
     c1.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'ok'));
     const n = c1.registry.entries.length;
+    // As after a crash: the snapshot on disk predates the last commands, which are replayed from the registry.
     const c2 = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { alpha_faux: 0.05, taux_pieges: 0 } });
+    assert.throws(() => c2.decide(makeDecision(fondateur, 'pause', 'maths', 'too early')), /starting up/, 'no new command before the replay is over');
+    await c2.pret();
     assert.equal(c2.hiveView('maths').statut, 'active');
-    assert.equal(c2.registry.entries.length, n);
+    assert.equal(c2.stateHash(), c1.stateHash(), 'the replayed state is exactly the one before the stop');
+    assert.equal(c2.registry.entries.length, n + 1, 'nothing rewritten, one seal added with a fresh snapshot');
     assert.equal(c2.identite.id, c1.identite.id);
+    // A clean restart: nothing left to replay.
+    const c3 = new Coordinator({ fondateur: fondateur.id, dataDir: dir, params: { alpha_faux: 0.05, taux_pieges: 0 } });
+    await c3.pret();
+    assert.equal(c3.registry.entries.length, n + 1);
+    c3.decide(makeDecision(fondateur, 'pause', 'maths', 'it works again'));
     assert.throws(() => new Coordinator({ fondateur: lea.id, dataDir: dir }), /another founder/);
   } finally {
     rmSync(dir, { recursive: true, force: true });

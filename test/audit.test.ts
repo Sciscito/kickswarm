@@ -29,7 +29,9 @@ function rechain(entries: RegistryEntry[]): RegistryEntry[] {
 
 /** A complete hive: split, rejection, traps, orientation, release, refused commands. */
 async function fullRun(extra: Partial<CoordinatorOptions> = {}): Promise<Coordinator> {
-  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.2 }, rng: seededRng(11), ...extra });
+  // Seals every 10 commands: on a live coordinator they come every few seconds, and they are what
+  // catches a history rewritten with a recomputed hash chain.
+  const c = new Coordinator({ fondateur: fondateur.id, params: { alpha_faux: 0.05, taux_pieges: 0.2, sceau_max_commandes: 10 }, rng: seededRng(11), ...extra });
   c.proposeHive(makeHive(fondateur, { slug: 'maths', nom: 'Maths', objectif: 'pgcd, estPremier, fibonacci' }), RACINE);
   assert.throws(() => c.decide(makeDecision(bees[0]!, 'approbation_ruche', 'maths', 'pas fondateur')));
   c.decide(makeDecision(fondateur, 'approbation_ruche', 'maths', 'Conforme à la charte'));
@@ -159,11 +161,14 @@ test('audit: on-disk registry replayed, tampered local state refused at startup'
     const lignes = readFileSync(join(dir, 'registre.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as RegistryEntry);
     const report = await auditRegistry(lignes, { etatAnnonce: c.stateHash() });
     assert.equal(report.ok, true, JSON.stringify(report.controles));
+    // A clean stop writes a seal and the snapshot it covers.
+    c.fermer();
     assert.doesNotThrow(() => new Coordinator({ fondateur: fondateur.id, dataDir: dir }));
 
-    const etat = JSON.parse(readFileSync(join(dir, 'etat.json'), 'utf8'));
-    etat.accounts[bees[0]!.id] = { miel: 1_000_000, parts: 0, reputation: 1, miel_gagne: 1_000_000 };
-    writeFileSync(join(dir, 'etat.json'), JSON.stringify(etat));
+    // The snapshot touched by hand no longer matches the fingerprint written in its seal.
+    const fichier = JSON.parse(readFileSync(join(dir, 'etat2.json'), 'utf8'));
+    fichier.state.accounts[bees[0]!.id] = { miel: 1_000_000, parts: 0, reputation: 1, miel_gagne: 1_000_000 };
+    writeFileSync(join(dir, 'etat2.json'), JSON.stringify(fichier));
     assert.throws(() => new Coordinator({ fondateur: fondateur.id, dataDir: dir }), /inconsistent with the registry/);
   } finally {
     rmSync(dir, { recursive: true, force: true });

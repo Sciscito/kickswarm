@@ -39,6 +39,7 @@ import { transition } from './lifecycle.js';
 import { DEFAULT_PARAMS, type Params } from './params.js';
 import { Registry } from './registry.js';
 import { graine, rngDepuis, tourA, verifierBalise, type Balise, type BaliseInfo, type SourceBalise } from './balise.js';
+import { cloner, empreinteEtat, geler, gelerPieces } from './etat.js';
 import { logit, observer, poidsValide, VIERGE, type Fiabilite } from './fiabilite.js';
 import { brancheOf, chooseCandidate, type Rng } from './scheduler.js';
 import { PAR_RUCHE, type Trophee, type TropheeId } from './trophees.js';
@@ -273,7 +274,8 @@ export interface CommandeDonnees {
   balise?: Balise;
   /** P0-3: secret draws (the traps), outside the public beacon; published with the command, after the embargo. */
   alea_secret?: number[];
-  etat: Hash;
+  /** State fingerprint version 1 only, after every command. Version 2 puts it in each seal. */
+  etat?: Hash;
 }
 
 /** The beacon announced at launch: its network, its key, and the offset in rounds. */
@@ -305,7 +307,7 @@ export interface CoordinatorOptions {
   /** P1-3: the public randomness beacon (drand). Without it, the coordinator draws its own random numbers. */
   balise?: SourceBalise;
   /** Audit mode: replays an existing registry, with the public identities it announces. */
-  replay?: { coordinateur: ContributorId; pieges: ContributorId; balise?: BaliseAnnoncee };
+  replay?: { coordinateur: ContributorId; pieges: ContributorId; balise?: BaliseAnnoncee; alveoles?: ContributorId };
 }
 
 export interface HiveView {
@@ -351,6 +353,8 @@ export interface LiveView {
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,39}$/;
 const DEFAULT_BUDGET = { tokens_max: 200_000, duree_max_s: 1800 };
+/** Version 2: the snapshot on disk is written at a seal, at most this often (and at launch, restart and stop). */
+const INSTANTANE_MS = 30_000;
 const MAX_IMPASSES = 20;
 
 /** A uniform float on [0, 1), 53 bits drawn from the cryptographic generator. */
@@ -394,6 +398,18 @@ export class Coordinator {
   private replayNext: ReplayStep | null = null;
   private dernierSceau = 0;
   private commandesSansSceau = 0;
+  /** The key that signs cells: hybrid Ed25519 + ML-DSA-65 (the coordinator's own SLH-DSA key in older registries). */
+  private readonly identiteAlveoles: Identity;
+  /** After a stop, the commands written since the last snapshot are replayed: `pret()` waits for it. */
+  private recuperation: Promise<void> | null = null;
+  private enRecuperation = false;
+  /** Until the replay after a stop is over, no new command is taken. */
+  private attenteReprise = false;
+  /** Version 2: where the snapshot read from disk stands in the registry, and its fingerprint. */
+  private instantane: { seq: number; etat: Hash } | null = null;
+  private dernierInstantane = 0;
+  /** Drand rounds already checked: a BLS check costs tens of milliseconds, a round lasts three seconds. */
+  private readonly balisesVerifiees = new Map<string, boolean>();
   /** During a request drawn with the beacon: the draws follow from it, and are recorded. */
   private tirageBalise: { rng: Rng; balise: Balise; tirages: number[] } | null = null;
 
@@ -447,81 +463,181 @@ export class Coordinator {
     if (dir) mkdirSync(dir, { recursive: true });
     this.registry = new Registry(dir ? join(dir, 'registre.jsonl') : undefined, () => this.now());
 
+    // An existing registry keeps the conventions of its launch: fingerprint version, cell key.
+    const lancement = this.registry.entries[0]?.donnees as { params?: Partial<Params>; alveoles?: ContributorId } | undefined;
+    if (options.replay ? options.params?.empreinte_etat === undefined : lancement && lancement.params?.empreinte_etat === undefined) this.params.empreinte_etat = 1;
+
     const keysFile = dir ? join(dir, 'cles.json') : undefined;
     if (options.replay) {
       this.identite = { id: options.replay.coordinateur, privateKeyPem: '' };
       this.identitePieges = { id: options.replay.pieges, privateKeyPem: '' };
+      this.identiteAlveoles = { id: options.replay.alveoles ?? options.replay.coordinateur, privateKeyPem: '' };
     } else if (keysFile && existsSync(keysFile)) {
       const coffreFile = join(dir!, 'coffre.json');
       if (existsSync(coffreFile)) this.coffre = JSON.parse(readFileSync(coffreFile, 'utf8')) as Record<string, unknown>;
-      const keys = JSON.parse(readFileSync(keysFile, 'utf8')) as { coordinateur: Identity; pieges: Identity };
+      const keys = JSON.parse(readFileSync(keysFile, 'utf8')) as { coordinateur: Identity; pieges: Identity; alveoles?: Identity };
       this.identite = keys.coordinateur;
       this.identitePieges = keys.pieges;
+      // A registry launched before the cell key keeps signing its cells with the coordinator's key.
+      this.identiteAlveoles = lancement?.alveoles && keys.alveoles ? keys.alveoles : this.identite;
     } else {
-      // The coordinator signs with SLH-DSA: security that rests only on the hash function.
+      // The coordinator signs with SLH-DSA: security that rests only on the hash function. Cells get a
+      // lighter hybrid key; the seals cover them anyway.
       this.identite = generateIdentity('slh1');
       this.identitePieges = generateIdentity('slh1');
-      if (keysFile) writeFileSync(keysFile, JSON.stringify({ coordinateur: this.identite, pieges: this.identitePieges }, null, 2), 'utf8');
+      this.identiteAlveoles = generateIdentity('pq1');
+      if (keysFile) writeFileSync(keysFile, JSON.stringify({ coordinateur: this.identite, pieges: this.identitePieges, alveoles: this.identiteAlveoles }, null, 2), 'utf8');
     }
 
-    const stateFile = dir ? join(dir, 'etat.json') : undefined;
+    const stateFile = dir ? join(dir, this.params.empreinte_etat === 1 ? 'etat.json' : 'etat2.json') : undefined;
     if (stateFile && existsSync(stateFile)) {
-      this.state = JSON.parse(readFileSync(stateFile, 'utf8')) as State;
+      const lu = JSON.parse(readFileSync(stateFile, 'utf8')) as State | { seq: number; etat: Hash; state: State };
+      if ('state' in lu) {
+        this.state = lu.state;
+        this.instantane = { seq: lu.seq, etat: lu.etat };
+      } else this.state = lu;
       if (this.state.fondateur !== options.fondateur) {
         throw new Error('This data folder belongs to another founder');
       }
+    } else if (dir && this.registry.entries.length) {
+      // A registry without a snapshot: everything is rebuilt from the registry, the source of truth.
+      this.state = this.etatVierge(options.fondateur, Date.parse(this.registry.entries[0]!.date));
     } else {
       // A single clock read for the launch: the state and the registry entry must agree.
       this.clock = this.baseNow();
-      this.state = {
-        fondateur: options.fondateur,
-        lancement: this.clock,
-        hives: {},
-        cells: {},
-        results: {},
-        decompositions: {},
-        pieges: {},
-        engagements: {},
-        fiabilite: {},
-        board: {},
-        accounts: {},
-        nonces: {},
-        trophees: {},
-        compteurs: {},
-        contributeurs: [],
-      };
+      this.state = this.etatVierge(options.fondateur, this.clock);
       const balise = this.baliseAnnoncee();
       this.registry.append('lancement', {
         // On replay, the parameters as the registry announces them: a parameter added since then does not change the entry.
         fondateur: options.fondateur, coordinateur: this.identite.id, pieges: this.identitePieges.id,
+        ...(this.identiteAlveoles.id !== this.identite.id ? { alveoles: this.identiteAlveoles.id } : {}),
         params: options.replay && options.params ? options.params : this.params, ...(balise ? { balise } : {}),
       });
       this.clock = null;
-      if (!options.replay) this.sceller();
+      if (!options.replay) this.sceller(true);
     }
     this.normalizeState();
+    gelerPieces(this.state as unknown as Record<string, unknown>);
     this.ledger = new Ledger(this.params, options.fondateur, this.state.lancement, this.registry, () => this.now());
     this.ledger.accounts = this.state.accounts;
-    // The state on disk must be exactly the one the registry's last command announces.
-    const derniere = [...this.registry.entries].reverse().find((e) => e.nature === 'commande');
-    if (derniere && (derniere.donnees as CommandeDonnees).etat !== this.stateHash()) {
-      throw new Error('Local state inconsistent with the registry: run "kickswarm audit" to rebuild and understand');
+    if (this.params.empreinte_etat === 1) {
+      // Version 1: the state on disk must be exactly the one the registry's last command announces.
+      const derniere = [...this.registry.entries].reverse().find((e) => e.nature === 'commande');
+      if (derniere && (derniere.donnees as CommandeDonnees).etat !== this.stateHash()) {
+        throw new Error('Local state inconsistent with the registry: run "kickswarm audit" to rebuild and understand');
+      }
+      this.save();
+    } else if (dir && !options.replay) this.reprendre();
+  }
+
+  private etatVierge(fondateur: ContributorId, lancement: number): State {
+    return {
+      fondateur, lancement, hives: {}, cells: {}, results: {}, decompositions: {}, pieges: {}, engagements: {}, fiabilite: {},
+      board: {}, accounts: {}, nonces: {}, trophees: {}, compteurs: {}, contributeurs: [],
+    };
+  }
+
+  /**
+   * Version 2, on start: the snapshot on disk was written right after a seal, which holds its fingerprint.
+   * It must match (otherwise someone touched the file). The commands written after it are replayed from the
+   * registry before the coordinator takes any new one (`pret()`).
+   */
+  private reprendre(): void {
+    // No snapshot (a registry copied alone, or lost state): everything is replayed from the launch.
+    const meta = this.instantane ?? { seq: 0, etat: null };
+    if (meta.etat !== null) {
+      const sceau = this.registry.entries[meta.seq];
+      const annonce = sceau?.nature === 'sceau' ? (sceau.donnees as { etat?: Hash }).etat : undefined;
+      if (annonce !== meta.etat || this.stateHash() !== meta.etat) {
+        throw new Error('Local state inconsistent with the registry: run "kickswarm audit" to rebuild and understand');
+      }
     }
-    this.save();
+    if (this.registry.entries.length - 1 > meta.seq) {
+      this.attenteReprise = true;
+      this.recuperation = this.rejouerDepuis(meta.seq + 1);
+      // The failure surfaces in pret(); until then it must not crash the process as an unhandled rejection.
+      this.recuperation.catch(() => undefined);
+    }
+  }
+
+  /** Waits until the commands written after the last snapshot have been replayed. Call it before serving. */
+  async pret(): Promise<void> {
+    await this.recuperation;
+  }
+
+  /**
+   * Replays, on this coordinator, the registry entries from `debut` on: each command is replayed with
+   * what the registry recorded (time, draws, signatures, reports, secrets), and must produce exactly the
+   * entries already written. The seals met on the way check the state fingerprint.
+   */
+  private async rejouerDepuis(debut: number): Promise<void> {
+    const entries = this.registry.entries;
+    this.enRecuperation = true;
+    this.registry.rejouerDepuis(debut);
+    try {
+      let i = debut;
+      while (i < entries.length) {
+        const e = entries[i]!;
+        if (e.nature === 'sceau' || e.nature === 'ancre') {
+          const annonce = e.nature === 'sceau' ? (e.donnees as { etat?: Hash }).etat : undefined;
+          if (annonce && annonce !== this.stateHash()) throw new ReplayDivergence(`State fingerprint differs at seal #${e.seq}`);
+          this.registry.passer();
+          i++;
+          continue;
+        }
+        // Derived entries come before their command: find it and replay it.
+        let j = i;
+        while (j < entries.length && entries[j]!.nature !== 'commande') j++;
+        if (j >= entries.length) throw new ReplayDivergence(`Entries #${i}… are produced by no command`);
+        await this.replayCommande(entries[j]!.donnees as CommandeDonnees);
+        if (this.registry.curseur() !== j + 1) throw new ReplayDivergence(`Command #${j} did not reproduce its entries`);
+        i = j + 1;
+      }
+      this.registry.finirRejeu();
+      this.attenteReprise = false;
+    } catch (e) {
+      throw new Error(`Cannot replay the registry after the last snapshot: ${(e as Error).message}. Run "kickswarm audit" to understand.`);
+    } finally {
+      this.enRecuperation = false;
+    }
+    // A fresh snapshot, so the next start has nothing left to replay.
+    this.sceller(true);
+  }
+
+  /** On a clean stop: a last seal and its snapshot, so nothing needs replaying at the next start. */
+  fermer(): void {
+    if (this.options.replay) return;
+    this.sceller(true);
+    if (this.params.empreinte_etat === 1) this.save();
   }
 
   /**
    * Seals the registry (OSP v0.2, P0-5): the coordinator signs the hash of the last entry with SLH-DSA.
    * Since that hash chains the whole history, a single seal authenticates everything before it.
    */
-  sceller(): void {
+  sceller(instantane = false): void {
     if (this.options.replay) throw new Error('A coordinator in audit mode does not seal: it imports the seals');
     const tete = this.registry.entries[this.registry.entries.length - 1];
-    if (!tete || tete.nature === 'sceau') return;
-    const sceau = signObject({ type: 'osp.sceau/0.1' as const, coordinateur: this.identite.id, seq: tete.seq, tete: tete.hash }, this.identite);
-    this.registry.append('sceau', sceau);
+    if (!tete) return;
+    const v2 = this.params.empreinte_etat !== 1;
+    // Version 2: the snapshot on disk is written at a seal, at most every INSTANTANE_MS (or on demand):
+    // writing it blocks the coordinator, and a restart replays the few commands since.
+    const ecrire = (seq: number, etat: Hash) => {
+      if (!instantane && this.baseNow() - this.dernierInstantane < INSTANTANE_MS) return;
+      this.save(seq, etat);
+      this.dernierInstantane = this.baseNow();
+    };
+    if (tete.nature === 'sceau') {
+      if (v2) ecrire(tete.seq, (tete.donnees as { etat?: Hash }).etat ?? this.stateHash());
+      return;
+    }
+    // Version 2: the seal also carries the state fingerprint.
+    const etat = v2 ? this.stateHash() : undefined;
+    const sceau = signObject({ type: 'osp.sceau/0.1' as const, coordinateur: this.identite.id, seq: tete.seq, tete: tete.hash, ...(etat ? { etat } : {}) }, this.identite);
+    const e = this.registry.append('sceau', sceau);
     this.dernierSceau = this.baseNow();
     this.commandesSansSceau = 0;
+    if (etat) ecrire(e.seq, etat);
   }
 
   private peutEtreSceller(): void {
@@ -531,13 +647,15 @@ export class Coordinator {
   }
 
   /** Audit mode: takes a seal from the original registry, after checking its signature. */
-  importSceau(date: string, sceau: { type: string; coordinateur: string; seq: number; tete: string; sig?: string }): void {
+  importSceau(date: string, sceau: { type: string; coordinateur: string; seq: number; tete: string; etat?: Hash; sig?: string }): void {
     if (!this.options.replay) throw new Error('Seal import is reserved for audit mode');
     const tete = this.registry.entries[this.registry.entries.length - 1];
     if (sceau.type !== 'osp.sceau/0.1' || sceau.coordinateur !== this.identite.id || !tete || sceau.seq !== tete.seq || sceau.tete !== tete.hash) {
       throw new ReplayDivergence(`Seal inconsistent with the registry at entry #${tete?.seq}`);
     }
     if (!verifyObject(sceau, this.identite.id)) throw new ReplayDivergence('Invalid seal signature');
+    // Version 2: the seal holds the coordinator's state fingerprint at that point; the replay must find the same.
+    if (sceau.etat !== undefined && sceau.etat !== this.stateHash()) throw new ReplayDivergence(`State fingerprint differs at the seal after entry #${tete.seq}`);
     this.clock = Date.parse(date);
     try {
       this.registry.append('sceau', sceau);
@@ -561,13 +679,32 @@ export class Coordinator {
    * commits to everything still under embargo: an observer who notes it sees any later rewrite.
    */
   etatPublie(): { seq: number; etat: Hash | null; tete: { seq: number; hash: Hash } | null; sceau: { seq: number; sceau: unknown } | null } {
-    const seq = this.horizon();
+    let seq = this.horizon();
     let etat: Hash | null = null;
-    for (let i = seq; i >= 0; i--) {
-      const e = this.registry.entries[i]!;
-      if (e.nature === 'commande') {
-        etat = (e.donnees as CommandeDonnees).etat;
-        break;
+    if (this.params.empreinte_etat === 1) {
+      for (let i = seq; i >= 0; i--) {
+        const e = this.registry.entries[i]!;
+        if (e.nature === 'commande') {
+          etat = (e.donnees as CommandeDonnees).etat ?? null;
+          break;
+        }
+      }
+    } else {
+      // Version 2: the published prefix stops at the last seal before the horizon, which holds the state fingerprint.
+      // With nothing under embargo and an unsealed head, a seal now: the whole history becomes publishable.
+      const tete = this.registry.entries[this.registry.entries.length - 1];
+      if (!this.options.replay && !this.attenteReprise && tete && tete.nature !== 'sceau' && seq === tete.seq) {
+        this.sceller();
+        seq = this.horizon();
+      }
+      for (let i = seq; i >= 0; i--) {
+        const e = this.registry.entries[i]!;
+        const empreinte = e.nature === 'sceau' ? (e.donnees as { etat?: Hash }).etat : undefined;
+        if (empreinte) {
+          seq = i;
+          etat = empreinte;
+          break;
+        }
       }
     }
     const t = this.registry.entries[this.registry.entries.length - 1];
@@ -576,7 +713,7 @@ export class Coordinator {
 
   /** Fingerprint of the complete state: what auditors compare. */
   stateHash(): Hash {
-    return sha256(canonicalize(this.state));
+    return this.params.empreinte_etat === 1 ? sha256(canonicalize(this.state)) : empreinteEtat(this.state as unknown as Record<string, unknown>);
   }
 
   /** For an audit's re-verification: a cell's done criterion. */
@@ -596,7 +733,7 @@ export class Coordinator {
    * exactly the same entries: any difference is a divergence.
    */
   async replayCommande(c: CommandeDonnees): Promise<void> {
-    if (!this.options.replay) throw new Error('Replay is reserved for a coordinator created in audit mode');
+    if (!this.options.replay && !this.enRecuperation) throw new Error('Replay is reserved for a coordinator created in audit mode');
     this.replayNext = {
       at: c.at, alea: [...(c.alea ?? [])], alea_secret: [...(c.alea_secret ?? [])], signatures: [...(c.signatures ?? [])], verifs: c.verifs ?? [], secrets: c.secrets ?? {},
     };
@@ -640,8 +777,10 @@ export class Coordinator {
     this.clock = at;
     this.replayCtx = replay ? { alea: [...replay.alea], alea_secret: [...replay.alea_secret], signatures: [...replay.signatures], secrets: replay.secrets } : null;
     this.recording = replay ? null : { alea: [], alea_secret: [], signatures: [], secrets: {} };
+    if (this.attenteReprise && !replay) throw new OspError('The coordinator is starting up: try again in a moment', 503);
     const pieges = this.journalPieges.length;
-    const snapshot = structuredClone(this.state);
+    // The rollback snapshot shares the frozen pieces: its cost no longer grows with the history.
+    const snapshot = cloner(this.state);
     this.registry.begin();
     try {
       const out = fn();
@@ -653,12 +792,15 @@ export class Coordinator {
       const alea_secret = replay ? replay.alea_secret : this.recording!.alea_secret;
       const signatures = replay ? replay.signatures : this.recording!.signatures;
       const secrets = replay ? replay.secrets : this.recording!.secrets;
+      // Version 1 hashed and saved the whole state after every command; version 2 does it at each seal.
+      const v1 = this.params.empreinte_etat === 1;
       this.registry.append('commande', {
         type, entree, at, alea, signatures, verifs, ...(Object.keys(secrets).length ? { secrets } : {}),
-        ...(this.tirageBalise ? { balise: this.tirageBalise.balise } : {}), ...(alea_secret.length ? { alea_secret } : {}), etat: this.stateHash(),
+        ...(this.tirageBalise ? { balise: this.tirageBalise.balise } : {}), ...(alea_secret.length ? { alea_secret } : {}),
+        ...(v1 ? { etat: this.stateHash() } : {}),
       } satisfies CommandeDonnees);
       this.registry.commit();
-      this.save();
+      if (v1) this.save();
       if (!replay) this.peutEtreSceller();
       return out;
     } catch (e) {
@@ -703,11 +845,25 @@ export class Coordinator {
     return this.claimAvecBalise(r, b);
   }
 
+  /**
+   * The BLS check of a drand round, done once per round: every request of the same three seconds shares it.
+   * The key covers the whole beacon (round, randomness, signature): any other value is checked again.
+   */
+  private baliseValide(info: BaliseInfo, b: Balise): boolean {
+    const cle = `${info.cle_publique}|${b.round}|${b.randomness}|${b.signature}`;
+    const connu = this.balisesVerifiees.get(cle);
+    if (connu !== undefined) return connu;
+    const ok = verifierBalise(info, b);
+    this.balisesVerifiees.set(cle, ok);
+    if (this.balisesVerifiees.size > 4096) this.balisesVerifiees.delete(this.balisesVerifiees.keys().next().value!);
+    return ok;
+  }
+
   private claimAvecBalise(r: Requete, b: Balise): Assignment | null {
     const info = this.baliseAnnoncee();
     if (!info) throw new ReplayDivergence('Beacon used without being announced at launch');
     if (b.round !== tourA(info, r.ts) + info.decalage) throw new ReplayDivergence(`Beacon round ${b.round} breaks the rule (expected ${tourA(info, r.ts) + info.decalage})`);
-    if (!verifierBalise(info, b)) throw new ReplayDivergence(`Invalid beacon for round ${b.round}`);
+    if (!this.baliseValide(info, b)) throw new ReplayDivergence(`Invalid beacon for round ${b.round}`);
     const tirage = { rng: rngDepuis(graine(b, hashOf(r))), balise: b, tirages: [] as number[] };
     this.tirageBalise = tirage;
     try {
@@ -820,7 +976,7 @@ export class Coordinator {
     this.validateSpec(racine);
 
     const hive: HiveRecord = {
-      ruche,
+      ruche: geler(structuredClone(ruche)),
       id: hashOf(ruche),
       statut: 'proposee',
       racine: '' as Hash,
@@ -1066,7 +1222,8 @@ export class Coordinator {
         delete rec.bail;
         if (rec.state === 'reservee' || rec.state === 'en_cours') rec.state = 'libre';
       }
-      rec.gardiennes = rec.gardiennes.filter((g) => g.par !== id);
+      // Only the cells where they were a guard: finished cells are frozen.
+      if (rec.gardiennes.some((g) => g.par === id)) rec.gardiennes = rec.gardiennes.filter((g) => g.par !== id);
     }
     for (const [pid, p] of Object.entries(this.state.pieges)) if (p.attribue_a === id && !p.engagement) delete this.state.pieges[pid];
     this.registry.append('membre_retire', { contributeur: id });
@@ -1436,6 +1593,7 @@ export class Coordinator {
         if (d.nature === 'approbation_decoupage') this.applyDecomposition(rec, d.cible);
         else {
           dr.statut = 'refusee';
+          geler(dr);
           delete rec.en_attente;
           transition(rec, 'rejetee');
           rec.rejets++;
@@ -1698,7 +1856,11 @@ export class Coordinator {
       .map((r, i) => ({ livrable: candidats[i]!.livrable, echecs: r.ok ? 0 : r.tests.filter((t) => !t.ok).length }))
       .filter((m) => m.echecs > 0)
       .sort((a, b) => a.echecs - b.echecs);
-    this.state.results[id] = { resultat: res, livrable, rapport, statut: 'en_verification', soumis_a: this.now(), mutants: pieges };
+    // Frozen copies: written once, shared by every later snapshot, fingerprinted once.
+    this.state.results[id] = {
+      resultat: geler(structuredClone(res)), livrable: geler(structuredClone(livrable)), rapport: geler(structuredClone(rapport)),
+      statut: 'en_verification', soumis_a: this.now(), mutants: geler(pieges),
+    };
     delete rec.bail;
     this.registry.append('resultat_soumis', {
       id,
@@ -1806,7 +1968,7 @@ export class Coordinator {
     });
     if (rec.state === 'reservee') transition(rec, 'en_cours');
 
-    this.state.decompositions[id] = { decomposition: d, statut: 'en_attente', force_tests };
+    this.state.decompositions[id] = { decomposition: geler(structuredClone(d)), statut: 'en_attente', force_tests };
     delete rec.bail;
     this.registry.append('decoupage_propose', { id, alveole: rec.id, chemin: rec.cell.chemin, auteur: d.auteur, enfants: n });
 
@@ -1912,8 +2074,21 @@ export class Coordinator {
   /** Second half of a verdict: the reveal, which must match the commitment. */
   async submitVerdict(v: Verdict): Promise<{ statut: string; piege?: boolean; correct?: boolean | null; renverse?: boolean; confirmations?: number }> {
     const replay = this.replayNext;
+    if (!replay) this.revelationTropTot(v);
     const rejeu = replay ? (replay.verifs[0] ?? null) : await this.rejeuFor(v);
     return this.run('submitVerdict', { verdict: v }, rejeu ? [rejeu] : [], () => this.doSubmitVerdict(v, rejeu));
+  }
+
+  /**
+   * The most frequent answer by far: a sealed verdict tried before every guard has committed. It is checked
+   * here, read-only, before the command takes its rollback snapshot; the command checks it again inside.
+   */
+  private revelationTropTot(v: Verdict): void {
+    const rr = v?.resultat ? this.state.results[v.resultat] : undefined;
+    const rec = rr ? this.state.cells[rr.resultat.alveole] : undefined;
+    if (!rec || rec.state !== 'en_verification' || rec.en_attente !== v.resultat) return;
+    if (!this.engagesSur(v.resultat).some((e) => e.par === v.gardienne)) return;
+    if (!this.revelationOuverte(rec, v.resultat)) throw new OspError('Reveal not open yet: other guards still have to commit', 425);
   }
 
   /** Rejecting a result accepted by the automatic verifier triggers a re-run (§9.5, MVP version). */
@@ -2041,6 +2216,8 @@ export class Coordinator {
   // ---------------------------------------------------------------- internal
 
   private emitCell(ruche: string, spec: CellSpec, parent: CellRecord | null, chemin: string, profondeur: number): CellRecord {
+    // Signed with the cell key (hybrid Ed25519 + ML-DSA-65), a third of SLH-DSA's size and ten times faster;
+    // the registry seals, in SLH-DSA, still cover every cell.
     const cell = this.sign<Cell>(
       {
         type: 'osp.cell/0.1',
@@ -2055,11 +2232,11 @@ export class Coordinator {
         emise_par: 'coordinateur',
         ...(spec.depot ? { depot: spec.depot } : {}),
       },
-      this.identite,
+      this.identiteAlveoles,
     );
     const rec: CellRecord = {
       id: hashOf(cell),
-      cell,
+      cell: geler(structuredClone(cell)),
       capsule_texte: spec.capsule,
       state: 'libre',
       profondeur,
@@ -2077,6 +2254,7 @@ export class Coordinator {
   private applyDecomposition(rec: CellRecord, id: Hash): void {
     const dr = this.state.decompositions[id]!;
     dr.statut = 'adoptee';
+    geler(dr);
     transition(rec, 'verrouillee');
     delete rec.en_attente;
     rec.redecouper = false;
@@ -2099,6 +2277,8 @@ export class Coordinator {
   private rejectResult(rec: CellRecord, resultId: Hash, motif: string): void {
     const rr = this.state.results[resultId]!;
     rr.statut = 'rejete';
+    // A rejected result is final (late reveals only read its status).
+    geler(rr);
     transition(rec, 'rejetee');
     rec.rejets++;
     delete rec.en_attente;
@@ -2184,6 +2364,10 @@ export class Coordinator {
     } else {
       this.completeHive(hive);
     }
+    // Honey is final: the cell and its result will never move again. Frozen, they are shared by every
+    // later snapshot, so the cost of a command stops growing with the finished history.
+    geler(rr);
+    geler(rec);
   }
 
   private completeHive(hive: HiveRecord): void {
@@ -2475,10 +2659,15 @@ export class Coordinator {
     return c;
   }
 
-  private save(): void {
-    if (!this.options.dataDir) return;
-    const file = join(this.options.dataDir, 'etat.json');
-    writeFileSync(file + '.tmp', JSON.stringify(this.state), 'utf8');
+  /**
+   * Writes the state to disk. Version 1: etat.json, after every command. Version 2: etat2.json, right after
+   * a seal, with that seal's position and fingerprint, in one file renamed at once (never half-written).
+   */
+  private save(seq?: number, etat?: Hash): void {
+    if (!this.options.dataDir || this.options.replay) return;
+    const v1 = this.params.empreinte_etat === 1;
+    const file = join(this.options.dataDir, v1 ? 'etat.json' : 'etat2.json');
+    writeFileSync(file + '.tmp', JSON.stringify(v1 ? this.state : { seq, etat, state: this.state }), 'utf8');
     renameSync(file + '.tmp', file);
   }
 }

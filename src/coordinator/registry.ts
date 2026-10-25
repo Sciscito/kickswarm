@@ -36,6 +36,7 @@ export class Registry {
   }
 
   append(nature: string, donnees: unknown): RegistryEntry {
+    if (this.position !== null) return this.verifierRejeu(nature, donnees);
     const last = this.entries[this.entries.length - 1];
     // Deep copy: a written entry must never move again, even if the source object changes.
     const base = { seq: this.entries.length, prev: last ? last.hash : null, date: new Date(this.now()).toISOString(), nature, donnees: structuredClone(donnees) };
@@ -46,6 +47,39 @@ export class Registry {
     return entry;
   }
 
+  // Replaying entries already written (the coordinator's restart): an append must reproduce, byte for
+  // byte, the entry at the cursor, and nothing is written or broadcast.
+  private position: number | null = null;
+
+  rejouerDepuis(seq: number): void {
+    this.position = seq;
+  }
+
+  curseur(): number | null {
+    return this.position;
+  }
+
+  /** Steps over an entry no command produces (a seal, an anchor). */
+  passer(): void {
+    if (this.position === null) throw new Error('No replay in progress');
+    this.position++;
+  }
+
+  finirRejeu(): void {
+    if (this.position !== this.entries.length) throw new Error(`Replay stopped at entry #${this.position} of ${this.entries.length}`);
+    this.position = null;
+  }
+
+  private verifierRejeu(nature: string, donnees: unknown): RegistryEntry {
+    const seq = this.position!;
+    const attendue = this.entries[seq];
+    const base = { seq, prev: seq > 0 ? this.entries[seq - 1]!.hash : null, date: new Date(this.now()).toISOString(), nature, donnees: structuredClone(donnees) };
+    if (!attendue || hashOf(base) !== attendue.hash) throw new Error(`entry #${seq} differs on replay (${attendue ? `“${attendue.nature}” written, “${nature}” replayed` : 'nothing written'})`);
+    this.position = seq + 1;
+    if (this.pending) this.pending.push(attendue);
+    return attendue;
+  }
+
   begin(): void {
     if (this.pending) throw new Error('Registry transaction already open');
     this.pending = [];
@@ -54,13 +88,14 @@ export class Registry {
   commit(): void {
     const done = this.pending ?? [];
     this.pending = null;
-    this.publish(done);
+    if (this.position === null) this.publish(done);
   }
 
   rollback(): void {
     const n = this.pending?.length ?? 0;
     this.pending = null;
-    this.entries.splice(this.entries.length - n, n);
+    if (this.position !== null) this.position -= n;
+    else this.entries.splice(this.entries.length - n, n);
   }
 
   /** Subscribes to new entries (real-time stream). Returns the unsubscribe function. */
