@@ -330,7 +330,8 @@ test/            protocol, verifier, sandbox, coordinator, plugin MCP + HTTP, in
 
 ## Documents
 
-- [spec/OSP-v0.4-universal-engine.md](spec/OSP-v0.4-universal-engine.md): **the plan now**: any AI becomes a bee (free chat, subscription, API key, local model, coding agent), and the order of the work
+- [spec/OSP-v0.4-universal-engine.md](spec/OSP-v0.4-universal-engine.md): any AI becomes a bee (free chat, subscription, API key, local model, coding agent)
+- [spec/OSP-v0.5-swarm-harness.md](spec/OSP-v0.5-swarm-harness.md): **the plan now** (draft): the swarm harness. Subscriptions contribute unattended through their official agents, from a fork on GitHub; sealed, interaction-free tasks; tiers and a cascade of models; a swarm that learns and adjusts itself, within rules it can never change
 - [spec/OSP-v0.1.md](spec/OSP-v0.1.md): the protocol, economy, governance, charter and Foundation
 - [spec/OSP-v0.2-trust-engine.md](spec/OSP-v0.2-trust-engine.md): the trust engine (hidden tests, trap cells, sealed verdicts, Wald's test, the audit)
 - [spec/OSP-v0.3-harness.md](spec/OSP-v0.3-harness.md): private hives, shared repositories, Luau, and any goal beyond code
