@@ -30,6 +30,7 @@ import type {
   RolePrive,
   Secrets,
   TestCase,
+  Tier,
   Verdict,
 } from '../protocol/types.js';
 import { mutants } from '../verifier/mutation.js';
@@ -78,6 +79,9 @@ export interface CellRecord {
   rejets: number;
   /** §5: after too many rejections, the cell goes back to splitting. */
   redecouper: boolean;
+  /** OSP v0.5 §6: the tier the cell needs now, and its failures at that tier (registries with tiers only). */
+  niveau?: Tier;
+  rejets_niveau?: number;
   /** Result or split awaiting its verification. */
   en_attente?: Hash;
   resultat_valide?: Hash;
@@ -225,6 +229,9 @@ export interface DetailCellule {
 
 const SHA_GIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 const CASTES = new Set<string>(['eclaireuse', 'ouvriere', 'batisseuse', 'gardienne']);
+/** OSP v0.5 §6.1: the tiers, from the cheapest to the best. */
+const NIVEAUX: Tier[] = ['economy', 'standard', 'frontier'];
+const RANG_NIVEAU: Record<Tier, number> = { economy: 0, standard: 1, frontier: 2 };
 const GITHUB_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 
 interface State {
@@ -331,6 +338,8 @@ export interface HiveView {
     atomique: boolean;
     rejets: number;
     enfants: number;
+    /** OSP v0.5 §6.1: the tier the cell needs now (registries with tiers only). */
+    niveau?: Tier;
   }>;
 }
 
@@ -461,6 +470,8 @@ export class Coordinator {
     this.params = { ...DEFAULT_PARAMS, ...options.params };
     // A registry that announces no mutation engine version was written with version 1.
     if (options.replay && options.params?.moteur_mutation === undefined) this.params.moteur_mutation = 1;
+    // A registry that announces no tiers was written without them (OSP v0.5 §6).
+    if (options.replay && options.params?.niveaux === undefined) this.params.niveaux = 0;
     // Cryptographic randomness: past draws are public, they must not allow guessing the next ones.
     this.baseRng = options.rng ?? aleaCrypto;
     this.baseRngSecret = options.rng ?? aleaCrypto;
@@ -475,6 +486,7 @@ export class Coordinator {
     // An existing registry keeps the conventions of its launch: fingerprint version, cell key.
     const lancement = this.registry.entries[0]?.donnees as { params?: Partial<Params>; alveoles?: ContributorId } | undefined;
     if (options.replay ? options.params?.empreinte_etat === undefined : lancement && lancement.params?.empreinte_etat === undefined) this.params.empreinte_etat = 1;
+    if (!options.replay && lancement && lancement.params?.niveaux === undefined) this.params.niveaux = 0;
 
     const keysFile = dir ? join(dir, 'cles.json') : undefined;
     if (options.replay) {
@@ -1321,6 +1333,7 @@ export class Coordinator {
           profondeur: c.profondeur,
           atomique: c.cell.atomique,
           rejets: c.rejets,
+          ...(this.params.niveaux >= 1 ? { niveau: this.niveauRequis(c) } : {}),
           enfants: c.enfants.length,
         })),
     };
@@ -1740,6 +1753,8 @@ export class Coordinator {
     const libres = cells.filter((c) => {
       if (c.state !== 'libre') return false;
       if (r.castes !== undefined && !r.castes.includes(this.casteFor(c))) return false;
+      // OSP v0.5 §6.1: a bee that states its tier gets only the cells that tier can do.
+      if (r.tier !== undefined && this.params.niveaux >= 1 && RANG_NIVEAU[r.tier] < RANG_NIVEAU[this.niveauRequis(c)]) return false;
       const d = c.cell.depot;
       return !d || !ouvertes.some((o) => o.cell.depot!.url === d.url && chevauchent(o.cell.depot!.ecriture, d.ecriture));
     });
@@ -1804,10 +1819,13 @@ export class Coordinator {
     const rec = id ? this.state.cells[id] : undefined;
     let rappelee = false;
     if (rec?.bail?.par === r.contributeur && (rec.state === 'reservee' || rec.state === 'en_cours')) {
+      const caste = rec.bail.caste;
       delete rec.bail;
       rec.state = 'libre';
       rappelee = true;
-      this.registry.append('rappel', { alveole: rec.id, contributeur: r.contributeur });
+      this.registry.append('rappel', { alveole: rec.id, contributeur: r.contributeur, ...(r.echec ? { echec: true } : {}) });
+      // OSP v0.5 §6.2: a bee that tried and could not do a writing task counts as a failure at its tier.
+      if (r.echec && caste === 'ouvriere') this.echecAuNiveau(rec);
     } else if (rec && rec.gardiennes.some((g) => g.par === r.contributeur)) {
       rec.gardiennes = rec.gardiennes.filter((g) => g.par !== r.contributeur);
       rappelee = true;
@@ -2341,6 +2359,7 @@ export class Coordinator {
         atomique: spec.atomique,
         emise_par: 'coordinateur',
         ...(spec.depot ? { depot: spec.depot } : {}),
+        ...(spec.tier ? { tier: spec.tier } : {}),
       },
       this.identiteAlveoles,
     );
@@ -2355,6 +2374,7 @@ export class Coordinator {
       verdicts: [],
       rejets: 0,
       redecouper: false,
+      ...(this.params.niveaux >= 1 && spec.tier ? { niveau: spec.tier } : {}),
     };
     this.state.cells[rec.id] = rec;
     this.registry.append('alveole_emise', { id: rec.id, ruche, chemin, parent: cell.parent, atomique: cell.atomique });
@@ -2404,6 +2424,12 @@ export class Coordinator {
     this.addBoard(rec.cell.ruche, { nature: 'impasse', chemin: rec.cell.chemin, texte: motif.slice(0, 500), auteur: rr.resultat.auteur, source: resultId });
     this.registry.append('alveole_rejetee', { alveole: rec.id, chemin: rec.cell.chemin, resultat: resultId, motif, rejets: rec.rejets });
 
+    // OSP v0.5 §6.2: with tiers, the cascade decides when a writing cell goes back to splitting.
+    if (this.params.niveaux >= 1 && rec.enfants.length === 0 && rec.cell.atomique && !rec.redecouper) {
+      this.echecAuNiveau(rec);
+      if (rec.state === 'rejetee') transition(rec, 'libre');
+      return;
+    }
     if (rec.rejets >= this.params.rejets_avant_redecoupage && rec.enfants.length === 0) {
       if (rec.profondeur + 1 > this.params.profondeur_max) {
         transition(rec, 'bloquee');
@@ -2436,6 +2462,7 @@ export class Coordinator {
 
     const g = this.mielOf(rec);
     const auteur = rr.resultat.auteur;
+    const niveau = this.params.niveaux >= 1 ? { niveau: this.niveauRequis(rec) } : {};
     this.ledger.award(auteur, g, `alvéole ${rec.cell.chemin}`, slug);
     this.addContribution(hive, auteur, g);
     this.ledger.reputation(auteur, 'confirme');
@@ -2452,7 +2479,7 @@ export class Coordinator {
     }
     this.addBoard(slug, { nature: 'decouverte', chemin: rec.cell.chemin, texte: `Validée : ${rec.cell.objectif}`, auteur, source: resultId });
     this.registry.append('alveole_miel', {
-      alveole: rec.id, chemin: rec.cell.chemin, resultat: resultId, auteur, gardiennes, grammes: g, ...wald, ...(arbitrage ? { arbitrage: true } : {}),
+      alveole: rec.id, chemin: rec.cell.chemin, resultat: resultId, auteur, gardiennes, grammes: g, ...wald, ...niveau, ...(arbitrage ? { arbitrage: true } : {}),
     });
     // The cell's secrets become public: anyone can now re-verify its validation.
     const crit = rec.cell.critere_fini;
@@ -2563,6 +2590,7 @@ export class Coordinator {
     const a: Assignment = { caste, alveole_id: rec.id, alveole: rec.cell, capsule: rec.capsule_texte, profondeur: rec.profondeur, bail_expire };
     const pb = this.state.hives[rec.cell.ruche]?.ruche.playbook;
     if (pb) a.playbook = pb;
+    if (this.params.niveaux >= 1) a.tier = this.niveauRequis(rec);
     if (caste === 'batisseuse') {
       a.enfants_valides = rec.enfants.map((cid) => {
         const child = this.state.cells[cid]!;
@@ -2583,10 +2611,46 @@ export class Coordinator {
     return 'ouvriere';
   }
 
+  /** OSP v0.5 §6.1: the tier a cell needs now. Going back to splitting always needs the best models. */
+  private niveauRequis(rec: CellRecord): Tier {
+    if (rec.redecouper) return 'frontier';
+    return rec.niveau ?? (rec.cell.atomique ? 'economy' : 'frontier');
+  }
+
+  /**
+   * OSP v0.5 §6.2, the cascade: after `rejets_par_niveau` failures at a tier, a writing cell moves up one
+   * tier; after a failure at the top tier, it goes back to a scout to be split more finely.
+   */
+  private echecAuNiveau(rec: CellRecord): void {
+    if (this.params.niveaux < 1 || rec.enfants.length || rec.redecouper || !rec.cell.atomique) return;
+    const niveau = this.niveauRequis(rec);
+    rec.rejets_niveau = (rec.rejets_niveau ?? 0) + 1;
+    if (niveau === 'frontier') {
+      rec.rejets_niveau = 0;
+      if (rec.profondeur + 1 > this.params.profondeur_max) {
+        // From a rejection (rejetee) or a release (libre): either way, nobody can split it further.
+        if (rec.state === 'rejetee') transition(rec, 'bloquee');
+        else rec.state = 'bloquee';
+        this.registry.append('alveole_bloquee', { alveole: rec.id, chemin: rec.cell.chemin });
+        return;
+      }
+      rec.redecouper = true;
+      this.registry.append('redecoupage', { alveole: rec.id, chemin: rec.cell.chemin, apres: 'frontier' });
+      return;
+    }
+    if (rec.rejets_niveau < this.params.rejets_par_niveau) return;
+    const suivant = NIVEAUX[RANG_NIVEAU[niveau] + 1]!;
+    rec.niveau = suivant;
+    rec.rejets_niveau = 0;
+    this.registry.append('niveau_releve', { alveole: rec.id, chemin: rec.cell.chemin, de: niveau, a: suivant });
+  }
+
   private mielOf(rec: CellRecord): number {
     const hauteur = (r: CellRecord): number => (r.enfants.length ? 1 + Math.max(...r.enfants.map((c) => hauteur(this.state.cells[c]!))) : 0);
     const cClasse = 1; // V0 (§10.1)
-    return this.params.miel_base * cClasse * (1 + 0.25 * hauteur(rec));
+    // OSP v0.5 §6.3: honey follows the tier the cell needed.
+    const facteurNiveau = this.params.niveaux >= 1 ? this.params.miel_par_niveau[this.niveauRequis(rec)] : 1;
+    return this.params.miel_base * cClasse * (1 + 0.25 * hauteur(rec)) * facteurNiveau;
   }
 
   private multiplicateur(hive: HiveRecord, branche: string): number {
@@ -2666,6 +2730,8 @@ export class Coordinator {
     const key = `${r.contributeur}:${r.nonce}`;
     if (!r.nonce || this.state.nonces[key] !== undefined) throw new OspError('Replayed request', 409);
     if (r.castes !== undefined && (!Array.isArray(r.castes) || !r.castes.length || !r.castes.every((c) => CASTES.has(c)))) throw new OspError('castes: a list among eclaireuse, ouvriere, batisseuse, gardienne');
+    if (r.tier !== undefined && !Object.hasOwn(RANG_NIVEAU, r.tier)) throw new OspError('tier: economy, standard or frontier');
+    if (r.echec !== undefined && (r.echec !== true || action !== 'release')) throw new OspError('echec: only true, on a release');
     this.state.nonces[key] = r.ts;
   }
 
@@ -2675,6 +2741,10 @@ export class Coordinator {
     }
     if (typeof spec.capsule !== 'string' || spec.capsule.length > 100_000) throw new OspError('Invalid capsule (100,000 characters maximum)');
     if (typeof spec.atomique !== 'boolean') throw new OspError('The "atomique" field must be a boolean');
+    if (spec.tier !== undefined) {
+      if (this.params.niveaux < 1) throw new OspError('This registry has no tiers of models (OSP v0.5): leave out "tier"');
+      if (!Object.hasOwn(RANG_NIVEAU, spec.tier)) throw new OspError('tier: economy, standard or frontier');
+    }
     try {
       validateCritere(spec.critere_fini);
     } catch (e) {

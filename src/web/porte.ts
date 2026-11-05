@@ -1,6 +1,6 @@
 import { genererIdentiteWeb, identiteValide, signataireWeb, type IdentiteWeb } from '../protocol/identite-web.js';
 import * as objets from '../protocol/objets.js';
-import type { Assignment, Hash, Livrable, Verdict } from '../protocol/types.js';
+import type { Assignment, Hash, Livrable, Tier, Verdict } from '../protocol/types.js';
 import { fiche, promptChat, TAILLE_MAX_CHAT, type FicheTache } from '../taches/fiche.js';
 import { lireReponse } from '../taches/lecteur.js';
 import { validateLivrable, verifier, type Executeurs, type VerifReport } from '../verifier/coeur.js';
@@ -159,12 +159,12 @@ export class Porte {
    * Takes a writing task that fits in one chat message. A task the chat door cannot serve (too big,
    * or reading files from a repository the browser does not have) goes straight back to the swarm.
    */
-  async prendre(ruche?: string, o: { tailleMax?: number } = {}): Promise<TacheChat | null> {
+  async prendre(ruche?: string, o: { tailleMax?: number; tier?: Tier } = {}): Promise<TacheChat | null> {
     const deja = this.enCours();
     if (deja) return deja;
     const tailleMax = o.tailleMax ?? TAILLE_MAX_CHAT;
     for (let essai = 0; essai < 5; essai++) {
-      const r = await this.appel<{ assignation: Assignment | null }>('POST', '/v0/work/claim', objets.requete(this.signataire(), 'claim', { ...(ruche ? { ruche } : {}), castes: [...ECRIRE] }));
+      const r = await this.appel<{ assignation: Assignment | null }>('POST', '/v0/work/claim', objets.requete(this.signataire(), 'claim', { ...(ruche ? { ruche } : {}), castes: [...ECRIRE], ...(o.tier ? { tier: o.tier } : {}) }));
       const a = r.assignation;
       if (!a) return null;
       const f = fiche(a);
@@ -210,11 +210,14 @@ export class Porte {
     return { statut: r.statut, motif: r.rapport.motif };
   }
 
-  /** Gives the task back to the swarm, with no penalty. */
-  async liberer(): Promise<void> {
+  /**
+   * Gives the task back to the swarm, with no penalty. `echec`: the AI tried and could not do it, which
+   * counts toward moving the cell to a stronger tier of models (OSP v0.5 §6.2).
+   */
+  async liberer(echec = false): Promise<void> {
     const t = this.enCours();
     this.stockage.effacer(CLES.tache);
-    if (t) await this.appel('POST', '/v0/work/release', objets.requete(this.signataire(), 'release', { alveole: t.assignment.alveole_id }));
+    if (t) await this.appel('POST', '/v0/work/release', objets.requete(this.signataire(), 'release', { alveole: t.assignment.alveole_id, ...(echec ? { echec: true as const } : {}) }));
   }
 
   // ---------------------------------------------------------------- the guard door

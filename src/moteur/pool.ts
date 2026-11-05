@@ -1,4 +1,5 @@
 import { completer, decouvrir, ErreurFournisseur, type Fournisseur, type Message, type Modele } from './fournisseurs.js';
+import type { Tier } from '../protocol/types.js';
 
 // The pool of the local engine (OSP v0.4 §2.6): for each request, the best model that fits (context,
 // privacy) and still has quota. A refusal pauses that model and the pool moves to the next one; local
@@ -118,6 +119,18 @@ export class Pool {
         const local = (m: Modele) => (this.fournisseurs.find((f) => f.id === m.fournisseur)?.local ? 1 : 0);
         return local(a) - local(z) || this.score(z) - this.score(a) || z.contexte - a.contexte;
       });
+  }
+
+  /**
+   * OSP v0.5 §6.1: the best tier of model this pool can lend the swarm now. A subscription's official tool
+   * runs the provider's best models; a paid key, mid-range ones at least; free and local models, economy.
+   */
+  niveau(): Tier {
+    const c = this.candidats({ tokens: 0, maxTokens: 0, usage: 'essaim', confidentiel: false });
+    const f = (m: Modele) => this.fournisseurs.find((x) => x.id === m.fournisseur);
+    if (c.some((m) => f(m)?.api === 'cli')) return 'frontier';
+    if (c.some((m) => !m.gratuit && !f(m)?.local)) return 'standard';
+    return 'economy';
   }
 
   /** The largest request this pool can serve now, for the swarm (the chat door's limit does not apply). */

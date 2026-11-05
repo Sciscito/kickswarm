@@ -239,7 +239,8 @@ function montrerTache(t) {
   $('task').hidden = false;
   $('task-goal').textContent = t.fiche.objectif;
   const role = t.fiche.role === 'batisseuse' ? 'Assemble' : 'Write';
-  $('task-meta').textContent = `${role} ${t.fiche.livrable.module} · ${t.fiche.livrable.langage} · about ${t.fiche.taille.prompt} tokens · until ${new Date(t.assignment.bail_expire).toLocaleTimeString()}`;
+  const tier = { economy: 'any AI can do it', standard: 'needs a mid-range AI', frontier: 'needs a top AI' }[t.assignment.tier];
+  $('task-meta').textContent = `${role} ${t.fiche.livrable.module} · ${t.fiche.livrable.langage}${tier ? ` · ${tier}` : ''} · about ${t.fiche.taille.prompt} tokens · until ${new Date(t.assignment.bail_expire).toLocaleTimeString()}`;
   $('prompt').value = t.prompt;
   $('step-copy').hidden = false;
   $('step-paste').hidden = false;

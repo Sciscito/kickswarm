@@ -1,5 +1,5 @@
 import { canonicalize, hashOf } from './canonical.js';
-import type { Caste, ContributorId, EngagementVerdict, Hash, Livrable, Requete, Result, Verdict } from './types.js';
+import type { Caste, ContributorId, EngagementVerdict, Hash, Livrable, Requete, Result, Tier, Verdict } from './types.js';
 
 // The signed work objects (requests, results, sealed verdicts), built the same way in Node and in a
 // browser (OSP v0.4 §2.3): only the signer differs. builders.ts wraps them with a Node identity,
@@ -40,7 +40,7 @@ export function nonce(): string {
 
 const hex = (octets: Uint8Array) => Array.from(octets, (o) => o.toString(16).padStart(2, '0')).join('');
 
-export function requete(s: Signataire, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Caste[] } = {}): Requete {
+export function requete(s: Signataire, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Caste[]; tier?: Tier; echec?: true } = {}): Requete {
   return signerObjet<Requete>({ type: 'osp.requete/0.1', action, contributeur: s.id, ...extra, ts: Date.now(), nonce: nonce() }, s);
 }
 

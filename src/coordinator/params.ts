@@ -1,3 +1,5 @@
+import type { Tier } from '../protocol/types.js';
+
 // The "(parameter)" values of the OSP v0.1 spec, with their starting values.
 // Governance (§14) can change them without changing the version.
 
@@ -97,6 +99,15 @@ export interface Params {
   balise_decalage: number;
   /** P1-3: maximum gap between the contributor's clock and the coordinator's, for a fair draw. */
   fenetre_balise_ms: number;
+  /**
+   * OSP v0.5 §6: version of the tiers of models. 0, in registries that do not announce it: no tiers, and a
+   * cell goes back to splitting after `rejets_avant_redecoupage` rejections; 1: tiers and the cascade.
+   */
+  niveaux: number;
+  /** OSP v0.5 §6.2: failures at a tier before the cell moves up one tier. */
+  rejets_par_niveau: number;
+  /** OSP v0.5 §6.3: the honey of a cell is multiplied by the factor of the tier it was done at. */
+  miel_par_niveau: Record<Tier, number>;
 }
 
 const HEURE = 3600_000;
@@ -156,4 +167,7 @@ export const DEFAULT_PARAMS: Params = {
   fenetre_requete_ms: 5 * 60_000,
   balise_decalage: 3,
   fenetre_balise_ms: 4000,
+  niveaux: 1,
+  rejets_par_niveau: 2,
+  miel_par_niveau: { economy: 1, standard: 2, frontier: 4 },
 };

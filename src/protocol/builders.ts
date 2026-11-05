@@ -29,7 +29,7 @@ export function signataire(id: Identity): objets.Signataire {
   return { id: id.id, signer: (donnees) => signBytes(Buffer.from(donnees), id) };
 }
 
-export function makeRequete(id: Identity, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Requete['castes'] } = {}): Requete {
+export function makeRequete(id: Identity, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Requete['castes']; tier?: Requete['tier']; echec?: true } = {}): Requete {
   return objets.requete(signataire(id), action, extra);
 }
 

@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| Status | Draft, under discussion |
+| Status | Draft, under discussion; H1 implemented (§10.1) |
 | Date | 5 November 2026 |
 | Scope | Unattended contribution with subscriptions through official agents; hives on GitHub; sealed, interaction-free work; a living pool; self-organization and self-optimization within fixed rules |
 | Version slot | v0.4 moved federation to v0.5. This proposal takes v0.5 for the swarm harness and moves federation to v0.6. This change needs a published decision (v0.1 §14.6) |
@@ -282,6 +282,16 @@ A playbook (v0.3 §3.6) MAY have variants, each approved by the hive's owner. Ce
 | H6 | The open harness for keys and local models (§2.7) | A free model takes a task in the runner with no network and no shell |
 
 Federation of coordinators moves to v0.6.
+
+### 10.1 What is implemented (H1)
+
+- **Tiers** (`Tier`: `economy`, `standard`, `frontier`). A cell spec MAY ask for a starting tier, which goes into the signed cell. Without one, a writing cell starts at `economy`; splitting and assembling need `frontier`, and so does a cell sent back to a scout. A claim MAY state the bee's best tier; it then gets only cells that tier can do. A claim that states none takes anything, as before, so agents and chats keep working unchanged.
+- **The cascade.** After `rejets_par_niveau` failures at a tier (2), a writing cell moves up one tier (`niveau_releve` in the registry); after one failure at `frontier`, it goes back to a scout (`redecoupage`, with `apres: frontier`). With tiers, this replaces the rule of v0.1 §5 (three rejections, then a scout).
+- **What counts as a failure.** A rejected result, and also a release that says `echec: true`: the bee tried and could not do it. Without that, a cell that cheap models cannot do would be given back in silence, again and again, and never move up. A false `echec` can only move a cell to a stronger, better-paid tier.
+- **Honey by tier** (`miel_par_niveau`: ×1, ×2, ×4) for writing and assembling cells, and for their guards' share; the validation records the tier.
+- **The doors.** The local engine states the tier of what its pool can lend (a subscription's official tool: `frontier`; a paid key: `standard`; free and local models: `economy`) and releases with `echec` when its models could not do a task. The chat page shows how strong an AI a task needs.
+- **Old registries.** The version (`niveaux`) is written in the launch entry. A registry that does not announce it replays without tiers, exactly as before; a cell spec with a tier is refused there.
+- Tests: `test/niveaux.test.ts`.
 
 ---
 

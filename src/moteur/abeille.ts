@@ -87,7 +87,8 @@ export class AbeilleApi {
     if (!this.o.pool.essaimPeutTravailler()) return 'pause';
     const tailleMax = this.o.pool.tailleMax() - 4000;
     if (tailleMax <= 0) return 'sans-modele';
-    const t = await this.porte.prendre(ruche, { tailleMax });
+    // OSP v0.5 §6.1: the pool says which tier of models it can offer; the swarm sends it only what that tier can do.
+    const t = await this.porte.prendre(ruche, { tailleMax, tier: this.o.pool.niveau() });
     if (!t) return 'rien';
     const messages: Message[] = [
       { role: 'system', content: SYSTEME },
@@ -120,8 +121,8 @@ export class AbeilleApi {
       }
       messages.push({ role: 'user', content: correctif });
     }
-    await this.porte.liberer();
-    this.log(`cell ${t.fiche.cellule.chemin}: not solved after ${(this.o.corrections ?? 2) + 1} tries, given back with no penalty`);
+    await this.porte.liberer(true);
+    this.log(`cell ${t.fiche.cellule.chemin}: not solved after ${(this.o.corrections ?? 2) + 1} tries, given back with no penalty (it counts toward a stronger tier)`);
     return 'abandonne';
   }
 

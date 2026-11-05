@@ -120,9 +120,17 @@ export type CritereTests = CritereV0 | CritereLuau;
 /** V0 only for now; V1 and V2 come later (§9.1). */
 export type CritereFini = CritereV0 | CritereTestsDeTests | CritereLuau;
 
+/**
+ * OSP v0.5 §6.1: the kind of model a cell needs, or a bee offers. Splitting, assembling and arbitrating
+ * need the best models; small, well-tested writing work can go to free and low-cost ones.
+ */
+export type Tier = 'economy' | 'standard' | 'frontier';
+
 /** What a hive owner or a scout describes before the coordinator issues the cell. */
 export interface CellSpec {
   objectif: string;
+  /** OSP v0.5 §6.1: the tier the cell starts at (default: economy for writing work, frontier for splitting). */
+  tier?: Tier;
   /** Context text. The coordinator keeps its hash in the cell. */
   capsule: string;
   critere_fini: CritereFini;
@@ -214,6 +222,8 @@ export interface Cell extends Signed {
   budget: Budget;
   atomique: boolean;
   emise_par: 'coordinateur';
+  /** OSP v0.5 §6.1: the starting tier the owner or the scout asked for. */
+  tier?: Tier;
   /** OSP v0.3 §3.2, only on repo cells. */
   depot?: CapsuleDepot;
 }
@@ -358,6 +368,10 @@ export interface Requete extends Signed {
   alveole?: Hash;
   /** OSP v0.4 §2: for a claim, the castes this bee takes (the chat door writes, the guard door verifies). */
   castes?: Caste[];
+  /** OSP v0.5 §6.1: for a claim, the best tier of model this bee can use (none: any cell). */
+  tier?: Tier;
+  /** OSP v0.5 §6.2: for a release, the bee tried and could not do it (it counts toward the cascade). */
+  echec?: true;
   ts: number;
   nonce: string;
 }
@@ -379,4 +393,6 @@ export interface Assignment {
   enfants_valides?: Array<{ chemin: string; objectif: string; module: string; livrable: Livrable }>;
   /** OSP v0.3 §3.6: the hive's playbook. The plugin adds its guidance for the bee's role. */
   playbook?: string;
+  /** OSP v0.5 §6.1: the tier this cell needs right now. */
+  tier?: Tier;
 }
