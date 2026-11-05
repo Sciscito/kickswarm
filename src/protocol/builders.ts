@@ -3,11 +3,13 @@ import { hashOf, sha256 } from './canonical.js';
 import { newNonce, signBytes, signObject, type Identity } from './identity.js';
 import * as objets from './objets.js';
 import type {
+  ContributorId,
   Adhesion,
   FusionDepot,
   LienGithub,
   RecuDepot,
   CellSpec,
+  Delegation,
   Invitation,
   Decision,
   EngagementVerdict,
@@ -29,7 +31,7 @@ export function signataire(id: Identity): objets.Signataire {
   return { id: id.id, signer: (donnees) => signBytes(Buffer.from(donnees), id) };
 }
 
-export function makeRequete(id: Identity, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Requete['castes']; tier?: Requete['tier']; echec?: true } = {}): Requete {
+export function makeRequete(id: Identity, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Requete['castes']; tier?: Requete['tier']; echec?: true; executor?: string } = {}): Requete {
   return objets.requete(signataire(id), action, extra);
 }
 
@@ -96,6 +98,26 @@ export function makeInvitation(
   return { invitation, code };
 }
 
+/**
+ * OSP v0.5 §2.5: the main identity delegates to a runner key, for one hive, a daily share and a number of
+ * days (90 at most).
+ */
+export function makeDelegation(main: Identity, runner: ContributorId, hive: string, o: { parJour?: number; jours?: number } = {}): Delegation {
+  return signObject<Delegation>(
+    {
+      type: 'osp.delegation/0.5',
+      main: main.id,
+      runner,
+      hive,
+      share: { per_day: o.parJour ?? 3 },
+      expires: new Date(Date.now() + (o.jours ?? 90) * 24 * 3600_000).toISOString(),
+      ts: Date.now(),
+      nonce: newNonce(),
+    },
+    main,
+  );
+}
+
 export function makeAdhesion(id: Identity, code: string): Adhesion {
   return signObject<Adhesion>({ type: 'osp.adhesion/0.3', contributeur: id.id, code: normaliserCode(code), ts: Date.now(), nonce: newNonce() }, id);
 }
@@ -117,7 +139,7 @@ export function makeResult(
   alveole: Hash,
   caste: Result['caste'],
   livrable: Livrable,
-  opts: { impasses?: string[]; agent?: Result['agent']; cout?: Result['cout'] } = {},
+  opts: { impasses?: string[]; agent?: Result['agent']; cout?: Result['cout']; prompt_hash?: Hash } = {},
 ): Result {
   return objets.resultat(signataire(id), alveole, caste, livrable, opts);
 }

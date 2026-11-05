@@ -291,6 +291,8 @@ export interface Result extends Signed {
   impasses: string[];
   agent: { famille: string; modele?: string };
   cout: { tokens?: number; duree_s?: number };
+  /** OSP v0.5 §3.2: the hash of the sealed prompt the work was done from; required under a sealed lease. */
+  prompt_hash?: Hash;
 }
 
 /** §6.2: a scout's proposed split. */
@@ -344,7 +346,9 @@ export type DecisionNature =
   /** A member leaves (cible: themselves). */
   | 'depart'
   /** The owner revokes an invitation not used up yet (cible: the invitation's identifier). */
-  | 'invitation_revoquee';
+  | 'invitation_revoquee'
+  /** OSP v0.5 §2.5: a contributor revokes one of their runner keys (cible: the runner key). */
+  | 'runner_revoque';
 
 /** §14.6 */
 export interface Decision extends Signed {
@@ -372,6 +376,8 @@ export interface Requete extends Signed {
   tier?: Tier;
   /** OSP v0.5 §6.2: for a release, the bee tried and could not do it (it counts toward the cascade). */
   echec?: true;
+  /** OSP v0.5 §3.2: for a claim, the executor that will do the work; the bee then receives a sealed card. */
+  executor?: string;
   ts: number;
   nonce: string;
 }
@@ -395,4 +401,42 @@ export interface Assignment {
   playbook?: string;
   /** OSP v0.5 §6.1: the tier this cell needs right now. */
   tier?: Tier;
+  /** OSP v0.5 §3.2: the sealed card, when the claim named an executor. */
+  carte?: SealedCard;
+}
+
+/**
+ * OSP v0.5 §2.5: a runner key. The contributor's main identity stays on their machine; it signs this
+ * delegation to a separate key that a runner (a GitHub workflow) uses for one hive, a daily share and a
+ * limited time. Honey, reputation and trophies go to the main identity.
+ */
+export interface Delegation extends Signed {
+  type: 'osp.delegation/0.5';
+  main: ContributorId;
+  runner: ContributorId;
+  hive: string;
+  share: { per_day: number };
+  /** ISO date after which the runner key no longer works. */
+  expires: string;
+  ts: number;
+  nonce: string;
+}
+
+/**
+ * OSP v0.5 §3.2: what a runner receives: the task rendered as one prompt for its executor, signed by the
+ * coordinator. The prompt's hash is written to the registry with the lease; the result must carry it.
+ */
+export interface SealedCard extends Signed {
+  type: 'osp.sealed-card/0.5';
+  cell: Hash;
+  /** The lease's identifier: the hash of the cell, the holder and the end of the lease. */
+  lease: Hash;
+  executor: string;
+  prompt: string;
+  prompt_hash: Hash;
+  /** Repo cells only: the commit to check out, and the files the work may change. */
+  base_commit?: string;
+  write_scope: string[];
+  expires: string;
+  coordinator: ContributorId;
 }

@@ -313,11 +313,15 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
   const communIssues: string[] = [];
   let partsCommun = 0;
   let partsAutres = 0;
+  // OSP v0.5 §2.5: a runner key works for its main identity; neither may verify the other's work.
+  const mainDe = new Map<string, string>();
+  const t = (x: unknown) => mainDe.get(String(x)) ?? String(x);
   for (const e of entries) {
     const d = e.donnees as Record<string, unknown>;
+    if (e.nature === 'delegation') mainDe.set(String(d.runner), String(d.main));
     if (e.nature === 'resultat_soumis') auteurs.set(String(d.id), String(d.auteur));
-    if (e.nature === 'verdict' && auteurs.get(String(d.resultat)) === d.gardienne) selfChecks.push(`#${e.seq}`);
-    if (e.nature === 'alveole_miel' && Array.isArray(d.gardiennes) && d.gardiennes.includes(d.auteur)) selfChecks.push(`#${e.seq}`);
+    if (e.nature === 'verdict' && auteurs.has(String(d.resultat)) && t(auteurs.get(String(d.resultat))) === t(d.gardienne)) selfChecks.push(`#${e.seq}`);
+    if (e.nature === 'alveole_miel' && Array.isArray(d.gardiennes) && d.gardiennes.map(t).includes(t(d.auteur))) selfChecks.push(`#${e.seq}`);
     if (e.nature === 'miel') {
       const id = String(d.beneficiaire), g = Number(d.grammes);
       const acc = gagne.get(id) ?? { total: 0, n: 0 };
@@ -330,6 +334,47 @@ export async function auditRegistry(entries: RegistryEntry[], opts: AuditOptions
     }
   }
   add('Nobody verified their own work', selfChecks.length === 0, selfChecks.length ? `violations at ${selfChecks.slice(0, 5).join(', ')}` : undefined);
+
+  // OSP v0.5 §2.5, §3.2: every result taken under a sealed lease names that lease's prompt, and a revoked
+  // runner key does no work after its revocation. The replay already enforces both; this says it plainly.
+  const bauxScelles = new Map<string, string>();
+  const revoques = new Map<string, number>();
+  const fautesScellees: string[] = [];
+  let nbScelles = 0;
+  let nbConformes = 0;
+  for (const e of entries) {
+    const d = e.donnees as Record<string, unknown>;
+    const cle = `${String(d.alveole)}|${String(d.contributeur)}`;
+    if (e.nature === 'bail_scelle') {
+      bauxScelles.set(cle, String(d.prompt_hash));
+      nbScelles++;
+    } else if (e.nature === 'rappel' || e.nature === 'bail_expire' || e.nature === 'bail_revoque') bauxScelles.delete(cle);
+    else if (e.nature === 'decision' && d.nature === 'runner_revoque') revoques.set(String(d.cible), e.seq);
+    else if (e.nature === 'commande') {
+      const c = d as unknown as CommandeDonnees;
+      const qui = c.type === 'submitResult' ? (c.entree as { resultat: Result }).resultat.auteur : c.type === 'claim' || c.type === 'start' ? (c.entree as { requete: { contributeur: string } }).requete.contributeur : undefined;
+      if (qui && revoques.has(qui)) fautesScellees.push(`#${e.seq}: work by a runner key revoked at #${revoques.get(qui)}`);
+      if (c.type === 'submitResult') {
+        const res = (c.entree as { resultat: Result }).resultat;
+        const k = `${res.alveole}|${res.auteur}`;
+        const h = bauxScelles.get(k);
+        if (h !== undefined) {
+          if (res.prompt_hash === h) nbConformes++;
+          else fautesScellees.push(`#${e.seq}: prompt_hash ${String(res.prompt_hash)} under a lease sealed with ${h}`);
+          bauxScelles.delete(k);
+        }
+      }
+    }
+  }
+  if (mainDe.size || nbScelles) {
+    add(
+      'Sealed cards and runner keys',
+      fautesScellees.length === 0,
+      fautesScellees.length
+        ? fautesScellees.slice(0, 3).join('; ')
+        : `${mainDe.size} runner key(s), ${revoques.size} revoked; ${nbScelles} sealed lease(s), ${nbConformes} result(s) carrying their lease's prompt hash; no work by a revoked key`,
+    );
+  }
 
   const conservation: string[] = [];
   for (const [id, { total, n }] of gagne) {

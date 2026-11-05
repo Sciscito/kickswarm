@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { makeDecision } from '../protocol/builders.js';
 import { isContributorId } from '../protocol/identity.js';
 import { ErreurCadrage, lireCadrage, type Idee } from '../taches/cadrage.js';
-import type { Adhesion, CellSpec, Decision, Decomposition, EngagementVerdict, FusionDepot, Hash, Hive, Invitation, LienGithub, Livrable, RecuDepot, Requete, Result, Secrets, Verdict } from '../protocol/types.js';
+import type { Adhesion, CellSpec, Decision, Decomposition, Delegation, EngagementVerdict, FusionDepot, Hash, Hive, Invitation, LienGithub, Livrable, RecuDepot, Requete, Result, Secrets, Verdict } from '../protocol/types.js';
 import { Coordinator, OspError, type Compteurs } from './coordinator.js';
 import { Garde } from './garde.js';
 import { Hote } from './hote.js';
@@ -296,6 +296,14 @@ export function createCoordinatorServer(coord: Coordinator, hote: Hote = new Hot
         }
         case route === 'POST /v0/decisions':
           return ok(201, cible.decide(body as unknown as Decision));
+        // OSP v0.5 §2.5: a main identity delegates to a runner key.
+        case route === 'POST /v0/runners':
+          return ok(201, cible.deleguer(body as unknown as Delegation));
+        case route.startsWith('GET /v0/runners/') && parts.length === 3: {
+          const id = parts[2]!;
+          if (!isContributorId(id)) throw new OspError('Invalid identifier');
+          return ok(200, { runners: cible.runners(id) });
+        }
         // OSP v0.3 §3.3: what the bridge reads and writes. It runs on a member's machine, with their own git.
         case route.startsWith('GET /v0/cells/') && parts.length === 3:
           return ok(200, cible.detailCellule(parts[2]! as Hash));

@@ -20,6 +20,8 @@ const round = (x: number) => Math.round(x * 1000) / 1000;
 
 export class Ledger {
   accounts: Record<string, Account> = {};
+  /** OSP v0.5 §2.5: the account a key's honey and reputation go to (a runner key's main identity). */
+  titulaire: (id: ContributorId) => ContributorId = (id) => id;
 
   constructor(
     private readonly params: Params,
@@ -41,6 +43,7 @@ export class Ledger {
 
   /** Pure read: creates nothing. A mere lookup must never change the state. */
   peek(id: AccountId): Account {
+    if (id !== COMMUN) id = this.titulaire(id);
     return { ...(this.accounts[id] ?? this.fresh(id)) };
   }
 
@@ -55,6 +58,7 @@ export class Ledger {
    */
   award(id: ContributorId, grammes: number, raison: string, ruche?: string): void {
     if (grammes <= 0) return;
+    id = this.titulaire(id);
     const p = this.params;
     const compte = this.get(id);
     // OSP v0.3 §2.6: in a private hive, honey stays local. Two friends validating each other's work
@@ -88,6 +92,7 @@ export class Ledger {
   }
 
   reputation(id: ContributorId, event: ReputationEvent): number {
+    id = this.titulaire(id);
     const p = this.params;
     const a = this.get(id);
     switch (event) {

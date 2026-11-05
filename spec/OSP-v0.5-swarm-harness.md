@@ -126,7 +126,8 @@ What the runner receives is a **sealed card**: the task card of v0.4 §3, render
 ```json
 { "type": "osp.sealed-card/0.5", "cell": "<hash>", "lease": "<hash>",
   "executor": "claude-code-action", "prompt": "…", "prompt_hash": "sha256:…",
-  "base_commit": "<sha>", "write_scope": ["src/…"], "expires": "…", "signature": "…" }
+  "base_commit": "<sha>", "write_scope": ["src/…"], "expires": "…",
+  "coordinator": "slh1:…", "sig": "…" }
 ```
 
 - The prompt's hash is written to the registry with the lease.
@@ -292,6 +293,17 @@ Federation of coordinators moves to v0.6.
 - **The doors.** The local engine states the tier of what its pool can lend (a subscription's official tool: `frontier`; a paid key: `standard`; free and local models: `economy`) and releases with `echec` when its models could not do a task. The chat page shows how strong an AI a task needs.
 - **Old registries.** The version (`niveaux`) is written in the launch entry. A registry that does not announce it replays without tiers, exactly as before; a cell spec with a tier is refused there.
 - Tests: `test/niveaux.test.ts`.
+
+### 10.2 What is implemented (H2)
+
+- **Sealed cards.** A claim MAY name its `executor` (a short name: `claude-code-action`, `jules`…). It then gets only writing work (worker or builder), and the assignment carries a sealed card signed by the coordinator. The prompt is rendered from the cell alone by `src/protocol/carte.ts` (prompt version 1): the rules of one pass, the goal, the files to write, the visible tests and properties, the parts to assemble and the context, each piece of data framed as data. That text is part of the protocol and does not change; a new rendering will be a new version, written at launch.
+- **The lease.** The prompt's hash is written to the registry with the lease (`bail_scelle`). A result under a sealed lease MUST carry the same `prompt_hash`, or it is refused; a result under an ordinary lease MUST NOT carry one.
+- **Runner keys.** `POST /v0/runners` takes a delegation signed by the main identity (`osp.delegation/0.5`: `main`, `runner`, `hive`, `share.per_day`, `expires`). The runner key must be fresh (it has never worked on its own), cannot delegate in turn, lasts 90 days at most (`runner_duree_max_ms`), and its daily share is 1 to 50 tasks (`runner_part_max`). `GET /v0/runners/<main>` lists a main identity's keys.
+- **What a runner key may do.** Claim only in its hive, only with an executor (so only from sealed cards), only writing work, and within its share for the current UTC day. Honey, reputation, reliability, trophies and membership go to the main identity; neither the main identity nor its runner may verify the other's work.
+- **Revocation.** One signed decision by the main identity (`runner_revoque`, target: the runner key). The runner's open leases go back to the draw (`bail_revoque`); every later claim, start or result from it is refused.
+- **The audit.** It recomputes every sealed lease on replay, and adds a check, "Sealed cards and runner keys": every result under a sealed lease carries that lease's prompt hash, and no revoked key worked after its revocation. Self-verification is checked across a runner key and its main identity. Refused submissions are not written to the registry; the registry shows the lease's hash and the revocation that explain them.
+- Old registries: nothing changes, since only the new objects and fields start the new behaviour.
+- Tests: `test/runners.test.ts`.
 
 ---
 

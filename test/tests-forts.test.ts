@@ -45,7 +45,8 @@ test('hidden tests: a solution tailored to the examples fails, and nothing of th
   const r = await verifierV0(c, liv(TAILLE), { caches: CACHES });
   assert.equal(r.ok, false);
   assert.match(r.motif, /hidden tests? failed \(details stay hidden\)/);
-  const json = JSON.stringify(r);
+  // The run time is not a secret, and under load it can read 125 ms: leave it out of the search.
+  const json = JSON.stringify({ ...r, duree_ms: 0 });
   for (const secret of ['100', '75', '25', '-12']) assert.ok(!json.includes(secret), `the report must not contain ${secret}`);
   for (const t of r.tests.filter((x) => x.cache)) assert.deepEqual(Object.keys(t).sort(), ['cache', 'nom', 'ok']);
 

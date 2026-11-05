@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path';
 import { idRuchePrivee, normaliserCode } from '../protocol/builders.js';
 import { canonicalize, commitment, hashOf, sha256 } from '../protocol/canonical.js';
+import { EXECUTOR_RE, hashPrompt, promptScelle, ROLES_SCELLES } from '../protocol/carte.js';
 import { blobsDuLivrable, chevauchent, empreinteLecture, horsPortee, inclus, validateDepot } from '../protocol/depot.js';
 import { playbook, PLAYBOOKS } from '../playbooks/index.js';
 import { generateIdentity, isContributorId, signObject, verifyObject, type Identity } from '../protocol/identity.js';
@@ -19,6 +20,7 @@ import type {
   ContributorId,
   Decision,
   Decomposition,
+  Delegation,
   EngagementVerdict,
   Hash,
   Hive,
@@ -29,6 +31,7 @@ import type {
   Result,
   RolePrive,
   Secrets,
+  SealedCard,
   TestCase,
   Tier,
   Verdict,
@@ -59,6 +62,20 @@ interface Bail {
   par: ContributorId;
   caste: Caste;
   expire: number;
+  /** OSP v0.5 §3.2: a sealed lease; the result must carry this prompt hash. */
+  prompt_hash?: Hash;
+}
+
+/** OSP v0.5 §2.5: a runner key, delegated by a main identity. */
+interface DelegationRecord {
+  main: ContributorId;
+  hive: string;
+  per_day: number;
+  expires: number;
+  revoked: boolean;
+  /** The current UTC day (days since 1970) and the tasks taken on it. */
+  day: number;
+  taken: number;
 }
 
 export interface CellRecord {
@@ -256,6 +273,8 @@ interface State {
   recus?: Record<string, RecuRecord>;
   /** OSP v0.3 §3.3: merges seen by a bridge, by receipt. External evidence. */
   fusions?: Record<string, FusionRecord>;
+  /** OSP v0.5 §2.5, created with the first one: runner keys, by runner identifier. */
+  delegations?: Record<string, DelegationRecord>;
   board: Record<string, BoardEntry[]>;
   accounts: Record<string, Account>;
   nonces: Record<string, number>;
@@ -268,7 +287,7 @@ interface State {
 /** The commands that change the state. Each one is written in full to the registry (OSP v0.2, §6.1). */
 export type CommandeType =
   | 'proposeHive' | 'decide' | 'claim' | 'start' | 'release' | 'submitResult' | 'submitDecomposition' | 'engageVerdict' | 'submitVerdict' | 'inviter' | 'rejoindre'
-  | 'recuDepot' | 'lienGithub' | 'fusionDepot' | 'preparerPieges';
+  | 'recuDepot' | 'lienGithub' | 'fusionDepot' | 'preparerPieges' | 'deleguer';
 
 /**
  * The content of a `commande` entry: the signed objects received, plus everything that is not
@@ -541,6 +560,7 @@ export class Coordinator {
     gelerPieces(this.state as unknown as Record<string, unknown>);
     this.ledger = new Ledger(this.params, options.fondateur, this.state.lancement, this.registry, () => this.now());
     this.ledger.accounts = this.state.accounts;
+    this.ledger.titulaire = (id) => this.titulaire(id);
     if (this.params.empreinte_etat === 1) {
       // Version 1: the state on disk must be exactly the one the registry's last command announces.
       const derniere = [...this.registry.entries].reverse().find((e) => e.nature === 'commande');
@@ -761,7 +781,7 @@ export class Coordinator {
     const e = c.entree as {
       ruche: Hive; racine: CellSpec; decision: Decision; requete: Requete; resultat: Result; livrable: Livrable; decomposition: Decomposition;
       engagement: EngagementVerdict; verdict: Verdict; invitation: Invitation; adhesion: Adhesion;
-      recu: RecuDepot; lien: LienGithub; fusion: FusionDepot;
+      recu: RecuDepot; lien: LienGithub; fusion: FusionDepot; delegation: Delegation;
     };
     try {
       switch (c.type) {
@@ -780,6 +800,7 @@ export class Coordinator {
         case 'recuDepot': this.recuDepot(e.recu); break;
         case 'lienGithub': this.lienGithub(e.lien); break;
         case 'fusionDepot': this.fusionDepot(e.fusion); break;
+        case 'deleguer': this.deleguer(e.delegation); break;
         default: throw new ReplayDivergence(`Unknown command: ${String(c.type)}`);
       }
     } finally {
@@ -1028,6 +1049,7 @@ export class Coordinator {
   /** In a private hive, only members take part, and observers only read. A public hive is open to all. */
   private exigerMembre(id: ContributorId, pourTravailler = true): void {
     if (!this.params.prive) return;
+    id = this.titulaire(id);
     const m = this.state.membres?.[id];
     if (!m) throw new OspError('This hive is private: only its members take part', 403);
     if (pourTravailler && m.role === 'observateur') throw new OspError('Observers can read this hive, not work in it', 403);
@@ -1707,6 +1729,21 @@ export class Coordinator {
         }
         break;
       }
+      case 'runner_revoque': {
+        // OSP v0.5 §2.5: the main identity revokes its runner key; the runner's open leases go back to the draw.
+        const del = this.state.delegations?.[d.cible];
+        if (!del) throw new OspError('Unknown runner key', 404);
+        if (d.auteur !== del.main) throw new OspError('Only the main identity that delegated it revokes a runner key', 403);
+        if (del.revoked) throw new OspError('This runner key is already revoked', 409);
+        del.revoked = true;
+        for (const rec of Object.values(this.state.cells)) {
+          if (rec.bail?.par !== d.cible || (rec.state !== 'reservee' && rec.state !== 'en_cours')) continue;
+          delete rec.bail;
+          rec.state = 'libre';
+          this.registry.append('bail_revoque', { alveole: rec.id, contributeur: d.cible });
+        }
+        break;
+      }
       default:
         throw new OspError(`Unknown decision nature: ${String((d as Decision).nature)}`);
     }
@@ -1725,6 +1762,19 @@ export class Coordinator {
     this.checkRequete(r, 'claim');
     this.expire();
     const who = r.contributeur;
+    const runner = this.exigerRunner(who, r.ruche);
+    if (runner) {
+      // OSP v0.5 §2.5, §3.2: a runner key works only from sealed cards, on writing work, within its share.
+      if (r.executor === undefined) throw new OspError('A runner key works only from a sealed card: name your executor', 400);
+      if (r.castes !== undefined && !r.castes.every((c) => ROLES_SCELLES.includes(c))) throw new OspError('A runner key takes writing work only (ouvriere, batisseuse)', 400);
+      const day = Math.floor(this.now() / 86_400_000);
+      if (runner.day !== day) {
+        runner.day = day;
+        runner.taken = 0;
+      }
+      if (runner.taken >= runner.per_day) throw new OspError(`This runner key has used its share for today (${runner.per_day} tasks)`, 429);
+    }
+    const scellee = r.executor !== undefined;
     if (this.leasesOf(who) >= this.params.abeilles_max) {
       throw new OspError(`At most ${this.params.abeilles_max} simultaneous bees per contributor`, 429);
     }
@@ -1735,14 +1785,15 @@ export class Coordinator {
 
     // Locks 1 and 2 (§9.2): distinct guards, drawn by lot, never the author; as many as
     // the Wald test requires (OSP v0.2 P0-4), never fewer than the floor.
-    const prend = (caste: Caste) => r.castes === undefined || r.castes.includes(caste);
+    // A sealed claim is for writing work: no guard slot (OSP v0.5 §3.2).
+    const prend = (caste: Caste) => !scellee && (r.castes === undefined || r.castes.includes(caste));
     const aVerifier = cells.filter((c) => {
       if (!prend('gardienne')) return false;
       if (c.state !== 'en_verification' || !c.en_attente) return false;
       // OSP v0.3 §2.3: in a private hive, only members with the guard role are drawn to verify.
       if (this.params.prive && !this.state.membres?.[who]?.gardienne) return false;
       const rr = this.state.results[c.en_attente];
-      if (!rr || rr.resultat.auteur === who) return false;
+      if (!rr || this.titulaire(rr.resultat.auteur) === this.titulaire(who)) return false;
       const engages = this.engagesSur(c.en_attente);
       const pieges = this.piegesSur(c);
       if (c.gardiennes.some((g) => g.par === who) || c.verdicts.includes(who) || engages.some((e) => e.par === who) || pieges.some((p) => p.attribue_a === who)) return false;
@@ -1753,6 +1804,7 @@ export class Coordinator {
     const libres = cells.filter((c) => {
       if (c.state !== 'libre') return false;
       if (r.castes !== undefined && !r.castes.includes(this.casteFor(c))) return false;
+      if (scellee && !ROLES_SCELLES.includes(this.casteFor(c))) return false;
       // OSP v0.5 §6.1: a bee that states its tier gets only the cells that tier can do.
       if (r.tier !== undefined && this.params.niveaux >= 1 && RANG_NIVEAU[r.tier] < RANG_NIVEAU[this.niveauRequis(c)]) return false;
       const d = c.cell.depot;
@@ -1794,7 +1846,94 @@ export class Coordinator {
     const caste = this.casteFor(rec);
     transition(rec, 'reservee');
     rec.bail = { par: who, caste, expire: this.leaseEnd(rec) };
-    return this.assignment(rec, caste, rec.bail.expire);
+    const a = this.assignment(rec, caste, rec.bail.expire);
+    if (!scellee) return a;
+    if (runner) runner.taken++;
+    a.carte = this.carteScellee(rec, a, r.executor!);
+    rec.bail.prompt_hash = a.carte.prompt_hash;
+    return a;
+  }
+
+  /**
+   * OSP v0.5 §3.2: the sealed card of a lease: the task rendered as one prompt, signed by the coordinator.
+   * The prompt depends only on the cell, so the audit recomputes its hash.
+   */
+  private carteScellee(rec: CellRecord, a: Assignment, executor: string): SealedCard {
+    const bail = rec.bail!;
+    const prompt = promptScelle(a);
+    const prompt_hash = hashPrompt(prompt);
+    const lease = hashOf({ alveole: rec.id, contributeur: bail.par, expire: bail.expire });
+    this.registry.append('bail_scelle', { alveole: rec.id, chemin: rec.cell.chemin, contributeur: bail.par, executor, lease, prompt_hash });
+    const c = a.alveole.critere_fini;
+    return this.sign<SealedCard>(
+      {
+        type: 'osp.sealed-card/0.5',
+        cell: rec.id,
+        lease,
+        executor,
+        prompt,
+        prompt_hash,
+        ...(rec.cell.depot ? { base_commit: rec.cell.depot.commit } : {}),
+        write_scope: rec.cell.depot ? [...rec.cell.depot.ecriture] : [c.verificateur === 'tests-de-tests@1' ? 'tests.json' : (c.module ?? 'solution.mjs')],
+        expires: new Date(bail.expire).toISOString(),
+        coordinator: this.identite.id,
+      },
+      this.identite,
+    );
+  }
+
+  // ---------------------------------------------------------------- runner keys (OSP v0.5 §2.5)
+
+  /** The identity a key works for: a runner key's main identity, or the key itself. */
+  titulaire(id: ContributorId): ContributorId {
+    return (this.state.delegations?.[id]?.main as ContributorId | undefined) ?? id;
+  }
+
+  /**
+   * A runner key must be live: not revoked, not expired, and used only in its hive. Returns its record,
+   * or undefined for an ordinary key.
+   */
+  private exigerRunner(id: ContributorId, ruche: string | undefined): DelegationRecord | undefined {
+    const d = this.state.delegations?.[id];
+    if (!d) return undefined;
+    if (d.revoked) throw new OspError('This runner key was revoked by its owner', 403);
+    if (this.now() >= d.expires) throw new OspError('This runner key has expired: make a new one', 403);
+    if (ruche === undefined) throw new OspError(`A runner key names its hive ("${d.hive}") in every request`, 400);
+    if (ruche !== d.hive) throw new OspError(`This runner key works only in the hive "${d.hive}"`, 403);
+    return d;
+  }
+
+  deleguer(d: Delegation): { runner: ContributorId; expires: string } {
+    return this.run('deleguer', { delegation: d }, [], () => this.doDeleguer(d));
+  }
+
+  private doDeleguer(d: Delegation): { runner: ContributorId; expires: string } {
+    if (d?.type !== 'osp.delegation/0.5') throw new OspError('Expected a delegation object (osp.delegation/0.5)');
+    if (!isContributorId(d.main) || !verifyObject(d, d.main)) throw new OspError('Invalid delegation signature', 401);
+    if (!isContributorId(d.runner) || d.runner === d.main) throw new OspError('The runner key must be a separate identity');
+    this.fraicheur(d.main, d.ts, d.nonce);
+    this.exigerMembre(d.main);
+    const dels = this.state.delegations ?? {};
+    if (dels[d.main]) throw new OspError('A runner key cannot delegate in turn', 403);
+    if (dels[d.runner]) throw new OspError('This runner key is already delegated', 409);
+    if (this.state.accounts[d.runner] || this.state.contributeurs.includes(d.runner)) throw new OspError('This key already works on its own: make a fresh one for the runner', 409);
+    const hive = this.hiveOrThrow(d.hive);
+    const n = d.share?.per_day;
+    if (!Number.isInteger(n) || n < 1 || n > this.params.runner_part_max) throw new OspError(`The daily share is a whole number from 1 to ${this.params.runner_part_max}`);
+    const expires = typeof d.expires === 'string' ? Date.parse(d.expires) : NaN;
+    if (!Number.isFinite(expires) || expires <= this.now()) throw new OspError('The delegation must expire in the future');
+    if (expires - this.now() > this.params.runner_duree_max_ms) throw new OspError(`A runner key lasts ${Math.round(this.params.runner_duree_max_ms / 86_400_000)} days at most`);
+    dels[d.runner] = { main: d.main, hive: hive.ruche.slug, per_day: n, expires, revoked: false, day: 0, taken: 0 };
+    this.state.delegations = dels;
+    this.registry.append('delegation', { main: d.main, runner: d.runner, hive: hive.ruche.slug, per_day: n, expires: new Date(expires).toISOString() });
+    return { runner: d.runner, expires: new Date(expires).toISOString() };
+  }
+
+  /** The runner keys of a main identity, for its owner's tools. */
+  runners(main: ContributorId): Array<{ runner: string; hive: string; per_day: number; expires: string; revoked: boolean }> {
+    return Object.entries(this.state.delegations ?? {})
+      .filter(([, d]) => d.main === main)
+      .map(([runner, d]) => ({ runner, hive: d.hive, per_day: d.per_day, expires: new Date(d.expires).toISOString(), revoked: d.revoked }));
   }
 
   start(r: Requete): { etat: CellState } {
@@ -1804,6 +1943,7 @@ export class Coordinator {
   private doStart(r: Requete): { etat: CellState } {
     this.checkRequete(r, 'start');
     const rec = this.cellOrThrow(r.alveole);
+    this.exigerRunner(r.contributeur, rec.cell.ruche);
     if (rec.bail?.par !== r.contributeur) throw new OspError('You do not hold the lease on this cell', 403);
     if (rec.state === 'reservee') transition(rec, 'en_cours');
     return { etat: rec.state };
@@ -1952,9 +2092,15 @@ export class Coordinator {
     this.exigerMembre(res.auteur);
     if (this.state.results[hashOf(res)]) throw new OspError('Result already submitted', 409);
     const rec = this.cellOrThrow(res.alveole);
+    this.exigerRunner(res.auteur, rec.cell.ruche);
     if (rec.bail?.par !== res.auteur) throw new OspError('You do not hold the lease on this cell', 403);
     if (rec.bail.caste !== res.caste) throw new OspError(`Your caste for this cell is "${rec.bail.caste}"`, 409);
     if (rec.state !== 'reservee' && rec.state !== 'en_cours') throw new OspError(`The cell is ${rec.state}`, 409);
+    // OSP v0.5 §3.2: under a sealed lease, the result names the prompt it was made from.
+    if (rec.bail.prompt_hash !== undefined && res.prompt_hash !== rec.bail.prompt_hash) {
+      throw new OspError(`This result was not made from the sealed card of its lease: prompt_hash ${res.prompt_hash ?? 'missing'}, the lease's is ${rec.bail.prompt_hash}`, 409);
+    }
+    if (rec.bail.prompt_hash === undefined && res.prompt_hash !== undefined) throw new OspError('This lease has no sealed card: leave out prompt_hash', 409);
     try {
       validateLivrable(livrable);
     } catch (e) {
@@ -2057,6 +2203,7 @@ export class Coordinator {
     if (d?.type !== 'osp.decomposition/0.1') throw new OspError('Expected a split object (osp.decomposition/0.1)');
     if (!isContributorId(d.auteur) || !verifyObject(d, d.auteur)) throw new OspError('Invalid split signature', 401);
     this.exigerMembre(d.auteur);
+    if (this.state.delegations?.[d.auteur]) throw new OspError('A runner key takes writing work only', 403);
     if (this.state.decompositions[hashOf(d)]) throw new OspError('Split already submitted', 409);
     const rec = this.cellOrThrow(d.alveole);
     if (rec.bail?.par !== d.auteur || rec.bail.caste !== 'eclaireuse') throw new OspError('You are not the scout of this cell', 403);
@@ -2140,7 +2287,7 @@ export class Coordinator {
     const rec = this.cellOrThrow(rr.resultat.alveole);
     if (rec.state !== 'en_verification' || rec.en_attente !== e.resultat) throw new OspError('This result is no longer awaiting verification', 409);
     if (!rec.gardiennes.some((g) => g.par === e.gardienne)) throw new OspError('You are not a guard drawn for this result', 403);
-    if (rr.resultat.auteur === e.gardienne) throw new OspError('You cannot verify your own work (§7.3)', 403);
+    if (this.titulaire(rr.resultat.auteur) === this.titulaire(e.gardienne)) throw new OspError('You cannot verify your own work (§7.3)', 403);
     rec.gardiennes = rec.gardiennes.filter((g) => g.par !== e.gardienne);
     const liste = (this.state.engagements[e.resultat] ??= []);
     liste.push({ par: e.gardienne, engagement: e.engagement, expire: this.leaseEnd(rec) });
@@ -2266,7 +2413,7 @@ export class Coordinator {
     const rr = this.state.results[v.resultat];
     if (!rr) throw new OspError('Unknown result', 404);
     const rec = this.cellOrThrow(rr.resultat.alveole);
-    if (rr.resultat.auteur === v.gardienne) throw new OspError('You cannot verify your own work (§7.3)', 403);
+    if (this.titulaire(rr.resultat.auteur) === this.titulaire(v.gardienne)) throw new OspError('You cannot verify your own work (§7.3)', 403);
     const liste = this.engagesSur(v.resultat);
     const eng = liste.find((e) => e.par === v.gardienne);
     if (!eng) {
@@ -2732,6 +2879,7 @@ export class Coordinator {
     if (r.castes !== undefined && (!Array.isArray(r.castes) || !r.castes.length || !r.castes.every((c) => CASTES.has(c)))) throw new OspError('castes: a list among eclaireuse, ouvriere, batisseuse, gardienne');
     if (r.tier !== undefined && !Object.hasOwn(RANG_NIVEAU, r.tier)) throw new OspError('tier: economy, standard or frontier');
     if (r.echec !== undefined && (r.echec !== true || action !== 'release')) throw new OspError('echec: only true, on a release');
+    if (r.executor !== undefined && (typeof r.executor !== 'string' || !EXECUTOR_RE.test(r.executor) || action !== 'claim')) throw new OspError('executor: a short name (letters, digits, dashes), on a claim');
     this.state.nonces[key] = r.ts;
   }
 
@@ -2771,6 +2919,7 @@ export class Coordinator {
   }
 
   private addContribution(hive: HiveRecord, id: ContributorId, g: number): void {
+    id = this.titulaire(id);
     const nouveau = hive.contributions[id] === undefined;
     hive.contributions[id] = (hive.contributions[id] ?? 0) + g;
     if (nouveau && Object.keys(hive.contributions).length <= 10) this.grant(id, 'founding_bee', hive.ruche.slug);
@@ -2782,6 +2931,7 @@ export class Coordinator {
 
   /** Awards a trophy (§10.5), once and for all or once per hive, and writes it to the registry. */
   private grant(id: ContributorId, trophee: TropheeId, ruche?: string): void {
+    id = this.titulaire(id);
     const liste = (this.state.trophees[id] ??= []);
     const cible = PAR_RUCHE.has(trophee) ? ruche : undefined;
     if (liste.some((t) => t.id === trophee && t.ruche === cible)) return;
@@ -2790,6 +2940,7 @@ export class Coordinator {
   }
 
   private bump(id: ContributorId, cle: 'alveoles' | 'verifications'): number {
+    id = this.titulaire(id);
     const c = (this.state.compteurs[id] ??= { alveoles: 0, verifications: 0 });
     return ++c[cle];
   }

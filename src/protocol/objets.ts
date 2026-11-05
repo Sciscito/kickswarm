@@ -40,7 +40,7 @@ export function nonce(): string {
 
 const hex = (octets: Uint8Array) => Array.from(octets, (o) => o.toString(16).padStart(2, '0')).join('');
 
-export function requete(s: Signataire, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Caste[]; tier?: Tier; echec?: true } = {}): Requete {
+export function requete(s: Signataire, action: Requete['action'], extra: { ruche?: string; alveole?: Hash; castes?: Caste[]; tier?: Tier; echec?: true; executor?: string } = {}): Requete {
   return signerObjet<Requete>({ type: 'osp.requete/0.1', action, contributeur: s.id, ...extra, ts: Date.now(), nonce: nonce() }, s);
 }
 
@@ -49,7 +49,7 @@ export function resultat(
   alveole: Hash,
   caste: Result['caste'],
   livrable: Livrable,
-  opts: { impasses?: string[]; agent?: Result['agent']; cout?: Result['cout'] } = {},
+  opts: { impasses?: string[]; agent?: Result['agent']; cout?: Result['cout']; prompt_hash?: Hash } = {},
 ): Result {
   return signerObjet<Result>(
     {
@@ -61,6 +61,7 @@ export function resultat(
       impasses: opts.impasses ?? [],
       agent: opts.agent ?? { famille: 'inconnue' },
       cout: opts.cout ?? {},
+      ...(opts.prompt_hash ? { prompt_hash: opts.prompt_hash } : {}),
     },
     s,
   );

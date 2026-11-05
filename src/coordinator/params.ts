@@ -108,6 +108,10 @@ export interface Params {
   rejets_par_niveau: number;
   /** OSP v0.5 §6.3: the honey of a cell is multiplied by the factor of the tier it was done at. */
   miel_par_niveau: Record<Tier, number>;
+  /** OSP v0.5 §2.5: a runner key's largest daily share. */
+  runner_part_max: number;
+  /** OSP v0.5 §2.5: a runner key's longest life. */
+  runner_duree_max_ms: number;
 }
 
 const HEURE = 3600_000;
@@ -168,6 +172,9 @@ export const DEFAULT_PARAMS: Params = {
   balise_decalage: 3,
   fenetre_balise_ms: 4000,
   niveaux: 1,
+  /** OSP v0.5 §2.5: a runner key's largest daily share, and its longest life (90 days). */
+  runner_part_max: 50,
+  runner_duree_max_ms: 90 * 24 * 3600_000,
   rejets_par_niveau: 2,
   miel_par_niveau: { economy: 1, standard: 2, frontier: 4 },
 };
