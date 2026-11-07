@@ -18,7 +18,8 @@ export interface OptionsConnexion {
 
 export function ouvrirNavigateur(url: string): void {
   const [cmd, args] =
-    process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url.replace(/&/g, '^&')]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+    // rundll32 hands the URL to the default browser as one argument (cmd's start breaks it on "&").
+    process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
   spawn(cmd, args as string[], { stdio: 'ignore', detached: true, windowsHide: true }).unref();
 }
 
@@ -73,7 +74,9 @@ export async function connecterOpenRouter(o: OptionsConnexion = {}): Promise<str
     serveur.listen(0, '127.0.0.1', () => {
       const port = (serveur.address() as AddressInfo).port;
       const params = new URLSearchParams({ callback_url: `http://localhost:${port}/callback`, code_challenge: challenge, code_challenge_method: 'S256' });
-      (o.ouvrir ?? ouvrirNavigateur)(`${base}/auth?${params}`);
+      const lien = `${base}/auth?${params}`;
+      if (!o.ouvrir) console.log(`If no page opened, open this link: ${lien}`);
+      (o.ouvrir ?? ouvrirNavigateur)(lien);
     });
   });
 }
