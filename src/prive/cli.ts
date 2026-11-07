@@ -15,6 +15,15 @@ async function depuisIssue(home: string, url: string): Promise<{ dossier: string
   const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${num}`, { headers: { 'user-agent': 'kickswarm-hive' } });
   if (!r.ok) throw new Error(`GitHub said ${r.status} for that issue`);
   const issue = (await r.json()) as { title: string; body?: string; state: string };
+  // Do not spend tokens on work that is done or under way: a closed issue, or an open pull request
+  // that already references it.
+  if (issue.state !== 'open') throw new Error(`${owner}/${repo}#${num} is ${issue.state}: nothing to do`);
+  const tl = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${num}/timeline?per_page=100`, { headers: { 'user-agent': 'kickswarm-hive', accept: 'application/vnd.github+json' } });
+  if (tl.ok) {
+    const evts = (await tl.json()) as Array<{ event: string; source?: { issue?: { number: number; state: string; pull_request?: unknown } } }>;
+    const pr = evts.find((e) => e.event === 'cross-referenced' && e.source?.issue?.pull_request && e.source.issue.state === 'open');
+    if (pr && !process.env.KICKSWARM_FORCE) throw new Error(`${owner}/${repo}#${num} already has an open pull request (#${pr.source!.issue!.number}): skipped, to avoid duplicate work (set KICKSWARM_FORCE=1 to work on it anyway)`);
+  }
   const dossier = join(home, 'oss', `${owner}-${repo}`);
   mkdirSync(join(home, 'oss'), { recursive: true });
   const run = (cmd: string, args: string[], cwd?: string) => {
