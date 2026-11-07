@@ -156,6 +156,16 @@ export async function ruchePrivee(o: OptionsRuchePrivee): Promise<RapportPrive> 
   git(top, ['worktree', 'add', '-b', branche, worktree, 'HEAD']);
   log(`branch ${branche}, worktree ${worktree}`);
 
+  // The project's check must pass before any change: otherwise no task could ever pass it.
+  if (o.test) {
+    const base = await lancer(o.test, worktree);
+    if (!base.ok) {
+      log(`the check fails before any change:\n${base.sortie.slice(-1500)}`);
+      throw new Error(`"${o.test}" already fails on the untouched project: pick a narrower check (for example one test file) or fix the environment`);
+    }
+    log(`the check passes on the untouched project: ${o.test}`);
+  }
+
   let taches = o.plan;
   if (!taches) {
     const fichiers = git(worktree, ['ls-files']).split('\n').filter(Boolean).slice(0, 400);
@@ -215,7 +225,7 @@ export async function ruchePrivee(o: OptionsRuchePrivee): Promise<RapportPrive> 
         // Undo this attempt: back to the last good commit.
         git(worktree, ['checkout', '-q', '--', '.']);
         git(worktree, ['clean', '-fdq', '--', ...t.ecrire]);
-        log(`  ${t.titre}: attempt ${essai + 1} by ${reponse.agent} fails the check`);
+        log(`  ${t.titre}: attempt ${essai + 1} by ${reponse.agent} fails the check: ${check.sortie.split('\n').filter((l) => /fail|error|not ok|assert/i.test(l)).slice(0, 3).join(' | ').slice(0, 300)}`);
       }
     }
     if (!fait) rapport.ratees.push({ titre: t.titre, raison: (erreur ?? 'unknown').slice(-300) });

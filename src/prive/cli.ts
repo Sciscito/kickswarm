@@ -1,7 +1,7 @@
 import { AGENTS, agentInstalle, executerAgent, type IdAgent } from '../moteur/agents.js';
 import { pool } from '../moteur/cli.js';
 import { chargerConfig } from '../moteur/config.js';
-import type { Fournisseur, Message } from '../moteur/fournisseurs.js';
+import { completer as completerModele, type Fournisseur, type Message } from '../moteur/fournisseurs.js';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -73,8 +73,24 @@ export async function commandeHive(home: string, args: string[], opts: Record<st
   const p = pool(chargerConfig(home), () => {});
   await p.decouvrir().catch(() => {});
   const libres = p.modeles().length;
+  let appel = 0;
   const viaPool = async (prompt: string) => {
-    const r = await p.completer({ tokens: Math.ceil(prompt.length / 3.5), maxTokens: 16000, usage: 'essaim', confidentiel: false }, msgs(prompt));
+    const besoin = { tokens: Math.ceil(prompt.length / 3.5), maxTokens: 16000, usage: 'essaim' as const, confidentiel: false };
+    const cands = p.candidats(besoin);
+    // Each call goes to the next candidate in turn, so attempts try different models.
+    for (let k = 0; k < Math.min(cands.length, 4); k++) {
+      const m = cands[(appel + k) % cands.length]!;
+      const f = p.fournisseurs.find((x) => x.id === m.fournisseur)!;
+      try {
+        const texte = await completerModele(f, m.nom, msgs(prompt), { maxTokens: besoin.maxTokens });
+        appel++;
+        return { texte, agent: m.id };
+      } catch {
+        // rate-limited or down: the next candidate
+      }
+    }
+    appel++;
+    const r = await p.completer(besoin, msgs(prompt));
     return { texte: r.texte, agent: r.modele.id };
   };
   if (!libres && !agent) throw new Error('No model available: connect a free provider (kickswarm engine, e.g. OpenRouter) or install Claude Code, Codex or Gemini CLI.');
