@@ -156,14 +156,12 @@ export async function ruchePrivee(o: OptionsRuchePrivee): Promise<RapportPrive> 
   git(top, ['worktree', 'add', '-b', branche, worktree, 'HEAD']);
   log(`branch ${branche}, worktree ${worktree}`);
 
-  // The project's check must pass before any change: otherwise no task could ever pass it.
+  // The project's check, before any change. A failure can be the bug itself (fine) or something
+  // missing in this environment (then no task can pass): it is shown either way.
   if (o.test) {
     const base = await lancer(o.test, worktree);
-    if (!base.ok) {
-      log(`the check fails before any change:\n${base.sortie.slice(-1500)}`);
-      throw new Error(`"${o.test}" already fails on the untouched project: pick a narrower check (for example one test file) or fix the environment`);
-    }
-    log(`the check passes on the untouched project: ${o.test}`);
+    if (!base.ok) log(`note: the check already fails before any change (the bug itself, or something missing here):\n${base.sortie.slice(-1200)}`);
+    else log(`the check passes on the untouched project: ${o.test}`);
   }
 
   let taches = o.plan;
