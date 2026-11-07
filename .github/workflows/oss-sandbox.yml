@@ -3,8 +3,9 @@ name: Open-source repair sandbox
 # Runs a Kickswarm private hive on a public GitHub issue, on a throwaway GitHub machine: the target
 # project's code and the code written by the models never run on anyone's computer. The result is a
 # patch to review, uploaded as an artifact. Nothing is sent to the target project.
-# Needs the secret OPENROUTER_API_KEY: a dedicated OpenRouter key, ideally with a $0 credit limit
-# (free models only). The project's checks run without it in their environment.
+# Models: GitHub Models through this workflow's own token (free, rate-limited, no key, no payment).
+# Optionally also OpenRouter free models if the secret OPENROUTER_API_KEY exists. The project's checks
+# run with no token or key in their environment.
 
 on:
   workflow_dispatch:
@@ -23,6 +24,7 @@ on:
 
 permissions:
   contents: read
+  models: read
 
 jobs:
   repair:
@@ -36,6 +38,7 @@ jobs:
       - run: npm ci
       - name: Run the hive on the issue
         env:
+          GITHUB_MODELS_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           KICKSWARM_HOME: ${{ runner.temp }}/kickswarm
           ISSUE: ${{ inputs.issue }}

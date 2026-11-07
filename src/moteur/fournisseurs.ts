@@ -15,7 +15,7 @@ export interface Fournisseur {
   /** Its terms say prompts are not used to train models (local models, most paid APIs). */
   confidentiel: boolean;
   /** How its models are found: OpenRouter's zero-price models, the provider's /models list, or a fixed list. */
-  decouverte: 'openrouter-gratuits' | 'liste' | 'aucune';
+  decouverte: 'openrouter-gratuits' | 'liste' | 'aucune' | 'github-catalogue';
   modeles?: string[];
   /** Requests per day for this key, when the contributor knows it (the engine also learns from refusals). */
   parJour?: number;
@@ -41,6 +41,9 @@ export const CATALOGUE: Record<string, EntreeCatalogue> = {
   openrouter: { id: 'openrouter', api: 'openai', url: 'https://openrouter.ai/api/v1', env: 'OPENROUTER_API_KEY', gratuit: true, confidentiel: false, decouverte: 'openrouter-gratuits', aide: 'OpenRouter: every zero-price model, test models included, found automatically' },
   gemini: { id: 'gemini', api: 'openai', url: 'https://generativelanguage.googleapis.com/v1beta/openai', env: 'GEMINI_API_KEY', gratuit: true, confidentiel: false, decouverte: 'liste', aide: 'Google Gemini API, free tier' },
   groq: { id: 'groq', api: 'openai', url: 'https://api.groq.com/openai/v1', env: 'GROQ_API_KEY', gratuit: true, confidentiel: false, decouverte: 'liste', aide: 'Groq, free tier' },
+  // GitHub Models: free with rate limits, reachable from GitHub Actions with the workflow's own token
+  // (permission "models: read"): no key to create, no payment method.
+  'github-models': { id: 'github-models', api: 'openai', url: 'https://models.github.ai/inference', env: 'GITHUB_MODELS_TOKEN', gratuit: true, confidentiel: false, decouverte: 'github-catalogue', aide: 'GitHub Models, free with limits (a GitHub token with the Models permission)' },
   mistral: { id: 'mistral', api: 'openai', url: 'https://api.mistral.ai/v1', env: 'MISTRAL_API_KEY', gratuit: true, confidentiel: false, decouverte: 'liste', aide: 'Mistral La Plateforme, free plan' },
   ollama: { id: 'ollama', api: 'openai', url: 'http://127.0.0.1:11434/v1', gratuit: true, confidentiel: true, decouverte: 'liste', local: true, aide: 'Ollama, models on this machine' },
   lmstudio: { id: 'lmstudio', api: 'openai', url: 'http://127.0.0.1:1234/v1', gratuit: true, confidentiel: true, decouverte: 'liste', local: true, aide: 'LM Studio, models on this machine' },
@@ -114,6 +117,12 @@ export async function decouvrir(f: Fournisseur): Promise<Modele[]> {
   const fait = (nom: string, contexte?: number): Modele => ({ id: `${f.id}/${nom}`, fournisseur: f.id, nom, contexte: contexte ?? CONTEXTE_PAR_DEFAUT, gratuit: f.gratuit, confidentiel: f.confidentiel });
   if (f.api === 'cli') return [fait('subscription', f.agent === 'gemini-cli' ? 1_000_000 : 200_000)];
   if (f.decouverte === 'aucune' || f.modeles?.length) return (f.modeles ?? []).map((m) => fait(m));
+  if (f.decouverte === 'github-catalogue') {
+    const res = await fetch('https://models.github.ai/catalog/models', { headers: entetes(f), signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw await refus(res);
+    const list = (await res.json()) as Array<{ id: string; limits?: { max_input_tokens?: number }; supported_output_modalities?: string[] }>;
+    return list.filter((m) => (m.supported_output_modalities ?? ['text']).includes('text') && !NON_TEXTE.test(m.id)).map((m) => fait(m.id, m.limits?.max_input_tokens));
+  }
   const res = await fetch(`${f.url}/models`, { headers: entetes(f), signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw await refus(res);
   const data = ((await res.json()) as { data?: Array<{ id: string; context_length?: number; context_window?: number; pricing?: { prompt?: string; completion?: string } }> }).data ?? [];
