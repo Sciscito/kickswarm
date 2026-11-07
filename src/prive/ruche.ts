@@ -129,7 +129,9 @@ export function lireFichiers(texte: string, portee: string[]): Record<string, st
 
 function lancer(cmd: string, cwd: string, delaiMs = 600_000): Promise<{ ok: boolean; sortie: string }> {
   return new Promise((ok) => {
-    const enfant = spawn(cmd, { cwd, shell: true, windowsHide: true });
+    // The check runs code written by models: it gets no API key, token or secret from this process.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(k)));
+    const enfant = spawn(cmd, { cwd, shell: true, windowsHide: true, env });
     let sortie = '';
     const garder = (d: Buffer) => { sortie += d.toString(); if (sortie.length > 200_000) sortie = sortie.slice(-100_000); };
     enfant.stdout.on('data', garder);

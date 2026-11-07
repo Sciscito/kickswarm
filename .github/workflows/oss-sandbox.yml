@@ -1,0 +1,58 @@
+name: Open-source repair sandbox
+
+# Runs a Kickswarm private hive on a public GitHub issue, on a throwaway GitHub machine: the target
+# project's code and the code written by the models never run on anyone's computer. The result is a
+# patch to review, uploaded as an artifact. Nothing is sent to the target project.
+# Needs the secret OPENROUTER_API_KEY: a dedicated OpenRouter key, ideally with a $0 credit limit
+# (free models only). The project's checks run without it in their environment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'GitHub issue URL (https://github.com/<owner>/<repo>/issues/<n>)'
+        required: true
+      test:
+        description: 'Check command (default: npm test)'
+        required: false
+        default: 'npm test'
+      tries:
+        description: 'Attempts per task'
+        required: false
+        default: '3'
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Run the hive on the issue
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          KICKSWARM_HOME: ${{ runner.temp }}/kickswarm
+          ISSUE: ${{ inputs.issue }}
+          CHECK: ${{ inputs.test }}
+          TRIES: ${{ inputs.tries }}
+        run: |
+          mkdir -p "$KICKSWARM_HOME"
+          git config --global user.name "Kickswarm sandbox"
+          git config --global user.email "sandbox@kickswarm.local"
+          npx tsx src/cli.ts hive --issue "$ISSUE" --test "$CHECK" --tries "$TRIES" --planner engine 2>&1 | tee "$KICKSWARM_HOME/hive.log"
+      - name: Keep the patch and the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repair
+          path: |
+            ${{ runner.temp }}/kickswarm/oss/*.patch
+            ${{ runner.temp }}/kickswarm/hive.log
+          if-no-files-found: warn
+          retention-days: 14
