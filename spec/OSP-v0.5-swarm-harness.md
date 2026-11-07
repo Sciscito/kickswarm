@@ -305,6 +305,15 @@ Federation of coordinators moves to v0.6.
 - Old registries: nothing changes, since only the new objects and fields start the new behaviour.
 - Tests: `test/runners.test.ts`.
 
+### 10.3 What is implemented (H3)
+
+- **The runner** (`src/runner/runner.ts`). `creerCleRunner` makes a runner key and sends its delegation; `tirer` claims with the runner key and an executor, checks the coordinator's signature on the sealed card, its prompt hash and its executor, then starts the lease; `rendre` hands the deliverable in with the card's `prompt_hash`; `liberer` gives the cell back (`echec` when the executor tried, counting toward a stronger tier, §6.2).
+- **Executors.** `executeurTexte` turns any text completion into an executor: each attempt is a fresh, one-pass run of the sealed prompt (§3.3, no conversation), the deliverable is read and checked here with the coordinator's engines (visible checks only), and the first one that passes is kept. The CLI offers `kickswarm-engine` (the engine's pool: free models first) and the official agents `claude-code`, `codex`, `gemini-cli` in their locked-down one-shot mode.
+- **The command.** `kickswarm runner key | run | draw | work | submit`. `draw`, `work` and `submit` are the three jobs of §2.4: the runner key is read from `KICKSWARM_RUNNER_KEY` or `$KICKSWARM_HOME/runner-<hive>.json`; `work` needs only the executor's credential.
+- **The workflow template** (`templates/github/kickswarm-runner.yml`): a scheduled workflow for a contributor's fork, with the three jobs and their separate secrets.
+- Not yet: repository cells (checkout at `base_commit`, changed files within `write_scope`, a pull request), Jules and Copilot adapters, and the Claude Code Action step itself; they build on these pieces.
+- Tests: `test/h3-runner.test.ts` (a runner over HTTP from key to honey; a failing executor gives back; a forged prompt hash is refused).
+
 ---
 
 ## 11. Sources

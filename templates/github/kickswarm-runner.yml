@@ -1,0 +1,82 @@
+# Kickswarm runner (OSP v0.5 §2): work for a hive unattended, on GitHub's machines, from sealed cards.
+# Put this file in your fork as .github/workflows/kickswarm-runner.yml, then set:
+#   secrets.KICKSWARM_RUNNER_KEY  the content of $KICKSWARM_HOME/runner-<hive>.json (kickswarm runner key --hive <hive>)
+#   secrets.OPENROUTER_API_KEY    (or another engine key) for the default executor, kickswarm-engine
+#   vars.KICKSWARM_HIVE           the hive's slug
+#   vars.KICKSWARM_URL            the coordinator's URL
+#   vars.KICKSWARM_EXECUTOR       optional: kickswarm-engine (default), claude-code, codex, gemini-cli
+# Three jobs, three sets of secrets (§2.4): the executor never sees your runner key, and the steps that
+# talk to the coordinator never see the executor's credential.
+
+name: Kickswarm runner
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'   # four times a day; your delegation's daily share caps the work anyway
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HIVE: ${{ vars.KICKSWARM_HIVE }}
+  KICKSWARM_URL: ${{ vars.KICKSWARM_URL }}
+  EXECUTOR: ${{ vars.KICKSWARM_EXECUTOR || 'kickswarm-engine' }}
+
+jobs:
+  draw:
+    runs-on: ubuntu-latest
+    outputs:
+      got: ${{ steps.draw.outputs.got }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: Sciscito/kickswarm, path: kickswarm }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci --prefix kickswarm
+      - id: draw
+        env:
+          KICKSWARM_RUNNER_KEY: ${{ secrets.KICKSWARM_RUNNER_KEY }}
+        run: |
+          (cd kickswarm && npx tsx src/cli.ts runner draw --hive "$HIVE" --executor "$EXECUTOR" --url "$KICKSWARM_URL" --out ../card.json)
+          if [ -f card.json ]; then echo "got=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.draw.outputs.got == 'true'
+        uses: actions/upload-artifact@v4
+        with: { name: card, path: card.json, retention-days: 1 }
+
+  work:
+    needs: draw
+    if: needs.draw.outputs.got == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: Sciscito/kickswarm, path: kickswarm }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci --prefix kickswarm
+      - uses: actions/download-artifact@v4
+        with: { name: card }
+      - env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: cd kickswarm && npx tsx src/cli.ts runner work --card ../card.json --out ../work.json
+      - uses: actions/upload-artifact@v4
+        with: { name: work, path: work.json, retention-days: 1 }
+
+  submit:
+    needs: [draw, work]
+    if: needs.draw.outputs.got == 'true' && always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: Sciscito/kickswarm, path: kickswarm }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci --prefix kickswarm
+      - uses: actions/download-artifact@v4
+        with: { name: card }
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: work }
+      - env:
+          KICKSWARM_RUNNER_KEY: ${{ secrets.KICKSWARM_RUNNER_KEY }}
+        run: cd kickswarm && npx tsx src/cli.ts runner submit --card ../card.json --work ../work.json --url "$KICKSWARM_URL"

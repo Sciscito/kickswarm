@@ -38,7 +38,7 @@ your subscriptions are used through their official tools instead. Use the chats 
 
 const TYPE: Record<Acces['type'], string> = { abonnement: 'subscription', gratuit: 'free key', local: 'this machine', payant: 'paid key' };
 
-function pool(c: ConfigMoteur, log: (l: string) => void): Pool {
+export function pool(c: ConfigMoteur, log: (l: string) => void): Pool {
   return new Pool(fournisseursActifs(c), { reservePerso: c.reservePerso, payantsParJour: c.payantsParJour, log });
 }
 
