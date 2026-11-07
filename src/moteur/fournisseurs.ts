@@ -86,7 +86,15 @@ export class ErreurFournisseur extends Error {
 }
 
 const CONTEXTE_PAR_DEFAUT = 32_768;
-const NON_TEXTE = /embed|whisper|tts|audio|image|vision-preview|moderation|guard|rerank|transcri|speech|dall-e/i;
+const NON_TEXTE = /embed|whisper|tts|audio|image|vision-preview|moderation|guard|rerank|transcri|speech|dall-e|lyria|music|song|veo|video|sora/i;
+
+/** A model that costs nothing at all and answers with text only. */
+export function estGratuitTexte(m: { id: string; pricing?: Record<string, string | undefined>; architecture?: { output_modalities?: string[] } }): boolean {
+  const prix = Object.values(m.pricing ?? {});
+  if (!m.pricing || m.pricing.prompt === undefined || !prix.length || !prix.every((v) => Number(v) === 0)) return false;
+  const sorties = m.architecture?.output_modalities ?? ['text'];
+  return sorties.length > 0 && sorties.every((x) => x === 'text') && !NON_TEXTE.test(m.id) && m.id !== 'openrouter/free';
+}
 
 function entetes(f: Fournisseur): Record<string, string> {
   if (f.api === 'anthropic') return { 'content-type': 'application/json', 'x-api-key': f.cle ?? '', 'anthropic-version': '2023-06-01' };
@@ -125,11 +133,13 @@ export async function decouvrir(f: Fournisseur): Promise<Modele[]> {
   }
   const res = await fetch(`${f.url}/models`, { headers: entetes(f), signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw await refus(res);
-  const data = ((await res.json()) as { data?: Array<{ id: string; context_length?: number; context_window?: number; pricing?: { prompt?: string; completion?: string } }> }).data ?? [];
+  const data = ((await res.json()) as { data?: Array<{ id: string; context_length?: number; context_window?: number; pricing?: Record<string, string | undefined>; architecture?: { output_modalities?: string[] } }> }).data ?? [];
   if (f.decouverte === 'openrouter-gratuits') {
-    // Every model whose price is zero, test models included; a model that stops being free disappears.
+    // Every model that is truly free: EVERY price field is zero (some models show 0 per token but are
+    // billed per request or per song, like Google Lyria) and it answers with text only. A model that
+    // stops being free disappears. Never a model that could cost money.
     return data
-      .filter((m) => m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0 && m.pricing.prompt !== undefined && !NON_TEXTE.test(m.id))
+      .filter((m) => estGratuitTexte(m))
       .map((m) => fait(m.id, m.context_length));
   }
   return data.filter((m) => !NON_TEXTE.test(m.id)).map((m) => fait(m.id, m.context_length ?? m.context_window));
