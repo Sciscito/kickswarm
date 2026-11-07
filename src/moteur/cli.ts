@@ -177,6 +177,14 @@ export async function commandeMoteur(home: string, url: string, args: string[], 
     case 'add': {
       const id = args[1];
       if (!id) throw new Error('Usage: kickswarm engine add <provider> [--key K] [--base URL] [--models a,b] [--per-day N] [--confidential] [--accept-file-reads]');
+      // Paid APIs bill the key's owner per use: never without reading the risks and saying so explicitly.
+      if (CATALOGUE[id] && CATALOGUE[id].gratuit === false && opts['i-accept-costs'] === undefined) {
+        throw new Error(`${id} is a PAID API: every call is billed to the account that owns the key, and Kickswarm cannot see or stop it.
+Before adding it: set a hard spending limit in the provider's console, use a dedicated key (for organisations: a dedicated
+project with its own budget, and check you may send these prompts to this provider). Paid keys serve your personal
+requests only; the swarm gets ${c.payantsParJour} paid call(s) a day (kickswarm engine set --paid-per-day).
+If you accept the costs, run the same command again with --i-accept-costs.`);
+      }
       c = ajouterFournisseur(c, {
         id,
         ...(opts.key ? { cle: opts.key } : {}),
@@ -196,7 +204,11 @@ export async function commandeMoteur(home: string, url: string, args: string[], 
       return;
     case 'set': {
       if (opts.reserve !== undefined) c.reservePerso = Math.min(0.9, Math.max(0, Number(opts.reserve)));
-      if (opts['paid-per-day'] !== undefined) c.payantsParJour = Math.max(0, Math.floor(Number(opts['paid-per-day'])));
+      if (opts['paid-per-day'] !== undefined) {
+        const n = Math.max(0, Math.floor(Number(opts['paid-per-day'])));
+        if (n > 0 && opts['i-accept-costs'] === undefined) throw new Error('Paid calls for the swarm are billed to your paid keys. If you accept the costs, add --i-accept-costs (0 turns them off, no flag needed).');
+        c.payantsParJour = n;
+      }
       if (opts['personal-free'] !== undefined) c.autoriserGratuitsPerso = opts['personal-free'] !== 'off';
       if (opts.bees !== undefined) c.abeilles = Math.min(8, Math.max(1, Math.floor(Number(opts.bees))));
       enregistrerConfig(home, c);

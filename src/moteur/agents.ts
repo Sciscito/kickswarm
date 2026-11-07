@@ -1,4 +1,10 @@
 import { spawn, spawnSync } from 'node:child_process';
+
+/** No API key for subscription tools: they use the person's plan and never switch to pay-per-use billing. */
+const CLES_API = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_API_KEY|OPENAI_API_KEY|OPENAI_ORG_ID|GEMINI_API_KEY|GOOGLE_API_KEY|GOOGLE_GENAI_USE_VERTEXAI|GOOGLE_CLOUD_PROJECT|AWS_BEARER_TOKEN_BEDROCK|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|OPENROUTER_API_KEY|DEEPSEEK_API_KEY|MOONSHOT_API_KEY|ZAI_API_KEY|GROQ_API_KEY|MISTRAL_API_KEY|CEREBRAS_API_KEY|SAMBANOVA_API_KEY|GITHUB_MODELS_TOKEN)$/i;
+export function sansClesApi(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !CLES_API.test(k)));
+}
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,8 +101,8 @@ export async function executerAgent(f: Fournisseur, messages: Message[], o: { de
     // line is built here, every argument quoted (they are all fixed by this file), and passed verbatim.
     const enfant =
       process.platform === 'win32'
-        ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${[commande, ...args].map(pourCmd).join(' ')}"`], { cwd: dossier, windowsVerbatimArguments: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
-        : spawn(commande, args, { cwd: dossier, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+        ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${[commande, ...args].map(pourCmd).join(' ')}"`], { cwd: dossier, windowsVerbatimArguments: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: sansClesApi(process.env) })
+        : spawn(commande, args, { cwd: dossier, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: sansClesApi(process.env) });
     const prompt = messages.map((m) => (m.role === 'system' ? m.content : m.role === 'assistant' ? `Your previous answer:\n${m.content}` : m.content)).join('\n\n');
     let out = '';
     let err = '';
