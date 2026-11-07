@@ -23,6 +23,7 @@ import type { CellSpec, DecisionNature } from './protocol/types.js';
 import { CoordinatorClient } from './plugin/client.js';
 import { kickswarmHome, loadOrCreateIdentity } from './plugin/identite.js';
 import { commandeRunner } from './runner/cli.js';
+import { commandeHive } from './prive/cli.js';
 import { JournalLocal, resumer } from './plugin/journal.js';
 import { appliquerOptions, chargerParticipation, decrire, enregistrerParticipation, type OptionsParticipation } from './plugin/participation.js';
 import { startPlugin } from './plugin/server.js';
@@ -207,6 +208,9 @@ async function main(): Promise<void> {
       return commandeAbeille(kickswarmHome(), url, opts);
     case 'runner':
       return commandeRunner(kickswarmHome(), url, pos.slice(1), opts);
+    case 'hive':
+    case 'ruche-privee':
+      return commandeHive(kickswarmHome(), pos.slice(1), opts);
     case 'launch':
     case 'lancer': {
       const p = PROJETS[pos[1] ?? ''];
